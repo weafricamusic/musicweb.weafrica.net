@@ -1,0 +1,91 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function adminRole() {
+      return request.auth.token.admin_role != null
+        ? request.auth.token.admin_role
+        : request.auth.token.role;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && (adminRole() == 'admin' || adminRole() == 'super_admin');
+    }
+
+    function isOwnerUid(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+
+    // Users (Firestore mirror of Firebase Auth)
+    match /users/{uid} {
+      allow get, list: if isAdmin();
+      allow get: if isOwnerUid(uid);
+
+      // User can create their own profile doc (first login).
+      allow create: if isOwnerUid(uid)
+        && request.resource.data.uid == uid
+        && request.resource.data.role == 'user'
+        && request.resource.data.status == 'active';
+
+      // Users can update only non-control fields; admins can update anything.
+      allow update: if isAdmin() || (
+        isOwnerUid(uid)
+        && request.resource.data.uid == uid
+        && request.resource.data.role == resource.data.role
+        && request.resource.data.status == resource.data.status
+        && request.resource.data.created_at == resource.data.created_at
+        && request.resource.data.diff(resource.data).changedKeys().hasOnly([
+          'display_name',
+          'country',
+          'last_login'
+        ])
+      );
+
+      allow delete: if isAdmin();
+    }
+
+    // Artists
+    match /artists/{artistId} {
+      allow get, list: if isAdmin();
+      allow get, list: if isSignedIn() && (
+        resource.data.status == 'active' || isOwnerUid(resource.data.uid)
+      );
+
+      // Keep write access tightly controlled.
+      allow create, update, delete: if isAdmin();
+    }
+
+    // DJs
+    match /djs/{djId} {
+      allow get, list: if isAdmin();
+      allow get, list: if isSignedIn() && (
+        resource.data.status == 'active' || isOwnerUid(resource.data.uid)
+      );
+
+      allow create, update, delete: if isAdmin();
+    }
+
+    // Wallets
+    match /wallets/{uid} {
+      allow get: if isOwnerUid(uid) || isAdmin();
+      allow list: if isAdmin();
+      allow create, update, delete: if isAdmin();
+    }
+
+    // Feature flags
+    match /config/app_features {
+      allow get: if isSignedIn();
+      allow list: if false;
+      allow create, update, delete: if isAdmin();
+    }
+
+    // Default deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

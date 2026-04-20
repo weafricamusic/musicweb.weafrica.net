@@ -1,0 +1,17 @@
+# Supabase CLI configuration for local development.
+#
+# This project uses Supabase primarily for DB + Edge Functions.
+# If you already have an existing Supabase project, link it via:
+#   supabase link --project-ref <your-project-ref>
+
+project_id = "weafrica_music"
+
+[functions]
+# Keep function names stable so the Flutter app can call /api/... routes.
+# Deployed function name: api
+
+[functions.api]
+# The Flutter app uses Firebase ID tokens in the `Authorization` header.
+# Disable Supabase JWT verification at the gateway so the Edge Function can
+# perform Firebase verification itself where needed.
+verify_jwt = false

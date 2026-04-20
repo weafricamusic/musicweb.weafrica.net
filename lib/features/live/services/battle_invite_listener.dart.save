@@ -1,0 +1,189 @@
+// lib/features/live/services/battle_invite_listener.dart
+import 'dart:async';
+import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import '../live_constants.dart';
+class BattleInviteListener {
+  static BattleInviteListener? _instance;
+  static BattleInviteListener get instance {
+    _instance ??= BattleInviteListener._();
+    return _instance!;
+  }
+
+  BattleInviteListener._();
+
+  RealtimeChannel? _channel;
+  bool _isListening = false;
+
+  void startListening(BuildContext context) {
+    if (_isListening) {
+      print('⚠️ BattleInviteListener already listening');
+      return;
+    }
+
+    final userId = FirebaseAuth.instance.currentUser?.uid;
+    if (userId == null) {
+      print('⚠️ No user logged in, cannot listen for battle invites');
+      return;
+    }
+
+    print('🎧 Starting battle invite listener for user: $userId');
+
+    try {
+      _channel = Supabase.instance.client
+          .channel('battle_invites:$userId')
+          .onPostgresChanges(
+            event: PostgresChangeEvent.insert,
+            schema: 'public',
+            table: 'battle_invites',
+            callback: (payload) {
+              // Filter manually since the typed filter might not be available
+              final toUid = payload.newRecord['to_uid']?.toString();
+              if (toUid == userId) {
+                print('📨 New battle invite received!');
+                print('Payload: ${payload.newRecord}');
+                _showInviteDialog(context, payload.newRecord);
+              }
+            },
+          )
+          .subscribe((status, error) {
+            if (error != null) {
+              print('❌ Subscribe error: $error');
+            } else {
+              print('✅ Subscribed to battle invites: $status');
+              _isListening = true;
+            }
+          });
+    } catch (e) {
+      print('❌ Error setting up listener: $e');
+    }
+  }
+
+  void _showInviteDialog(BuildContext context, Map<String, dynamic> inviteData) {
+    if (!context.mounted) {
+      print('⚠️ Context not mounted, cannot show dialog');
+      return;
+    }
+
+    // Extract data safely
+    final fromUserName = inviteData['from_user_name']?.toString() ?? 'Someone';
+    final battleTitle = inviteData['battle_title']?.toString() ?? 'Battle Challenge';
+    final battleId = inviteData['battle_id']?.toString() ?? '';
+    final inviteId = inviteData['id']?.toString() ?? '';
+    final fromUserId = inviteData['from_uid']?.toString() ?? '';
+
+    print('🎉 Showing invite dialog from: $fromUserName');
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: const Color(0xFF0E2414),
+        title: const Row(
+          children: [
+            Icon(Icons.sports_mma, color: Color(0xFF2F9B57)),
+            SizedBox(width: 8),
+            Text('Battle Challenge!', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text(
+              'You have been challenged to a battle!',
+              style: TextStyle(color: Colors.white70, fontSize: 16),
+            ),
+            const SizedBox(height: 16),
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  colors: [const Color(0xFF2F9B57).withOpacity(0.2), const Color(0xFF0E2414)],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: const Color(0xFF2F9B57), width: 1),
+              ),
+              child: Column(
+                children: [
+                  const Icon(Icons.emoji_events, color: Color(0xFF2F9B57), size: 32),
+                  const SizedBox(height: 8),
+                  Text(
+                    battleTitle,
+                    style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'From: $fromUserName',
+                    style: const TextStyle(color: Colors.white70, fontSize: 14),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => _declineInvite(inviteId, dialogContext, context),
+            child: const Text('Decline', style: TextStyle(color: Colors.red)),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF2F9B57),
+              foregroundColor: Colors.white,
+            ),
+            onPressed: () => _acceptInvite(battleId, inviteId, fromUserId, fromUserName, dialogContext, context),
+            child: const Text('Accept Battle!'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _acceptInvite(String battleId, String inviteId, String fromUserId, String fromUserName, BuildContext dialogContext, BuildContext scaffoldContext) {
+    if (dialogContext.mounted) {
+      Navigator.of(dialogContext).pop();
+    }
+
+    print('✅ Accepting battle invite: $inviteId');
+
+    if (scaffoldContext.mounted) {
+      // Navigate to battle lobby
+      Navigator.pushNamed(
+        scaffoldContext,
+        '/battle/lobby',
+        arguments: {
+          'battleId': battleId,
+          'inviteId': inviteId,
+          'fromUserId': fromUserId,
+          'fromUserName': fromUserName,
+        },
+      );
+    }
+  }
+
+  void _declineInvite(String inviteId, BuildContext dialogContext, BuildContext scaffoldContext) {
+    if (dialogContext.mounted) {
+      Navigator.of(dialogContext).pop();
+    }
+
+    print('❌ Declining battle invite: $inviteId');
+
+    if (scaffoldContext.mounted) {
+      ScaffoldMessenger.of(scaffoldContext).showSnackBar(
+        const SnackBar(content: Text('Battle declined'), backgroundColor: Colors.orange),
+      );
+    }
+  }
+
+  void stopListening() {
+    if (_channel != null) {
+      print('🛑 Stopping battle invite listener');
+      _channel?.unsubscribe();
+      _channel = null;
+      _isListening = false;
+    }
+  }
+}

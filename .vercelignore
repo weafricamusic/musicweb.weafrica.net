@@ -1,0 +1,32 @@
+# Vercel CLI upload ignore rules.
+#
+# This workspace is not a git repo (no .git directory), so the Vercel CLI will
+# not automatically respect .gitignore. Without this file it may upload local
+# build artifacts (e.g. build/ APKs) and hit Vercel's 100MB file limit.
+
+# Flutter / Dart build artifacts
+build/
+.dart_tool/
+.pub/
+.pub-cache/
+coverage/
+
+# Native build caches (not needed for web deploy)
+android/.gradle/
+android/build/
+android/app/build/
+ios/Pods/
+ios/.symlinks/
+macos/Pods/
+
+# IDE / OS noise
+.idea/
+.vscode/
+*.iml
+.DS_Store
+
+# Local env/secrets (web config is injected via Vercel env vars)
+.env*
+tool/WEAFRICA_ENV_JSON_BASE64.txt
+tool/supabase.env.json
+assets/config/supabase.env.json

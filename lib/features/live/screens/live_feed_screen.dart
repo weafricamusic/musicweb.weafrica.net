@@ -1,0 +1,391 @@
+import 'dart:async';
+
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+
+import '../../../app/utils/app_result.dart';
+import '../../../app/theme/weafrica_colors.dart';
+import '../models/live_session_model.dart';
+import 'consumer_battle_screen.dart';
+import '../services/live_feed_discover_service.dart';
+import '../services/battle_service.dart';
+import '../services/live_session_service.dart';
+import 'live_swipe_watch_screen.dart';
+import 'live_watch_screen.dart';
+
+class LiveFeedScreen extends StatefulWidget {
+  const LiveFeedScreen({super.key});
+
+  @override
+  State<LiveFeedScreen> createState() => _LiveFeedScreenState();
+}
+
+class _LiveFeedScreenState extends State<LiveFeedScreen>
+    with SingleTickerProviderStateMixin {
+  final LiveFeedDiscoverService _service = LiveFeedDiscoverService();
+
+  List<Map<String, dynamic>> _liveStreams = [];
+
+  bool _loading = true;
+  String? _error;
+
+  late final AnimationController _pulseController;
+  late final Animation<double> _pulse;
+
+  @override
+  void initState() {
+    super.initState();
+
+    _pulseController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 900),
+    )..repeat(reverse: true);
+
+    _pulse = CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut);
+
+    _safeLoad();
+  }
+
+  @override
+  void dispose() {
+    _pulseController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _safeLoad() async {
+    try {
+      await _loadData();
+    } catch (e) {
+      debugPrint('Live feed load error: $e');
+    }
+  }
+
+  Future<void> _loadData() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+
+    try {
+      final liveNow = await _service.fetchLiveNow(limit: 40);
+      final visible = liveNow.where((m) => !_isInternalTestStream(m)).toList();
+
+      if (!mounted) return;
+      setState(() {
+        _liveStreams = visible;
+        _loading = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _error = 'Could not load Live right now.';
+        _loading = false;
+      });
+    }
+  }
+
+  Future<void> _refresh() async {
+    try {
+      final liveNow = await _service.fetchLiveNow(limit: 40);
+      final visible = liveNow.where((m) => !_isInternalTestStream(m)).toList();
+
+      if (!mounted) return;
+      setState(() {
+        _liveStreams = visible;
+        _error = null;
+      });
+    } catch (_) {}
+  }
+
+  String _formatNumber(int number) {
+    if (number >= 1000000) return '${(number / 1000000).toStringAsFixed(1)}M';
+    if (number >= 1000) return '${(number / 1000).toStringAsFixed(1)}K';
+    return number.toString();
+  }
+
+  int _asInt(dynamic v) {
+    if (v is int) return v;
+    if (v is num) return v.toInt();
+    return int.tryParse(v?.toString() ?? '') ?? 0;
+  }
+
+  String _s(dynamic v) => (v ?? '').toString().trim();
+
+  bool _isInternalTestStream(Map<String, dynamic> row) {
+    final text = '${row['host_name']} ${row['host_id']} ${row['channel_id']}'.toLowerCase();
+    return text.contains('phase2') ||
+        text.contains('verify') ||
+        text.contains('post3000');
+  }
+
+  bool _isBattleStream(Map<String, dynamic> stream) {
+    final channelId = _s(stream['channel_id']);
+    if (channelId.startsWith('weafrica_battle_')) return true;
+    if (stream['live_type'] == 'battle') return true;
+    if (stream['mode'] == 'BATTLE_1v1') return true;
+    if (stream['category'] == 'battle') return true;
+    return false;
+  }
+
+  bool _isBattleChannel(String channelId) {
+    return channelId.trim().startsWith('weafrica_battle_');
+  }
+
+  String _battleIdFromChannel(String channelId) {
+    final c = channelId.trim();
+    const prefix = 'weafrica_battle_';
+    if (!c.startsWith(prefix)) return '';
+    return c.substring(prefix.length).trim();
+  }
+
+  Future<void> _openLive(Map<String, dynamic> stream) async {
+    final channelId = _s(stream['channel_id']);
+    if (channelId.isEmpty) return;
+
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => LiveSwipeWatchScreen(initialChannelId: channelId),
+      ),
+    );
+  }
+
+  Future<void> _joinAndOpen(Map<String, dynamic> stream) async {
+    final streamId = _s(stream['id']);
+    final channelId = _s(stream['channel_id']);
+    if (channelId.isEmpty) return;
+    final isBattle = _isBattleStream(stream);
+
+    final user = FirebaseAuth.instance.currentUser;
+    final viewerId = (user?.uid ?? 'guest');
+
+    final battleId = _s(stream['battle_id']).isNotEmpty ? _s(stream['battle_id']) : _battleIdFromChannel(channelId);
+
+    final joinRes = await LiveSessionService().joinSession(
+      channelId,
+      viewerId,
+      battleId: isBattle && battleId.isNotEmpty ? battleId : null,
+    );
+    final session = joinRes.data;
+    final failureMessage = switch (joinRes) {
+      AppFailure<LiveSession>(:final userMessage) => userMessage,
+      _ => null,
+    };
+
+    debugPrint(
+      'LIVE_JOIN_ATTEMPT channel=$channelId streamId=$streamId viewer=$viewerId isBattle=$isBattle result=${session == null ? 'failed' : 'ok'} message=${(failureMessage ?? '').trim()}',
+    );
+
+    if (!mounted) return;
+
+    if (session == null) {
+      debugPrint('LIVE_JOIN_FAILED stream=${stream.toString()}');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            (failureMessage ?? '').trim().isNotEmpty
+                ? failureMessage!.trim()
+                : 'Could not join this live right now.',
+          ),
+          backgroundColor: WeAfricaColors.error,
+        ),
+      );
+      return;
+    }
+
+    final agoraUid = _stableAgoraUid(viewerId);
+
+    if (isBattle) {
+      final battleRes = await BattleService().getBattle(
+        session.id,
+        battleId: battleId.isNotEmpty ? battleId : null,
+      );
+      final battle = battleRes.data;
+      if (!mounted) return;
+
+      await Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => ConsumerBattleScreen(
+            sessionId: session.id,
+            liveId: session.liveId,
+            battleId: battle?.id ?? (battleId.isNotEmpty ? battleId : null),
+            competitor1Id: battle?.competitor1Id ?? _s(stream['host_id']),
+            competitor2Id: battle?.competitor2Id ?? '',
+            competitor1Name: battle?.competitor1Name ?? _s(stream['host_name']),
+            competitor2Name: battle?.competitor2Name ?? 'Opponent',
+            competitor1Type: battle?.competitor1Type ?? 'artist',
+            competitor2Type: battle?.competitor2Type ?? 'artist',
+            durationSeconds: battle?.timeRemaining ?? 1800,
+            currentUserId: viewerId,
+            currentUserName: (_s(user?.displayName).isNotEmpty ? _s(user?.displayName) : 'Viewer'),
+            channelId: session.channelId,
+            token: session.token,
+            agoraUid: agoraUid,
+          ),
+        ),
+      );
+      return;
+    }
+
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => LiveWatchScreen(
+          channelId: session.channelId,
+          hostName: _s(stream['host_name']),
+          streamId: streamId,
+        ),
+      ),
+    );
+  }
+
+  int _stableAgoraUid(String userId) {
+    final h = userId.hashCode.abs();
+    final uid = (h % 2000000000);
+    return uid == 0 ? 1 : uid;
+  }
+
+  String? _resolveImageUrl(String? raw) {
+    final v = (raw ?? '').trim();
+    if (v.isEmpty) return null;
+
+    if (v.startsWith('http')) return v;
+
+    try {
+      return Supabase.instance.client.storage.from('thumbnails').getPublicUrl(v);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_loading && _liveStreams.isEmpty) {
+      return const Scaffold(
+        backgroundColor: WeAfricaColors.stageBlack,
+        body: Center(child: CircularProgressIndicator()),
+      );
+    }
+
+    if (_error != null && _liveStreams.isEmpty) {
+      return Scaffold(
+        backgroundColor: WeAfricaColors.stageBlack,
+        body: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Text(
+              _error!,
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: Colors.white70),
+            ),
+          ),
+        ),
+      );
+    }
+
+    return Scaffold(
+      backgroundColor: WeAfricaColors.stageBlack,
+      body: RefreshIndicator(
+        onRefresh: _refresh,
+        child: GridView.builder(
+          padding: const EdgeInsets.all(12),
+          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: 2,
+            crossAxisSpacing: 10,
+            mainAxisSpacing: 10,
+            childAspectRatio: 0.8,
+          ),
+          itemCount: _liveStreams.length,
+          itemBuilder: (context, index) {
+            final stream = _liveStreams[index];
+            final thumb = _resolveImageUrl(stream['thumbnail_url']);
+
+            return GestureDetector(
+              onTap: () => _joinAndOpen(stream),
+              child: Container(
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(14),
+                  color: Colors.black,
+                  image: thumb != null
+                      ? DecorationImage(
+                          image: NetworkImage(thumb),
+                          fit: BoxFit.cover,
+                        )
+                      : null,
+                ),
+                child: Stack(
+                  children: [
+                    Container(
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(14),
+                        gradient: LinearGradient(
+                          colors: [
+                            Colors.transparent,
+                            Colors.black.withValues(alpha: 0.8),
+                          ],
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                        ),
+                      ),
+                    ),
+                    Positioned(
+                      top: 8,
+                      left: 8,
+                      child: _LiveBadge(pulse: _pulse),
+                    ),
+                    Positioned(
+                      bottom: 10,
+                      left: 10,
+                      right: 10,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            _s(stream['host_name']),
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          Text(
+                            '${_formatNumber(_asInt(stream['viewer_count']))} watching',
+                            style: const TextStyle(color: Colors.white70),
+                          ),
+                        ],
+                      ),
+                    )
+                  ],
+                ),
+              ),
+            );
+          },
+        ),
+      ),
+    );
+  }
+}
+
+class _LiveBadge extends StatelessWidget {
+  const _LiveBadge({required this.pulse});
+
+  final Animation<double> pulse;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        ScaleTransition(
+          scale: pulse,
+          child: const Icon(Icons.circle, color: Colors.red, size: 8),
+        ),
+        const SizedBox(width: 4),
+        const Text(
+          'LIVE',
+          style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+        ),
+      ],
+    );
+  }
+}

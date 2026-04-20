@@ -1,0 +1,1752 @@
+import 'dart:async';
+import 'dart:math' as math;
+import 'dart:ui';
+import 'package:agora_rtc_engine/agora_rtc_engine.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+
+import '../../../app/theme/weafrica_colors.dart';
+import '../../../app/utils/app_result.dart';
+import '../../wallet/wallet_screen.dart';
+import '../controllers/live_stream_controller.dart';
+import '../controllers/gift_controller.dart';
+import '../models/chat_message_model.dart';
+import '../models/stream_challenge.dart';
+import '../models/battle_invite.dart';
+import '../models/live_session_model.dart';
+import '../models/gift_model.dart';
+import '../services/gift_service.dart';
+import '../services/live_economy_api.dart';
+import '../services/live_socket_client.dart';
+import '../services/battle_matching_api.dart';
+import '../services/chat_service.dart';
+import '../services/live_likes_service.dart';
+import 'battle_challenge_screen.dart';
+import '../widgets/gift/gift_animation_overlay.dart';
+
+class LiveWatchScreen extends StatefulWidget {
+  const LiveWatchScreen({
+    super.key,
+    required this.streamId,
+    required this.hostId,
+    required this.channelId,
+    required this.token,
+    required this.viewerUid,
+    required this.title,
+    required this.hostName,
+  });
+
+  final String streamId;
+  final String hostId;
+  final String channelId;
+  final String token;
+  final int viewerUid;
+  final String title;
+  final String hostName;
+
+  @override
+  State<LiveWatchScreen> createState() => _LiveWatchScreenState();
+}
+
+class _LiveWatchScreenState extends State<LiveWatchScreen> {
+  final LiveStreamController _controller = LiveStreamController();
+  final GiftController _giftController = GiftController();
+  final TextEditingController _commentController = TextEditingController();
+  final FocusNode _commentFocusNode = FocusNode();
+
+  bool _initializing = true;
+  bool _initOk = false;
+
+  LiveSocketClient? _socket;
+  StreamSubscription<LiveViewerCountEvent>? _viewerCountSub;
+  StreamSubscription<int>? _likeCountSub;
+  StreamSubscription<List<Map<String, dynamic>>>? _giftEventsSub;
+  StreamSubscription<List<Map<String, dynamic>>>? _liveGoalsSub;
+  Timer? _challengeStatusPollTimer;
+  final LiveLikesService _likesService = LiveLikesService();
+
+  bool _profileLoaded = false;
+  bool _canChallenge = false;
+  bool _sendingChallenge = false;
+  bool _sendingComment = false;
+  bool _loadingInlineGifts = false;
+  String? _inlineGiftError;
+  bool _walletLoading = false;
+  BattleInvite? _outgoingChallenge;
+  bool _challengeStatusLoading = false;
+
+  int _viewerCount = 0;
+  int _likesCount = 0;
+  int _giftCoins = 0;
+  int _flowerGoalTarget = 0;
+  int _flowerGoalCurrent = 0;
+  int _diamondGoalTarget = 0;
+  int _diamondGoalCurrent = 0;
+  int _drumGoalTarget = 0;
+  int _drumGoalCurrent = 0;
+  bool _hasLiveGoals = false;
+  int? _coinBalance;
+  List<GiftModel> _inlineGifts = const <GiftModel>[];
+  final Map<String, int> _supporterCoins = <String, int>{};
+  _LiveActionTray _activeTray = _LiveActionTray.none;
+  final List<_LiveFloatingHeart> _floatingHearts = <_LiveFloatingHeart>[];
+  DateTime? _lastLoveReactionAt;
+
+  @override
+  void initState() {
+    super.initState();
+    _safeInit();
+    _safeInitSocket();
+    _initLikesRealtime();
+    _initGiftSupportersRealtime();
+    _initLiveGoalsRealtime();
+    _loadProfileForChallengeGate();
+    unawaited(_loadInlineGiftCatalog());
+    unawaited(_refreshCoinBalance());
+  }
+
+  @override
+  void dispose() {
+    _viewerCountSub?.cancel();
+    _likeCountSub?.cancel();
+    _giftEventsSub?.cancel();
+    _liveGoalsSub?.cancel();
+    _challengeStatusPollTimer?.cancel();
+    _commentController.dispose();
+    _commentFocusNode.dispose();
+    _controller.leaveChannel();
+    _socket?.dispose();
+    _controller.dispose();
+    _giftController.dispose();
+    super.dispose();
+  }
+
+  void _initLikesRealtime() {
+    _likeCountSub?.cancel();
+    _likeCountSub = _likesService
+        .watchLikeCount(channelId: widget.channelId)
+        .listen((count) {
+      if (!mounted) return;
+      setState(() => _likesCount = count);
+    });
+  }
+
+  void _initGiftSupportersRealtime() {
+    _giftEventsSub?.cancel();
+    _giftEventsSub = Supabase.instance.client
+        .from('live_gift_events')
+        .stream(primaryKey: const ['id'])
+        .eq('channel_id', widget.channelId)
+        .order('created_at')
+        .listen((rows) {
+      if (!mounted) return;
+
+      final supporters = <String, int>{};
+      var totalCoins = 0;
+      for (final row in rows) {
+        final sender = (row['sender_name'] ?? '').toString().trim();
+        if (sender.isEmpty) continue;
+        final coinRaw = row['coin_cost'];
+        final coins = coinRaw is num ? coinRaw.toInt() : int.tryParse('$coinRaw') ?? 0;
+        if (coins <= 0) continue;
+        totalCoins += coins;
+        supporters.update(sender, (v) => v + coins, ifAbsent: () => coins);
+      }
+
+      setState(() {
+        _giftCoins = totalCoins;
+        _supporterCoins
+          ..clear()
+          ..addAll(supporters);
+      });
+    });
+  }
+
+  int _toInt(dynamic raw, {int fallback = 0}) {
+    if (raw is int) return raw;
+    if (raw is num) return raw.toInt();
+    return int.tryParse('$raw') ?? fallback;
+  }
+
+  void _initLiveGoalsRealtime() {
+    final liveId = widget.streamId.trim();
+    if (liveId.isEmpty) return;
+
+    _liveGoalsSub?.cancel();
+    _liveGoalsSub = Supabase.instance.client
+        .from('live_goals')
+        .stream(primaryKey: const ['id'])
+        .eq('live_id', liveId)
+        .order('updated_at', ascending: false)
+        .limit(1)
+        .listen((rows) {
+      if (!mounted) return;
+      if (rows.isEmpty) {
+        setState(() {
+          _hasLiveGoals = false;
+        });
+        return;
+      }
+
+      final row = rows.first;
+      setState(() {
+        _hasLiveGoals = true;
+        _flowerGoalTarget = _toInt(row['flower_target']);
+        _flowerGoalCurrent = _toInt(row['flower_current']);
+        _diamondGoalTarget = _toInt(row['diamond_target']);
+        _diamondGoalCurrent = _toInt(row['diamond_current']);
+        _drumGoalTarget = _toInt(row['drum_target']);
+        _drumGoalCurrent = _toInt(row['drum_current']);
+      });
+    });
+  }
+
+  List<MapEntry<String, int>> _topSupporters() {
+    final entries = _supporterCoins.entries.toList(growable: false)
+      ..sort((a, b) => b.value.compareTo(a.value));
+    return entries.take(3).toList(growable: false);
+  }
+
+  Future<void> _refreshOutgoingChallengeStatus({
+    bool forceAll = false,
+  }) async {
+    final active = _outgoingChallenge;
+    if (!forceAll && active == null) return;
+
+    final targetHost = widget.hostId.trim();
+    final trackedId = active?.id.trim() ?? '';
+
+    setState(() => _challengeStatusLoading = true);
+    try {
+      final invites = await const BattleMatchingApi().listInvites(
+        box: 'outbox',
+        status: 'all',
+        limit: 25,
+      );
+
+      BattleInvite? candidate;
+      if (trackedId.isNotEmpty) {
+        for (final inv in invites) {
+          if (inv.id.trim() == trackedId) {
+            candidate = inv;
+            break;
+          }
+        }
+      }
+
+      candidate ??= invites
+          .where((inv) =>
+              inv.toUid.trim() == targetHost &&
+              inv.createdAt.isAfter(DateTime.now().subtract(const Duration(minutes: 20))))
+          .cast<BattleInvite?>()
+          .firstWhere((inv) => inv != null, orElse: () => null);
+
+      if (!mounted) return;
+      setState(() {
+        if (candidate != null) {
+          _outgoingChallenge = candidate;
+        }
+        _challengeStatusLoading = false;
+      });
+
+      final status = (_outgoingChallenge?.status ?? '').trim().toLowerCase();
+      if (status == 'accepted' || status == 'declined' || status == 'expired') {
+        _challengeStatusPollTimer?.cancel();
+        _challengeStatusPollTimer = null;
+      }
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _challengeStatusLoading = false);
+    }
+  }
+
+  void _startChallengeStatusPolling() {
+    _challengeStatusPollTimer?.cancel();
+    _challengeStatusPollTimer = Timer.periodic(
+      const Duration(seconds: 4),
+      (_) => unawaited(_refreshOutgoingChallengeStatus()),
+    );
+    unawaited(_refreshOutgoingChallengeStatus(forceAll: true));
+  }
+
+  Color _challengeStatusColor(String status) {
+    switch (status.trim().toLowerCase()) {
+      case 'accepted':
+        return WeAfricaColors.success;
+      case 'declined':
+      case 'rejected':
+      case 'expired':
+        return WeAfricaColors.error;
+      default:
+        return Colors.orangeAccent;
+    }
+  }
+
+  String _challengeStatusLabel(String status) {
+    switch (status.trim().toLowerCase()) {
+      case 'accepted':
+        return 'Accepted';
+      case 'declined':
+      case 'rejected':
+        return 'Declined';
+      case 'expired':
+        return 'Expired';
+      default:
+        return 'Pending';
+    }
+  }
+
+  Widget _buildChallengeStatusCard() {
+    final challenge = _outgoingChallenge;
+    if (challenge == null) return const SizedBox.shrink();
+
+    final status = _challengeStatusLabel(challenge.status);
+    final color = _challengeStatusColor(challenge.status);
+
+    return Container(
+      width: 210,
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: Colors.black.withValues(alpha: 0.55),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.18)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Text(
+            'Challenge Request',
+            style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 12),
+          ),
+          const SizedBox(height: 6),
+          Row(
+            children: [
+              Container(
+                width: 8,
+                height: 8,
+                decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+              ),
+              const SizedBox(width: 6),
+              Text(
+                status,
+                style: TextStyle(color: color, fontWeight: FontWeight.w800),
+              ),
+              const Spacer(),
+              if (_challengeStatusLoading)
+                const SizedBox(
+                  width: 12,
+                  height: 12,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _safeInit() async {
+    try {
+      await _init();
+    } catch (e) {
+      debugPrint('Live init error: $e');
+      if (mounted) {
+        setState(() {
+          _initializing = false;
+          _initOk = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _safeInitSocket() async {
+    try {
+      await _initSocket();
+    } catch (e) {
+      debugPrint('Socket init error: $e');
+    }
+  }
+
+  Future<void> _initSocket() async {
+    final streamId = widget.streamId.trim();
+    if (streamId.isEmpty) return;
+
+    final socket = LiveSocketClient();
+    _socket = socket;
+    _viewerCountSub = socket.viewerCountStream.listen((event) {
+      if (!mounted) return;
+      if (event.streamId.trim() != streamId) return;
+      setState(() => _viewerCount = event.count);
+    });
+    await socket.joinStream(streamId);
+  }
+
+  String get _currentUserId => (FirebaseAuth.instance.currentUser?.uid ?? '').trim();
+
+  String get _currentUserName {
+    final user = FirebaseAuth.instance.currentUser;
+    final displayName = (user?.displayName ?? '').trim();
+    if (displayName.isNotEmpty) return displayName;
+
+    final email = (user?.email ?? '').trim();
+    if (email.isNotEmpty) return email.split('@').first;
+
+    return 'Anonymous';
+  }
+
+  Future<void> _loadProfileForChallengeGate() async {
+    final user = FirebaseAuth.instance.currentUser;
+    final uid = (user?.uid ?? '').trim();
+    if (uid.isEmpty) {
+      if (!mounted) return;
+      setState(() {
+        _profileLoaded = true;
+        _canChallenge = false;
+      });
+      return;
+    }
+
+    if (uid == widget.hostId.trim()) {
+      if (!mounted) return;
+      setState(() {
+        _profileLoaded = true;
+        _canChallenge = false;
+      });
+      return;
+    }
+
+    try {
+      final row = await Supabase.instance.client
+          .from('profiles')
+          .select('role,user_type')
+          .eq('id', uid)
+          .maybeSingle()
+          .timeout(const Duration(seconds: 6));
+
+      final role = (row?['role'] ?? row?['user_type'] ?? '').toString().trim().toLowerCase();
+      final ok = role == 'artist' || role == 'dj';
+
+      if (!mounted) return;
+      setState(() {
+        _profileLoaded = true;
+        _canChallenge = ok;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _profileLoaded = true;
+        _canChallenge = false;
+      });
+    }
+  }
+
+  Future<void> _sendChallenge() async {
+    if (_sendingChallenge) return;
+
+    final hostId = widget.hostId.trim();
+    if (hostId.isEmpty) return;
+
+    setState(() => _sendingChallenge = true);
+    try {
+      final challenge = await Navigator.of(context).push<StreamChallenge>(
+        MaterialPageRoute(
+          builder: (_) => BattleChallengeScreen(
+            targetUserId: hostId,
+            targetName: widget.hostName,
+            targetAvatar: '',
+          ),
+        ),
+      );
+
+      if (challenge == null) return;
+
+      _outgoingChallenge = BattleInvite(
+        id: challenge.id,
+        battleId: challenge.liveRoomId,
+        fromUid: _currentUserId,
+        toUid: hostId,
+        fromUserName: _currentUserName,
+        status: challenge.status,
+        createdAt: challenge.createdAt ?? DateTime.now(),
+        expiresAt: challenge.expiresAt ?? DateTime.now().add(const Duration(minutes: 5)),
+        battleTitle: challenge.message,
+      );
+      _startChallengeStatusPolling();
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            challenge.beatName != null
+                ? 'Challenge sent with ${challenge.beatName}. Waiting for response...'
+                : 'Challenge sent! Waiting for response...',
+          ),
+          backgroundColor: Colors.green,
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Could not send challenge: $e'),
+          backgroundColor: WeAfricaColors.error,
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _sendingChallenge = false);
+    }
+  }
+
+  Future<void> _loadInlineGiftCatalog() async {
+    setState(() {
+      _loadingInlineGifts = true;
+      _inlineGiftError = null;
+    });
+    try {
+      final gifts = await GiftService().listCatalog();
+      if (!mounted) return;
+      setState(() {
+        _inlineGifts = gifts;
+        _loadingInlineGifts = false;
+        _inlineGiftError = null;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _loadingInlineGifts = false;
+        _inlineGiftError = e.toString();
+        _inlineGifts = const <GiftModel>[];
+      });
+    }
+  }
+
+  Future<void> _refreshCoinBalance() async {
+    if (_walletLoading) return;
+    setState(() => _walletLoading = true);
+    try {
+      final balance = await LiveEconomyApi().fetchMyCoinBalance();
+      if (!mounted) return;
+      setState(() {
+        _coinBalance = balance;
+        _walletLoading = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _walletLoading = false);
+    }
+  }
+
+  Future<void> _openWallet() async {
+    if (!mounted) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => const WalletScreen(),
+      ),
+    );
+    if (!mounted) return;
+    await _refreshCoinBalance();
+  }
+
+  Future<void> _sendGift(GiftModel gift, String toHostId) async {
+    final target = toHostId.trim().isNotEmpty ? toHostId.trim() : widget.hostId.trim();
+    if (target.isEmpty) return;
+
+    final balance = _coinBalance;
+    if (balance != null && balance < gift.coinValue) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('You need ${gift.coinValue} coins for ${gift.displayName}. Opening wallet...'),
+          backgroundColor: WeAfricaColors.error,
+        ),
+      );
+      unawaited(_openWallet());
+      return;
+    }
+
+    final res = await GiftService().sendGift(
+      channelId: widget.channelId,
+      toHostId: target,
+      giftId: gift.id,
+      senderName: _currentUserName,
+      liveId: widget.streamId,
+    );
+
+    if (!mounted) return;
+
+    res.when(
+      success: (receipt) {
+        setState(() {
+          _coinBalance = receipt.newBalance;
+        });
+        _giftController.sendGift(
+          GiftModel(
+            id: gift.id,
+            type: gift.type,
+            senderName: _currentUserName,
+            receiverId: target,
+            coinValue: gift.coinValue,
+            scoreValue: gift.scoreValue,
+            accessTier: gift.accessTier,
+          ),
+        );
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Sent ${gift.displayName}.'),
+            backgroundColor: WeAfricaColors.success,
+          ),
+        );
+        unawaited(_refreshCoinBalance());
+      },
+      loading: () {},
+      error: () {
+        final userMessage = switch (res) {
+          AppFailure<SendGiftReceipt>(:final userMessage) => userMessage,
+          _ => null,
+        };
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(userMessage ?? 'Could not send gift.'),
+            backgroundColor: WeAfricaColors.error,
+          ),
+        );
+        unawaited(_refreshCoinBalance());
+      },
+    );
+  }
+
+  Future<void> _sendComment() async {
+    final liveId = widget.streamId.trim();
+    final text = _commentController.text.trim();
+    if (liveId.isEmpty || text.isEmpty || _sendingComment) return;
+
+    setState(() => _sendingComment = true);
+    _commentController.clear();
+
+    try {
+      final res = await ChatService().sendMessage(
+        liveId: liveId,
+        userId: _currentUserId,
+        userName: _currentUserName,
+        message: text,
+      );
+
+      if (!mounted) return;
+      switch (res) {
+        case AppSuccess<void>():
+          _commentFocusNode.unfocus();
+          break;
+        case AppFailure<void>(:final userMessage):
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(userMessage ?? 'Could not send message.'),
+              backgroundColor: WeAfricaColors.error,
+            ),
+          );
+          break;
+        case AppLoading<void>():
+          break;
+      }
+    } finally {
+      if (mounted) setState(() => _sendingComment = false);
+    }
+  }
+
+  void _toggleTray(_LiveActionTray tray) {
+    setState(() {
+      _activeTray = _activeTray == tray ? _LiveActionTray.none : tray;
+    });
+  }
+
+  void _sendLoveReactionAt(Offset position) {
+    final now = DateTime.now();
+    if (_lastLoveReactionAt != null && now.difference(_lastLoveReactionAt!) < const Duration(milliseconds: 110)) {
+      return;
+    }
+    _lastLoveReactionAt = now;
+
+    final origin = Offset(
+      math.max(8, position.dx - 13),
+      math.max(8, position.dy - 13),
+    );
+
+    late final _LiveFloatingHeart heart;
+    heart = _LiveFloatingHeart(
+      key: UniqueKey(),
+      color: _randomHeartColor(),
+      driftX: _randomHeartDrift(),
+      origin: origin,
+      onComplete: (completed) {
+        if (!mounted) return;
+        setState(() => _floatingHearts.remove(completed));
+      },
+    );
+
+    setState(() {
+      _floatingHearts.add(heart);
+      if (_floatingHearts.length > 36) {
+        _floatingHearts.removeRange(0, _floatingHearts.length - 36);
+      }
+    });
+  }
+
+  void _sendAudienceLikeAt(Offset position) {
+    _sendLoveReactionAt(position);
+    unawaited(_likesService.sendLike(channelId: widget.channelId));
+  }
+
+  Color _randomHeartColor() {
+    const colors = <Color>[
+      WeAfricaColors.error,
+      Colors.pinkAccent,
+      Color(0xFFFF6FAE),
+      Color(0xFFFF8FB8),
+      Color(0xFFFF5E7A),
+    ];
+    return colors[math.Random().nextInt(colors.length)];
+  }
+
+  double _randomHeartDrift() {
+    final random = math.Random();
+    return (random.nextDouble() * 42) - 21;
+  }
+
+  List<GiftModel> _trayGiftsFor(_LiveActionTray tray) {
+    switch (tray) {
+      case _LiveActionTray.gift:
+        return _inlineGifts.take(8).toList(growable: false);
+      case _LiveActionTray.hype:
+        return _inlineGifts
+            .where((gift) =>
+                gift.type == GiftType.fire ||
+                gift.type == GiftType.love ||
+                gift.type == GiftType.fireworks ||
+                gift.type == GiftType.star)
+            .take(6)
+            .toList(growable: false);
+      case _LiveActionTray.mic:
+        return _inlineGifts
+            .where((gift) =>
+                gift.type == GiftType.mic ||
+                gift.type == GiftType.crown ||
+                gift.type == GiftType.rocket)
+            .take(6)
+            .toList(growable: false);
+      case _LiveActionTray.boost:
+        return _inlineGifts
+            .where((gift) =>
+                gift.type == GiftType.rocket ||
+                gift.type == GiftType.diamond ||
+                gift.type == GiftType.rainbow)
+            .take(6)
+            .toList(growable: false);
+      case _LiveActionTray.none:
+        return const <GiftModel>[];
+    }
+  }
+
+  String _formatViewerCount(int count) {
+    if (count >= 1000000) return '${(count / 1000000).toStringAsFixed(1)}M';
+    if (count >= 1000) return '${(count / 1000).toStringAsFixed(1)}K';
+    return '$count';
+  }
+
+  Widget _buildViewerBadge() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.18)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(Icons.remove_red_eye_outlined, color: Colors.white, size: 16),
+          const SizedBox(width: 6),
+          Text(
+            _formatViewerCount(_viewerCount),
+            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildLikesBadge() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: Colors.pinkAccent.withValues(alpha: 0.18),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: Colors.pinkAccent.withValues(alpha: 0.30)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(Icons.favorite, color: Colors.pinkAccent, size: 14),
+          const SizedBox(width: 6),
+          Text(
+            _formatViewerCount(_likesCount),
+            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildGoalsBadge() {
+    if (!_hasLiveGoals) return const SizedBox.shrink();
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.10),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.20)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Goal Tracker',
+            style: TextStyle(color: Colors.white70, fontWeight: FontWeight.w700, fontSize: 11),
+          ),
+          const SizedBox(height: 3),
+          Text(
+            'Flowers ${_formatViewerCount(_flowerGoalCurrent)} / ${_formatViewerCount(_flowerGoalTarget)}   Diamonds ${_formatViewerCount(_diamondGoalCurrent)} / ${_formatViewerCount(_diamondGoalTarget)}',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 11),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            'Drum Power ${_formatViewerCount(_drumGoalCurrent)} / ${_formatViewerCount(_drumGoalTarget)}',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 11),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSupportersStrip() {
+    final top = _topSupporters();
+    if (top.isEmpty) return const SizedBox.shrink();
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: Colors.black.withValues(alpha: 0.42),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.14)),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.workspace_premium, color: WeAfricaColors.gold, size: 14),
+          const SizedBox(width: 6),
+          Text(
+            'Supporters ${_formatViewerCount(_giftCoins)}',
+            style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w800),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              top.map((e) => '${e.key} ${e.value}').join('  •  '),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(color: Colors.white70, fontSize: 11, fontWeight: FontWeight.w600),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCoinBalanceBadge() {
+    final label = _walletLoading
+        ? '...'
+        : _coinBalance == null
+            ? '--'
+            : '$_coinBalance';
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: _openWallet,
+        borderRadius: BorderRadius.circular(999),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          decoration: BoxDecoration(
+            color: Colors.amber.withValues(alpha: 0.14),
+            borderRadius: BorderRadius.circular(999),
+            border: Border.all(color: Colors.amber.withValues(alpha: 0.26)),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.monetization_on, color: Colors.amber, size: 16),
+              const SizedBox(width: 6),
+              Text(
+                label,
+                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800),
+              ),
+              const SizedBox(width: 6),
+              const Icon(Icons.add_circle_outline, color: Colors.white70, size: 14),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildFloatingComments(Size size) {
+    final insetBottom = MediaQuery.viewInsetsOf(context).bottom;
+    return Positioned(
+      left: 12,
+      right: size.width * 0.30,
+      bottom: (insetBottom > 0 ? insetBottom : 0) + 96,
+      child: _LiveFloatingCommentsOverlay(liveId: widget.streamId),
+    );
+  }
+
+  Widget _buildBottomComposer() {
+    final insetBottom = MediaQuery.viewInsetsOf(context).bottom;
+    return Positioned(
+      left: 12,
+      right: 12,
+      bottom: 12 + insetBottom,
+      child: _GlassComposerBar(
+        controller: _commentController,
+        focusNode: _commentFocusNode,
+        sending: _sendingComment,
+        onTap: () => _commentFocusNode.requestFocus(),
+        onSend: _sendComment,
+      ),
+    );
+  }
+
+  Widget _buildActionButtons() {
+    final insetBottom = MediaQuery.viewInsetsOf(context).bottom;
+    return Positioned(
+      right: 12,
+      bottom: 88 + insetBottom,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          _buildChallengeStatusCard(),
+          if (_outgoingChallenge != null) const SizedBox(height: 10),
+          _FloatingActionButton(
+            icon: Icons.chat_bubble,
+            color: Colors.white,
+            label: 'Chat',
+            onTap: () => _commentFocusNode.requestFocus(),
+          ),
+          const SizedBox(height: 10),
+          _FloatingActionButton(
+            icon: Icons.card_giftcard,
+            color: Colors.orange,
+            label: 'Gift',
+            active: _activeTray == _LiveActionTray.gift,
+            onTap: () => _toggleTray(_LiveActionTray.gift),
+          ),
+          const SizedBox(height: 10),
+          _FloatingActionButton(
+            icon: Icons.favorite,
+            color: Colors.pinkAccent,
+            label: 'Love',
+            active: _activeTray == _LiveActionTray.hype,
+            onTap: () {
+              final size = MediaQuery.sizeOf(context);
+              _sendAudienceLikeAt(Offset(size.width * 0.84, size.height * 0.74));
+            },
+            onLongPress: () => _toggleTray(_LiveActionTray.hype),
+          ),
+          const SizedBox(height: 10),
+          _FloatingActionButton(
+            icon: Icons.mic,
+            color: Colors.purpleAccent,
+            label: 'Mic',
+            active: _activeTray == _LiveActionTray.mic,
+            onTap: () => _toggleTray(_LiveActionTray.mic),
+          ),
+          const SizedBox(height: 10),
+          _FloatingActionButton(
+            icon: Icons.flash_on,
+            color: Colors.amber,
+            label: 'Boost',
+            active: _activeTray == _LiveActionTray.boost,
+            onTap: () => _toggleTray(_LiveActionTray.boost),
+          ),
+          if (_profileLoaded && _canChallenge) ...[
+            const SizedBox(height: 10),
+            _FloatingActionButton(
+              icon: Icons.sports_mma,
+              color: WeAfricaColors.error,
+              label: _sendingChallenge ? '...' : 'Challenge Host',
+              onTap: _sendingChallenge ? null : _sendChallenge,
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildInlineTray() {
+    final tray = _activeTray;
+    if (tray == _LiveActionTray.none) return const SizedBox.shrink();
+
+    final items = _trayGiftsFor(tray);
+    final insetBottom = MediaQuery.viewInsetsOf(context).bottom;
+
+    return Positioned(
+      left: 12,
+      right: 84,
+      bottom: 154 + insetBottom,
+      child: AnimatedSwitcher(
+        duration: const Duration(milliseconds: 220),
+        child: _InlineGiftTray(
+          key: ValueKey<_LiveActionTray>(tray),
+          title: switch (tray) {
+            _LiveActionTray.gift => 'Send a gift',
+            _LiveActionTray.hype => 'Hype the live',
+            _LiveActionTray.mic => 'Mic drops',
+            _LiveActionTray.boost => 'Boost the artist',
+            _LiveActionTray.none => '',
+          },
+          loading: _loadingInlineGifts,
+          errorMessage: _inlineGiftError,
+          gifts: items,
+          onRetry: _loadInlineGiftCatalog,
+          onGiftTap: (gift) {
+            unawaited(_sendGift(gift, widget.hostId));
+            setState(() => _activeTray = _LiveActionTray.none);
+          },
+          onClose: () => setState(() => _activeTray = _LiveActionTray.none),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _init() async {
+    final ch = widget.channelId.trim();
+    final token = widget.token.trim();
+    debugPrint(
+      'CONSUMER_INIT watch streamId=${widget.streamId} channel=$ch uid=${widget.viewerUid} tokenLen=${token.length}',
+    );
+    if (ch.isEmpty || token.isEmpty) {
+      debugPrint('CONSUMER_INIT watch aborted: missing channel or token');
+      if (!mounted) return;
+      setState(() {
+        _initializing = false;
+        _initOk = false;
+      });
+      return;
+    }
+
+    final uid = widget.viewerUid;
+
+    final ok = await _controller.initialize(
+      channelId: ch,
+      token: token,
+      role: UserRole.audience,
+      uid: uid,
+    );
+
+    debugPrint(
+      ok
+          ? 'CONSUMER_INIT watch success: joined channel=$ch uid=$uid'
+          : 'CONSUMER_INIT watch failed: channel=$ch uid=$uid',
+    );
+
+    if (!mounted) return;
+    setState(() {
+      _initializing = false;
+      _initOk = ok;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final title = widget.title.trim().isEmpty ? 'Live' : widget.title.trim();
+    final host = widget.hostName.trim().isEmpty ? 'Host' : widget.hostName.trim();
+    final size = MediaQuery.sizeOf(context);
+
+    final engine = _controller.engine;
+
+    return ChangeNotifierProvider<GiftController>.value(
+      value: _giftController,
+      child: Scaffold(
+        backgroundColor: Colors.black,
+        body: SafeArea(
+          child: Stack(
+            children: [
+              Positioned.fill(
+                child: _initializing
+                    ? const Center(
+                        child: CircularProgressIndicator(color: WeAfricaColors.gold),
+                      )
+                    : (!_initOk || engine == null)
+                        ? Center(
+                            child: Padding(
+                              padding: const EdgeInsets.all(16),
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  const Icon(Icons.wifi_off, color: Colors.white70, size: 40),
+                                  const SizedBox(height: 10),
+                                  const Text(
+                                    'Could not open this live right now.',
+                                    style: TextStyle(color: Colors.white70),
+                                    textAlign: TextAlign.center,
+                                  ),
+                                  const SizedBox(height: 12),
+                                  TextButton(
+                                    onPressed: () => Navigator.of(context).pop(),
+                                    child: const Text('Go back'),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          )
+                        : ValueListenableBuilder<Set<int>>(
+                            valueListenable: _controller.remoteVideoUidsNotifier,
+                            builder: (context, remoteUids, _) {
+                              final channelId = _controller.channelId ?? widget.channelId;
+                              final remoteUid = remoteUids.isNotEmpty ? remoteUids.first : null;
+
+                              if (remoteUid == null) {
+                                return const Center(
+                                  child: Column(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      CircularProgressIndicator(color: WeAfricaColors.gold),
+                                      SizedBox(height: 14),
+                                      Text('Waiting for host…', style: TextStyle(color: Colors.white70)),
+                                    ],
+                                  ),
+                                );
+                              }
+
+                              return AgoraVideoView(
+                                controller: VideoViewController.remote(
+                                  rtcEngine: engine,
+                                  canvas: VideoCanvas(uid: remoteUid),
+                                  connection: RtcConnection(channelId: channelId),
+                                ),
+                              );
+                            },
+                          ),
+              ),
+
+              Positioned.fill(
+                child: GestureDetector(
+                  behavior: HitTestBehavior.translucent,
+                  onTapDown: (details) => _sendAudienceLikeAt(details.localPosition),
+                  child: const SizedBox.expand(),
+                ),
+              ),
+
+              Positioned.fill(
+                child: IgnorePointer(
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [
+                          Colors.black.withValues(alpha: 0.28),
+                          Colors.transparent,
+                          Colors.black.withValues(alpha: 0.42),
+                        ],
+                        stops: const [0, 0.34, 1],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+
+              Positioned(
+                top: 12,
+                left: 12,
+                right: 52,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  decoration: BoxDecoration(
+                    color: Colors.black.withValues(alpha: 0.45),
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Container(
+                                  width: 8,
+                                  height: 8,
+                                  decoration: const BoxDecoration(
+                                    color: WeAfricaColors.error,
+                                    shape: BoxShape.circle,
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                const Text(
+                                  'LIVE - Freestyle Session',
+                                  style: TextStyle(color: Colors.white, fontWeight: FontWeight.w900),
+                                ),
+                                const SizedBox(width: 10),
+                                _buildViewerBadge(),
+                                const SizedBox(width: 8),
+                                _buildLikesBadge(),
+                              ],
+                            ),
+                            const SizedBox(height: 6),
+                            Text(
+                              title,
+                              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w900),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              host,
+                              style: const TextStyle(color: Colors.white70),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            if (_hasLiveGoals) ...[
+                              const SizedBox(height: 8),
+                              _buildGoalsBadge(),
+                            ],
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      _buildCoinBalanceBadge(),
+                    ],
+                  ),
+                ),
+              ),
+
+              Positioned(
+                top: 88,
+                left: 12,
+                right: 80,
+                child: _buildSupportersStrip(),
+              ),
+
+              _buildFloatingComments(size),
+              Positioned.fill(
+                child: IgnorePointer(
+                  child: _LiveFloatingHeartsLayer(hearts: _floatingHearts),
+                ),
+              ),
+              const Positioned.fill(child: IgnorePointer(child: GiftAnimationOverlay())),
+              _buildInlineTray(),
+              _buildActionButtons(),
+              _buildBottomComposer(),
+
+              Positioned(
+                top: 6,
+                right: 6,
+                child: IconButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  icon: const Icon(Icons.close, color: Colors.white),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+enum _LiveActionTray { none, gift, hype, mic, boost }
+
+class _GlassComposerBar extends StatelessWidget {
+  const _GlassComposerBar({
+    required this.controller,
+    required this.focusNode,
+    required this.sending,
+    required this.onTap,
+    required this.onSend,
+  });
+
+  final TextEditingController controller;
+  final FocusNode focusNode;
+  final bool sending;
+  final VoidCallback onTap;
+  final VoidCallback onSend;
+
+  @override
+  Widget build(BuildContext context) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(28),
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(14, 10, 10, 10),
+          decoration: BoxDecoration(
+            color: Colors.black.withValues(alpha: 0.42),
+            borderRadius: BorderRadius.circular(28),
+            border: Border.all(color: Colors.white.withValues(alpha: 0.10)),
+          ),
+          child: Row(
+            children: [
+              const Icon(Icons.chat_bubble_outline, color: Colors.white70, size: 18),
+              const SizedBox(width: 10),
+              Expanded(
+                child: TextField(
+                  controller: controller,
+                  focusNode: focusNode,
+                  style: const TextStyle(color: Colors.white, fontSize: 14),
+                  decoration: const InputDecoration(
+                    isDense: true,
+                    hintText: 'Write a comment...',
+                    hintStyle: TextStyle(color: Colors.white54),
+                    border: InputBorder.none,
+                  ),
+                  textInputAction: TextInputAction.send,
+                  onTap: onTap,
+                  onSubmitted: (_) => onSend(),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Material(
+                color: Colors.white.withValues(alpha: 0.10),
+                shape: const CircleBorder(),
+                child: InkWell(
+                  onTap: sending ? null : onSend,
+                  customBorder: const CircleBorder(),
+                  child: Padding(
+                    padding: const EdgeInsets.all(10),
+                    child: sending
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2, color: WeAfricaColors.gold),
+                          )
+                        : const Icon(Icons.arrow_upward, color: WeAfricaColors.gold, size: 18),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _FloatingActionButton extends StatelessWidget {
+  const _FloatingActionButton({
+    required this.icon,
+    required this.color,
+    required this.label,
+    required this.onTap,
+    this.onLongPress,
+    this.active = false,
+  });
+
+  final IconData icon;
+  final Color color;
+  final String label;
+  final VoidCallback? onTap;
+  final VoidCallback? onLongPress;
+  final bool active;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.end,
+      children: [
+        ClipRRect(
+          borderRadius: BorderRadius.circular(999),
+          child: BackdropFilter(
+            filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
+            child: Material(
+              color: active
+                  ? Colors.white.withValues(alpha: 0.18)
+                  : Colors.black.withValues(alpha: 0.34),
+              shape: const CircleBorder(),
+              child: InkWell(
+                onTap: onTap,
+                onLongPress: onLongPress,
+                customBorder: const CircleBorder(),
+                child: Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: Icon(icon, color: color, size: 22),
+                ),
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          label,
+          style: const TextStyle(color: Colors.white70, fontSize: 11, fontWeight: FontWeight.w700),
+        ),
+      ],
+    );
+  }
+}
+
+class _InlineGiftTray extends StatelessWidget {
+  const _InlineGiftTray({
+    super.key,
+    required this.title,
+    required this.loading,
+    required this.errorMessage,
+    required this.gifts,
+    required this.onRetry,
+    required this.onGiftTap,
+    required this.onClose,
+  });
+
+  final String title;
+  final bool loading;
+  final String? errorMessage;
+  final List<GiftModel> gifts;
+  final Future<void> Function() onRetry;
+  final void Function(GiftModel gift) onGiftTap;
+  final VoidCallback onClose;
+
+  @override
+  Widget build(BuildContext context) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(22),
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(14, 12, 10, 12),
+          decoration: BoxDecoration(
+            color: Colors.black.withValues(alpha: 0.38),
+            borderRadius: BorderRadius.circular(22),
+            border: Border.all(color: Colors.white.withValues(alpha: 0.10)),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      title,
+                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800),
+                    ),
+                  ),
+                  IconButton(
+                    onPressed: onClose,
+                    icon: const Icon(Icons.close, color: Colors.white70, size: 18),
+                    constraints: const BoxConstraints(),
+                    padding: EdgeInsets.zero,
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              if (loading)
+                const SizedBox(
+                  height: 54,
+                  child: Center(child: CircularProgressIndicator(color: WeAfricaColors.gold)),
+                )
+              else if ((errorMessage ?? '').trim().isNotEmpty)
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Could not load gifts from backend.',
+                      style: TextStyle(color: Colors.white70, fontSize: 12),
+                    ),
+                    const SizedBox(height: 8),
+                    TextButton(
+                      onPressed: () {
+                        unawaited(onRetry());
+                      },
+                      child: const Text('Retry'),
+                    ),
+                  ],
+                )
+              else if (gifts.isEmpty)
+                const SizedBox(
+                  height: 54,
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      'No gifts available.',
+                      style: TextStyle(color: Colors.white70, fontSize: 12),
+                    ),
+                  ),
+                )
+              else
+                SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(
+                    children: [
+                      for (final gift in gifts)
+                        Padding(
+                          padding: const EdgeInsets.only(right: 10),
+                          child: _InlineGiftChip(gift: gift, onTap: () => onGiftTap(gift)),
+                        ),
+                    ],
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _InlineGiftChip extends StatelessWidget {
+  const _InlineGiftChip({required this.gift, required this.onTap});
+
+  final GiftModel gift;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(18),
+        child: Container(
+          width: 78,
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+          decoration: BoxDecoration(
+            color: Colors.white.withValues(alpha: 0.08),
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(color: gift.color.withValues(alpha: 0.30)),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(gift.icon, color: gift.color, size: 22),
+              const SizedBox(height: 8),
+              Text(
+                gift.displayName,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w700),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                '${gift.coinValue} coins',
+                style: const TextStyle(color: Colors.white60, fontSize: 10),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _LiveFloatingCommentsOverlay extends StatefulWidget {
+  const _LiveFloatingCommentsOverlay({required this.liveId});
+
+  final String liveId;
+
+  @override
+  State<_LiveFloatingCommentsOverlay> createState() => _LiveFloatingCommentsOverlayState();
+}
+
+class _LiveFloatingCommentsOverlayState extends State<_LiveFloatingCommentsOverlay> {
+  Timer? _tick;
+
+  @override
+  void initState() {
+    super.initState();
+    _tick = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (mounted) setState(() {});
+    });
+  }
+
+  @override
+  void dispose() {
+    _tick?.cancel();
+    super.dispose();
+  }
+
+  double _opacityForAge(Duration age) {
+    final seconds = age.inMilliseconds / 1000.0;
+    if (seconds <= 1.2) return 1.0;
+    if (seconds >= 10) return 0.0;
+    final t = (seconds - 1.2) / (10 - 1.2);
+    return (1 - t).clamp(0.0, 1.0);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final liveId = widget.liveId.trim();
+    if (liveId.isEmpty) return const SizedBox.shrink();
+
+    return StreamBuilder<List<ChatMessageModel>>(
+      stream: ChatService().watchMessages(liveId: liveId, limit: 20),
+      builder: (context, snapshot) {
+        final List<ChatMessageModel> messages =
+            (snapshot.data ?? const <ChatMessageModel>[]).cast<ChatMessageModel>();
+        final now = DateTime.now().toUtc();
+        final List<ChatMessageModel> visible = messages.where((ChatMessageModel entry) {
+          final age = now.difference(entry.timestamp.toUtc());
+          return age.inSeconds <= 12 && entry.message.trim().isNotEmpty;
+        }).take(5).toList(growable: false);
+        if (visible.isEmpty) return const SizedBox.shrink();
+
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            for (final msg in visible)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 6),
+                child: Opacity(
+                  opacity: _opacityForAge(now.difference(msg.timestamp.toUtc())),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(16),
+                    child: BackdropFilter(
+                      filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+                        decoration: BoxDecoration(
+                          color: Colors.black.withValues(alpha: 0.30),
+                          borderRadius: BorderRadius.circular(16),
+                          border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
+                        ),
+                        child: RichText(
+                          text: TextSpan(
+                            children: [
+                              TextSpan(
+                                text: '${msg.userName}: ',
+                                style: const TextStyle(
+                                  color: WeAfricaColors.gold,
+                                  fontWeight: FontWeight.w900,
+                                  fontSize: 12,
+                                ),
+                              ),
+                              TextSpan(
+                                text: msg.message,
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.w700,
+                                  fontSize: 12,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _LiveFloatingHeartsLayer extends StatelessWidget {
+  const _LiveFloatingHeartsLayer({required this.hearts});
+
+  final List<_LiveFloatingHeart> hearts;
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      fit: StackFit.expand,
+      children: hearts
+          .map(
+            (heart) => Positioned(
+              left: heart.origin.dx,
+              top: heart.origin.dy,
+              child: heart,
+            ),
+          )
+          .toList(growable: false),
+    );
+  }
+}
+
+class _LiveFloatingHeart extends StatefulWidget {
+  const _LiveFloatingHeart({
+    super.key,
+    required this.onComplete,
+    required this.color,
+    required this.driftX,
+    required this.origin,
+  });
+
+  final void Function(_LiveFloatingHeart) onComplete;
+  final Color color;
+  final double driftX;
+  final Offset origin;
+
+  @override
+  State<_LiveFloatingHeart> createState() => _LiveFloatingHeartState();
+}
+
+class _LiveFloatingHeartState extends State<_LiveFloatingHeart>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+  late final Animation<double> _opacity;
+  late final Animation<double> _dy;
+  late final Animation<double> _dx;
+  late final Animation<double> _scale;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      duration: const Duration(milliseconds: 1800),
+      vsync: this,
+    );
+    final curve = CurvedAnimation(parent: _controller, curve: Curves.easeOutCubic);
+    _dy = Tween<double>(begin: 0, end: -190).animate(curve);
+    _dx = Tween<double>(begin: 0, end: widget.driftX).animate(curve);
+    _scale = Tween<double>(begin: 0.92, end: 1.3).animate(curve);
+    _opacity = TweenSequence<double>([
+      TweenSequenceItem(tween: Tween<double>(begin: 0.0, end: 1.0), weight: 18),
+      TweenSequenceItem(tween: Tween<double>(begin: 1.0, end: 0.0), weight: 82),
+    ]).animate(curve);
+    _controller.forward().whenComplete(() => widget.onComplete(widget));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _controller,
+      builder: (context, child) {
+        return Transform.translate(
+          offset: Offset(_dx.value, _dy.value),
+          child: Opacity(
+            opacity: _opacity.value,
+            child: Transform.scale(scale: _scale.value, child: child),
+          ),
+        );
+      },
+      child: Icon(Icons.favorite, color: widget.color, size: 26),
+    );
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+}

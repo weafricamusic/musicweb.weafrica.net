@@ -1,0 +1,4 @@
+-- Placeholder migration.
+--
+-- This file exists to match a migration version already present in the remote
+-- `supabase_migrations.schema_migrations` history table.

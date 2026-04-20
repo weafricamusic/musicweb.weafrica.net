@@ -1,0 +1,142 @@
+import 'package:flutter/material.dart';
+
+import 'app_bootstrap.dart';
+import 'navigation/app_navigator.dart';
+import 'navigation/route_tracker.dart';
+import 'theme.dart';
+import '../features/settings/settings_controller.dart';
+import '../features/splash/splash_screen.dart';
+import '../features/auth/auth_gate.dart';
+import '../features/dj_dashboard/screens/dj_dashboard_screen.dart';
+import '../features/artist_dashboard/screens/artist_dashboard_screen.dart';
+import '../features/live/screens/live_feed_screen.dart';
+import '../features/live/screens/battle_lobby_screen.dart';
+import 'widgets/firebase_setup_screen.dart';
+import 'widgets/supabase_setup_screen.dart';
+import '../services/battle_invite_manager.dart';
+import '../features/settings/constants_viewer_screen.dart';
+
+class MyApp extends StatefulWidget {
+  const MyApp({
+    super.key,
+    this.homeOverride,
+  });
+
+  final Widget? homeOverride;
+
+  @override
+  State<MyApp> createState() => _MyAppState();
+}
+
+class _MyAppState extends State<MyApp> {
+  ValueNotifier<String>? _bootstrapProgress;
+  Future<AppBootstrapResult>? _bootstrapFuture;
+  final _battleInviteManager = BattleInviteManager();
+
+  static const Duration _minSplashDuration = Duration(milliseconds: 2400);
+
+  Future<AppBootstrapResult> _bootstrapWithMinSplash() async {
+    final stopwatch = Stopwatch()..start();
+    final result = await bootstrapApp(
+      deferNonCritical: true,
+      onProgress: (msg) {
+        _bootstrapProgress?.value = msg;
+      },
+    );
+
+    final remaining = _minSplashDuration - stopwatch.elapsed;
+    if (remaining > Duration.zero) {
+      await Future<void>.delayed(remaining);
+    }
+    return result;
+  }
+
+  void _ensureBootstrapStarted() {
+    if (_bootstrapFuture != null) return;
+
+    _bootstrapProgress = ValueNotifier<String>(BootstrapProgress.stage1);
+    _bootstrapFuture = _bootstrapWithMinSplash();
+  }
+
+  @override
+  void initState() {
+    super.initState();
+
+    if (widget.homeOverride == null) {
+      _ensureBootstrapStarted();
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant MyApp oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.homeOverride != widget.homeOverride && widget.homeOverride == null) {
+      _ensureBootstrapStarted();
+    }
+  }
+
+  @override
+  void dispose() {
+    _bootstrapProgress?.dispose();
+    _battleInviteManager.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (widget.homeOverride == null) {
+      _ensureBootstrapStarted();
+    }
+
+    final settings = SettingsController.instance;
+    return AnimatedBuilder(
+      animation: settings,
+      builder: (context, _) {
+        return MaterialApp(
+          title: 'WeAfrica Music',
+          debugShowCheckedModeBanner: false,
+          navigatorKey: AppNavigator.key,
+          navigatorObservers: [AppRouteTracker.instance],
+          theme: buildDarkTheme(),
+          darkTheme: buildDarkTheme(),
+          themeMode: ThemeMode.dark,
+          routes: {
+            '/dj/studio': (_) => const DjDashboardScreen(),
+            '/dj/dashboard': (_) => const DjDashboardScreen(),
+            '/artist/dashboard': (_) => const ArtistDashboardScreen(),
+            '/live/feed': (_) => const LiveFeedScreen(),
+            '/battle/lobby': (_) => const BattleLobbyScreen(),
+            '/constants': (_) => const AppConstantsViewerScreen(),
+          },
+          home: widget.homeOverride ??
+              FutureBuilder<AppBootstrapResult>(
+                future: _bootstrapFuture,
+                builder: (context, snap) {
+                  if (snap.connectionState != ConnectionState.done) {
+                    return ValueListenableBuilder<String>(
+                      valueListenable: _bootstrapProgress!,
+                      builder: (context, msg, _) {
+                        return SplashScreen(statusText: msg);
+                      },
+                    );
+                  }
+
+                  final result = snap.data;
+                  final supabaseError = result?.supabaseInitError;
+                  final firebaseError = result?.firebaseInitError;
+
+                  if (supabaseError != null) {
+                    if (kIsWeb) return const SizedBox.shrink(); else return SupabaseSetupScreen(errorMessage: supabaseError.toString());
+                  }
+                  if (firebaseError != null) {
+                    return FirebaseSetupScreen(errorMessage: firebaseError.toString());
+                  }
+
+                  return AuthGate(battleInviteManager: _battleInviteManager);
+                },
+              ),
+        );
+      },
+    );
+  }
+}

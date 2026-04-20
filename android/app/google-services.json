@@ -1,0 +1,47 @@
+{
+  "project_info": {
+    "project_number": "985705961084",
+    "project_id": "weafrica-music-85cdc",
+    "storage_bucket": "weafrica-music-85cdc.appspot.com"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:985705961084:android:b54f781ebed8564ec45bf9",
+        "android_client_info": {
+          "package_name": "com.weafrica_music"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "985705961084-ohos59b1t90knnvmaukchm1dvkajkucn.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.weafrica_music",
+            "certificate_hash": "e501fa2be605be3a5e3a40b4354990782c688de2"
+          }
+        },
+        {
+          "client_id": "985705961084-5dj6a187056bvkfqf5n7026t4pkr6r0i.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDE62G2Eia3Y9YklKn_yOLuc0DPGx8a1Lk"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "985705961084-5dj6a187056bvkfqf5n7026t4pkr6r0i.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

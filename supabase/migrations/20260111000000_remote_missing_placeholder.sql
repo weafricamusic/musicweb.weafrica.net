@@ -1,0 +1,7 @@
+-- Placeholder migration.
+--
+-- Migration version 20260111000000 exists in the remote Supabase migration
+-- history but the original SQL file is not available in this repo.
+--
+-- Keeping this empty file allows `supabase db push` to reconcile migration
+-- history safely without changing the database.

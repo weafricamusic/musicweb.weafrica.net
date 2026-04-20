@@ -1,0 +1,7 @@
+-- Placeholder migration.
+--
+-- This project previously had migration version 20260209120000 applied remotely,
+-- but the SQL file was not present locally.
+--
+-- Keeping an empty migration here allows `supabase db push` to reconcile local
+-- and remote migration history without modifying the database.

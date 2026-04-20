@@ -1,0 +1,5 @@
+| issue_type                  | example_url                                                                                                                                                                            |
+| --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Uses underscore bucket name | https://nxkutpjdoidfwpkjbwcm.supabase.co/storage/v1/object/public/song-thumbnails/hxyIJoUqLbXfGydlKZ3pYnwGEAl1/1767530895282_thumb_1767530614276_screenshot_20251224_122602_google.jpg |
+| Uses underscore bucket name | https://nxkutpjdoidfwpkjbwcm.supabase.co/storage/v1/object/public/song-thumbnails/Onesimus.jpg                                                                                         |
+| Uses underscore bucket name | https://nxkutpjdoidfwpkjbwcm.supabase.co/storage/v1/object/public/song-thumbnails/Joeboy.jpeg                                                                                          |

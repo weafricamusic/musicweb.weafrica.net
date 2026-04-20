@@ -1,0 +1,17528 @@
+// Supabase Edge Function: api
+//
+// Provides backend endpoints expected by the Flutter app:
+// - GET /api/subscriptions/plans
+// - GET /api/subscriptions/me
+// - GET /api/subscriptions/promotions
+// - GET /api/promotions (alias)
+// - GET /api/promo (alias)
+// - GET /api/promotion (alias)
+//
+// Deploy:
+//   supabase functions deploy api --no-verify-jwt
+//
+// After deploy, set Flutter WEAFRICA_API_BASE_URL to:
+//   https://<project-ref>.functions.supabase.co
+// so requests to /api/... hit this function.
+
+import { createClient } from "npm:@supabase/supabase-js@2.45.4";
+
+type JoseModule = typeof import("npm:jose@4.15.4");
+
+let joseModulePromise: Promise<JoseModule> | null = null;
+let firebaseJwksPromise: Promise<ReturnType<JoseModule["createRemoteJWKSet"]>> | null = null;
+
+function getJoseModule(): Promise<JoseModule> {
+  if (!joseModulePromise) {
+    joseModulePromise = import("npm:jose@4.15.4");
+  }
+  return joseModulePromise;
+}
+
+async function getFirebaseJwks(): Promise<ReturnType<JoseModule["createRemoteJWKSet"]>> {
+  if (!firebaseJwksPromise) {
+    firebaseJwksPromise = getJoseModule().then((jose) =>
+      jose.createRemoteJWKSet(
+        new URL("https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com"),
+      ),
+    );
+  }
+  return firebaseJwksPromise;
+}
+
+import {
+  AGORA_TOKEN_VERSION,
+  buildAgoraRtcTokenV006,
+  buildAgoraRtmTokenV006,
+} from "../_shared/agora.ts";
+
+type JsonObject = Record<string, unknown>;
+
+const BUILD_TAG = "2026-03-19-consumer-plan-gating";
+
+function defaultSharedBattleChannel(uid: string): string {
+  const normalizedUid = String(uid ?? "").trim();
+  return normalizedUid ? `live_${normalizedUid}` : "";
+}
+
+function uniqueBattleChannel(uid: string, seed?: string | null): string {
+  const uidPart = String(uid ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_]/g, "")
+    .slice(0, 24);
+  const seedPart = String(seed ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "")
+    .slice(0, 20);
+
+  const safeUid = uidPart || "host";
+  const safeSeed = seedPart || crypto.randomUUID().replace(/-/g, "").slice(0, 20);
+  return `live_${safeUid}_${safeSeed}`;
+}
+
+function isChannelIdUniqueViolation(error: unknown): boolean {
+  const e = (error ?? {}) as Record<string, unknown>;
+  const code = String(e.code ?? "").trim();
+  const msg = String(e.message ?? e.details ?? "").toLowerCase();
+  return code === "23505" || msg.includes("live_battles_channel_id_key") || msg.includes("duplicate key value");
+}
+
+function resolveBattleContext(params: { channelId: string; battleId?: string | null }): { isBattle: boolean; battleId: string } {
+  const channelId = String(params.channelId ?? "").trim();
+  const explicitBattleId = String(params.battleId ?? "").trim();
+  if (explicitBattleId) {
+    return { isBattle: true, battleId: explicitBattleId };
+  }
+  const prefix = "weafrica_battle_";
+  if (channelId.startsWith(prefix)) {
+    return { isBattle: true, battleId: channelId.slice(prefix.length).trim() };
+  }
+  return { isBattle: false, battleId: "" };
+}
+
+function isTruthyFollowValue(value: unknown): boolean {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") return value > 0;
+  const s = String(value ?? "").trim().toLowerCase();
+  return s === "true" || s === "1" || s === "yes" || s === "y";
+}
+
+async function resolveHostFollowTargetIds(sb: any, hostUid: string): Promise<string[]> {
+  const uid = String(hostUid ?? "").trim();
+  if (!uid) return [];
+
+  const ids = new Set<string>([uid]);
+
+  const tables = ["artists", "djs"];
+  const ownerColumns = ["user_id", "firebase_uid"];
+  for (const table of tables) {
+    for (const ownerCol of ownerColumns) {
+      try {
+        const { data, error } = await sb
+          .from(table)
+          .select("id")
+          .eq(ownerCol, uid)
+          .limit(10);
+        if (error || !Array.isArray(data)) continue;
+        for (const row of data) {
+          const id = String((row as any)?.id ?? "").trim();
+          if (id) ids.add(id);
+        }
+      } catch (_) {
+        // Best-effort only.
+      }
+    }
+  }
+
+  return Array.from(ids);
+}
+
+async function isUserFollowing(sb: any, hostUid: string, viewerUid: string): Promise<boolean> {
+  const host = String(hostUid ?? "").trim();
+  const viewer = String(viewerUid ?? "").trim();
+  if (!host || !viewer) return false;
+  if (host === viewer) return true;
+
+  const targets = await resolveHostFollowTargetIds(sb, host);
+  if (targets.length === 0) return false;
+
+  // Preferred follow table for non-UUID and mixed schemas.
+  try {
+    const { data, error } = await sb
+      .from("pulse_follows")
+      .select("artist_id,following")
+      .eq("user_id", viewer)
+      .in("artist_id", targets)
+      .limit(20);
+    if (!error && Array.isArray(data)) {
+      for (const row of data) {
+        if (isTruthyFollowValue((row as any)?.following) || (row as any)?.following === undefined) {
+          return true;
+        }
+      }
+    }
+  } catch (_) {
+    // Best-effort only.
+  }
+
+  // Canonical followers table where artist_id is typically UUID.
+  const uuidTargets = targets.filter((id) => looksLikeUuid(id));
+  if (uuidTargets.length > 0) {
+    try {
+      const { data, error } = await sb
+        .from("followers")
+        .select("artist_id")
+        .eq("user_id", viewer)
+        .in("artist_id", uuidTargets)
+        .limit(1);
+      if (!error && Array.isArray(data) && data.length > 0) {
+        return true;
+      }
+    } catch (_) {
+      // Best-effort only.
+    }
+  }
+
+  return false;
+}
+
+type DjSong = { id: string; bpm: number; energy: number; genre?: string };
+
+type DjDecision = "switch_genre_fast" | "increase_energy" | "maintain_vibe" | "go_all_out";
+
+type AiAction = "beat_generation" | "beat_audio_generation" | "beat_audio_battle_120" | "battle_prediction" | "advanced_insight";
+
+type AiPricing = {
+  action: AiAction;
+  coin_cost: number;
+  daily_free_limit: number;
+  enabled: boolean;
+};
+
+const DEFAULT_AI_PRICING: Record<AiAction, AiPricing> = {
+  beat_generation: { action: "beat_generation", coin_cost: 50, daily_free_limit: 3, enabled: true },
+  beat_audio_generation: { action: "beat_audio_generation", coin_cost: 250, daily_free_limit: 0, enabled: true },
+  beat_audio_battle_120: { action: "beat_audio_battle_120", coin_cost: 250, daily_free_limit: 1, enabled: true },
+  battle_prediction: { action: "battle_prediction", coin_cost: 20, daily_free_limit: 0, enabled: true },
+  advanced_insight: { action: "advanced_insight", coin_cost: 10, daily_free_limit: 0, enabled: true },
+};
+
+function parseAiAction(raw: unknown): AiAction | null {
+  const s = String(raw ?? "").trim();
+  if (
+    s === "beat_generation" ||
+    s === "beat_audio_generation" ||
+    s === "beat_audio_battle_120" ||
+    s === "battle_prediction" ||
+    s === "advanced_insight"
+  ) return s;
+  return null;
+}
+
+function asStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => String(item ?? "").trim())
+    .filter((item) => item.length > 0);
+}
+
+function normalizeSenderRole(value: unknown): "system" | "consumer" | "artist" | "dj" | null {
+  const role = String(value ?? "").trim().toLowerCase();
+  if (role === "system" || role === "consumer" || role === "artist" || role === "dj") {
+    return role;
+  }
+  return null;
+}
+
+async function insertUserNotification(
+  sb: any,
+  params: {
+    receiverUid: string;
+    senderUid?: string | null;
+    senderRole?: string | null;
+    type: string;
+    title?: string | null;
+    body?: string | null;
+    action?: string | null;
+    entityId?: string | null;
+    entityType?: string | null;
+    data?: Record<string, unknown>;
+  },
+): Promise<void> {
+  const receiverUid = String(params.receiverUid ?? "").trim();
+  if (!receiverUid) return;
+
+  const senderUid = String(params.senderUid ?? "").trim() || null;
+  const senderRole = normalizeSenderRole(params.senderRole);
+  const type = String(params.type ?? "general").trim() || "general";
+  const title = String(params.title ?? "").trim() || null;
+  const body = String(params.body ?? "").trim() || null;
+  const action = String(params.action ?? "").trim() || null;
+  const entityId = String(params.entityId ?? "").trim() || null;
+  const entityType = String(params.entityType ?? "").trim() || null;
+  const now = new Date().toISOString();
+
+  const payloadData: Record<string, unknown> = {
+    ...(params.data ?? {}),
+    sender_uid: senderUid,
+    receiver_uid: receiverUid,
+    action,
+    entity_id: entityId,
+    entity_type: entityType,
+  };
+
+  const table = "notifications";
+  const attempts: Array<Record<string, unknown>> = [
+    {
+      user_uid: receiverUid,
+      sender_uid: senderUid,
+      sender_role: senderRole,
+      type,
+      title,
+      body,
+      data: payloadData,
+      action,
+      entity_id: entityId,
+      entity_type: entityType,
+      read: false,
+      created_at: now,
+    },
+    {
+      user_uid: receiverUid,
+      type,
+      title,
+      body,
+      data: payloadData,
+      read: false,
+      created_at: now,
+    },
+    {
+      user_id: receiverUid,
+      type,
+      title,
+      body,
+      data: payloadData,
+      is_read: false,
+      created_at: now,
+    },
+    {
+      uid: receiverUid,
+      type,
+      title,
+      body,
+      data: payloadData,
+      created_at: now,
+    },
+  ];
+
+  for (const row of attempts) {
+    const { error } = await sb.from(table).insert(row);
+    if (!error) return;
+  }
+}
+
+async function insertUserNotificationsBulk(
+  sb: any,
+  params: {
+    receiverUids: string[];
+    senderUid?: string | null;
+    senderRole?: string | null;
+    type: string;
+    title?: string | null;
+    body?: string | null;
+    action?: string | null;
+    entityId?: string | null;
+    entityType?: string | null;
+    data?: Record<string, unknown>;
+  },
+): Promise<void> {
+  const receiverUids = Array.from(
+    new Set((params.receiverUids ?? []).map((u) => String(u ?? "").trim()).filter(Boolean)),
+  );
+  if (!receiverUids.length) return;
+
+  const senderUid = String(params.senderUid ?? "").trim() || null;
+  const senderRole = normalizeSenderRole(params.senderRole);
+  const type = String(params.type ?? "general").trim() || "general";
+  const title = String(params.title ?? "").trim() || null;
+  const body = String(params.body ?? "").trim() || null;
+  const action = String(params.action ?? "").trim() || null;
+  const entityId = String(params.entityId ?? "").trim() || null;
+  const entityType = String(params.entityType ?? "").trim() || null;
+  const now = new Date().toISOString();
+  const table = "notifications";
+
+  const buildData = (receiverUid: string): Record<string, unknown> => ({
+    ...(params.data ?? {}),
+    sender_uid: senderUid,
+    receiver_uid: receiverUid,
+    action,
+    entity_id: entityId,
+    entity_type: entityType,
+  });
+
+  const canonicalRows = receiverUids.map((receiverUid) => ({
+    user_uid: receiverUid,
+    sender_uid: senderUid,
+    sender_role: senderRole,
+    type,
+    title,
+    body,
+    data: buildData(receiverUid),
+    action,
+    entity_id: entityId,
+    entity_type: entityType,
+    read: false,
+    created_at: now,
+  }));
+
+  const minimalRows = receiverUids.map((receiverUid) => ({
+    user_uid: receiverUid,
+    type,
+    title,
+    body,
+    data: buildData(receiverUid),
+    read: false,
+    created_at: now,
+  }));
+
+  const fallbackRows = receiverUids.map((receiverUid) => ({
+    user_id: receiverUid,
+    type,
+    title,
+    body,
+    data: buildData(receiverUid),
+    is_read: false,
+    created_at: now,
+  }));
+
+  for (let i = 0; i < canonicalRows.length; i += 500) {
+    const canonicalChunk = canonicalRows.slice(i, i + 500);
+    const { error: canonicalErr } = await sb.from(table).insert(canonicalChunk);
+    if (!canonicalErr) continue;
+
+    const minimalChunk = minimalRows.slice(i, i + 500);
+    const { error: minimalErr } = await sb.from(table).insert(minimalChunk);
+    if (!minimalErr) continue;
+
+    const fallbackChunk = fallbackRows.slice(i, i + 500);
+    await sb.from(table).insert(fallbackChunk);
+  }
+}
+
+type ReplicatePrediction = {
+  id: string;
+  status: "starting" | "processing" | "succeeded" | "failed" | "canceled";
+  output?: unknown;
+  error?: unknown;
+};
+
+const replicateApiToken = (Deno.env.get("REPLICATE_API_TOKEN") ?? "").trim();
+const replicateModel = (Deno.env.get("WEAFRICA_REPLICATE_MUSIC_MODEL") ?? "meta/musicgen").trim();
+const replicateVersion = (Deno.env.get("WEAFRICA_REPLICATE_MUSIC_VERSION") ?? "").trim();
+const aiBeatsBucket = (Deno.env.get("WEAFRICA_AI_BEATS_BUCKET") ?? "ai_beats").trim();
+
+const stabilityApiKey = (
+  Deno.env.get("STABILITY_API_KEY") ??
+    Deno.env.get("STABILITY_API_TOKEN") ??
+    Deno.env.get("WEAFRICA_STABILITY_API_KEY") ??
+    ""
+).trim();
+const stabilityAudioUrl = (
+  Deno.env.get("WEAFRICA_STABILITY_AUDIO_URL") ??
+    Deno.env.get("STABILITY_AUDIO_URL") ??
+    ""
+).trim();
+const stabilityStatusUrl = (
+  Deno.env.get("WEAFRICA_STABILITY_STATUS_URL") ??
+    Deno.env.get("STABILITY_STATUS_URL") ??
+    ""
+).trim();
+const stabilityTimeoutMsRaw = Number(Deno.env.get("WEAFRICA_STABILITY_TIMEOUT_MS") ?? NaN);
+const stabilityTimeoutMs = Number.isFinite(stabilityTimeoutMsRaw) ? Math.max(5_000, Math.min(120_000, Math.floor(stabilityTimeoutMsRaw))) : 45_000;
+
+function requireReplicate() {
+  if (!replicateApiToken) {
+    throw new HttpError(503, "not_configured", "Audio generation not configured (missing REPLICATE_API_TOKEN)");
+  }
+}
+
+function hasStabilityBeatAudio() {
+  return Boolean(stabilityApiKey && stabilityAudioUrl);
+}
+
+function requireStabilityBeatAudio() {
+  if (!stabilityApiKey) {
+    throw new HttpError(503, "not_configured", "Audio generation not configured (missing STABILITY_API_KEY)");
+  }
+  if (!stabilityAudioUrl) {
+    throw new HttpError(503, "not_configured", "Audio generation not configured (missing WEAFRICA_STABILITY_AUDIO_URL)");
+  }
+}
+
+async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: number): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function resolveStabilityStatusUrl(predictionId: string): string {
+  const pid = String(predictionId ?? "").trim();
+  if (!pid) return stabilityStatusUrl;
+  if (!stabilityStatusUrl) return "";
+  if (stabilityStatusUrl.includes("{id}")) {
+    return stabilityStatusUrl.replaceAll("{id}", encodeURIComponent(pid));
+  }
+  const base = stabilityStatusUrl.replace(/\/+$/, "");
+  return `${base}/${encodeURIComponent(pid)}`;
+}
+
+type StabilityStartResult =
+  | { kind: "direct"; bytes: Uint8Array; mime: string }
+  | { kind: "url"; url: string }
+  | { kind: "async"; id: string };
+
+async function stabilityStartAudioGeneration(input: { prompt: string; durationSeconds: number; seed?: number }): Promise<StabilityStartResult> {
+  requireStabilityBeatAudio();
+
+  const prompt = String(input.prompt ?? "").trim();
+  if (!prompt) {
+    throw new HttpError(400, "bad_request", "prompt is required");
+  }
+
+  const duration = Number.isFinite(input.durationSeconds)
+    ? Math.max(5, Math.min(180, Math.floor(input.durationSeconds)))
+    : 20;
+
+  const payload: Record<string, unknown> = {
+    prompt,
+    duration,
+    duration_seconds: duration,
+  };
+  if (input.seed !== undefined) payload.seed = input.seed;
+
+  const res = await fetchWithTimeout(
+    stabilityAudioUrl,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${stabilityApiKey}`,
+        "Content-Type": "application/json",
+        Accept: "audio/*,application/json",
+      },
+      body: JSON.stringify(payload),
+    },
+    stabilityTimeoutMs,
+  );
+
+  if (!res.ok) {
+    const msg = await res.text().catch(() => "");
+    throw new HttpError(502, "audio_provider_error", `Stability audio start failed: ${msg || res.status}`);
+  }
+
+  const ct = (res.headers.get("content-type") ?? "").split(";")[0].trim().toLowerCase();
+  if (ct.startsWith("audio/")) {
+    const bytes = new Uint8Array(await res.arrayBuffer());
+    const mime = ct || "audio/mpeg";
+    return { kind: "direct", bytes, mime };
+  }
+
+  let data: any = null;
+  try {
+    data = await res.json();
+  } catch (_) {
+    data = null;
+  }
+
+  const id = String(data?.id ?? data?.job_id ?? data?.jobId ?? data?.prediction_id ?? data?.predictionId ?? "").trim();
+  const outUrl = firstUrlFromOutput(data?.output ?? data?.audio_url ?? data?.audioUrl ?? data?.url ?? data?.result ?? data?.data);
+  const statusRaw = String(data?.status ?? data?.state ?? data?.phase ?? "").trim().toLowerCase();
+
+  if (outUrl) {
+    return { kind: "url", url: outUrl };
+  }
+
+  if (id) {
+    // Even if the provider is already done, status polling will resolve it.
+    // Common statuses: queued|running|processing|completed
+    return { kind: "async", id };
+  }
+
+  // Some providers reply with JSON but no id/url; treat as an invalid payload.
+  throw new HttpError(502, "audio_provider_error", "Stability returned an invalid audio start payload");
+}
+
+async function stabilityGetAudioStatus(predictionId: string): Promise<{ status: "running" | "succeeded" | "failed"; outUrl?: string; error?: string }> {
+  if (!stabilityApiKey) {
+    return { status: "failed", error: "missing_stability_api_key" };
+  }
+  if (!stabilityStatusUrl) {
+    return { status: "failed", error: "missing_stability_status_url" };
+  }
+
+  const url = resolveStabilityStatusUrl(predictionId);
+  if (!url) {
+    return { status: "failed", error: "missing_stability_status_url" };
+  }
+
+  const res = await fetchWithTimeout(
+    url,
+    {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${stabilityApiKey}`,
+        Accept: "application/json",
+      },
+    },
+    stabilityTimeoutMs,
+  );
+
+  if (!res.ok) {
+    const msg = await res.text().catch(() => "");
+    return { status: "failed", error: `status_http_${res.status}:${msg || ""}`.trim() };
+  }
+
+  let data: any = null;
+  try {
+    data = await res.json();
+  } catch (_) {
+    data = null;
+  }
+
+  const statusRaw = String(data?.status ?? data?.state ?? data?.phase ?? "").trim().toLowerCase();
+  const outUrl = firstUrlFromOutput(data?.output ?? data?.audio_url ?? data?.audioUrl ?? data?.url ?? data?.result ?? data?.data);
+  const err = String(data?.error ?? data?.message ?? "").trim();
+
+  const isFailed =
+    statusRaw === "failed" ||
+    statusRaw === "error" ||
+    statusRaw === "canceled" ||
+    statusRaw === "cancelled";
+
+  const isSucceeded =
+    statusRaw === "succeeded" ||
+    statusRaw === "success" ||
+    statusRaw === "completed" ||
+    statusRaw === "complete" ||
+    statusRaw === "done";
+
+  const isRunning =
+    statusRaw === "queued" ||
+    statusRaw === "running" ||
+    statusRaw === "processing" ||
+    statusRaw === "starting" ||
+    statusRaw === "in_progress" ||
+    statusRaw === "in progress" ||
+    statusRaw === "pending" ||
+    statusRaw === "";
+
+  if (isFailed) {
+    return { status: "failed", error: err || "provider_failed" };
+  }
+
+  if (isSucceeded) {
+    if (!outUrl) {
+      return { status: "failed", error: "missing_audio_url" };
+    }
+    return { status: "succeeded", outUrl };
+  }
+
+  if (isRunning) {
+    return { status: "running" };
+  }
+
+  // Unknown status: treat as running.
+  return { status: "running" };
+}
+
+function firstUrlFromOutput(output: unknown): string | null {
+  if (typeof output === "string" && output.trim().startsWith("http")) return output.trim();
+  if (Array.isArray(output)) {
+    for (const v of output) {
+      const u = firstUrlFromOutput(v);
+      if (u) return u;
+    }
+  }
+  if (output && typeof output === "object") {
+    const o = output as Record<string, unknown>;
+    const candidates = [o.audio, o.url, o.output, o.file, o.files, o.result];
+    for (const c of candidates) {
+      const u = firstUrlFromOutput(c);
+      if (u) return u;
+    }
+  }
+  return null;
+}
+
+async function replicateCreatePrediction(input: Record<string, unknown>): Promise<ReplicatePrediction> {
+  requireReplicate();
+
+  const url = replicateVersion
+    ? "https://api.replicate.com/v1/predictions"
+    : `https://api.replicate.com/v1/models/${replicateModel}/predictions`;
+
+  const body = replicateVersion
+    ? { version: replicateVersion, input }
+    : { input };
+
+  const res = await fetch(url, {
+    method: "POST",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+      Authorization: `Token ${replicateApiToken}`,
+    },
+    body: JSON.stringify(body),
+  });
+
+  const j = (await res.json().catch(() => null)) as any;
+  if (!res.ok) {
+    const msg = (j?.detail ?? j?.error ?? j?.message ?? `HTTP ${res.status}`).toString();
+    throw new HttpError(502, "audio_provider_error", `Replicate create failed: ${msg}`);
+  }
+
+  const id = String(j?.id ?? "").trim();
+  const status = String(j?.status ?? "").trim();
+  if (!id || !status) {
+    throw new HttpError(502, "audio_provider_error", "Replicate returned an invalid prediction payload");
+  }
+
+  return {
+    id,
+    status,
+    output: j?.output,
+    error: j?.error,
+  } as ReplicatePrediction;
+}
+
+async function replicateGetPrediction(predictionId: string): Promise<ReplicatePrediction> {
+  requireReplicate();
+  const pid = predictionId.trim();
+  if (!pid) throw new HttpError(400, "bad_request", "Missing prediction id");
+
+  const res = await fetch(`https://api.replicate.com/v1/predictions/${encodeURIComponent(pid)}`, {
+    method: "GET",
+    headers: {
+      Accept: "application/json",
+      Authorization: `Token ${replicateApiToken}`,
+    },
+  });
+  const j = (await res.json().catch(() => null)) as any;
+  if (!res.ok) {
+    const msg = (j?.detail ?? j?.error ?? j?.message ?? `HTTP ${res.status}`).toString();
+    throw new HttpError(502, "audio_provider_error", `Replicate status failed: ${msg}`);
+  }
+
+  return {
+    id: String(j?.id ?? "").trim(),
+    status: String(j?.status ?? "").trim(),
+    output: j?.output,
+    error: j?.error,
+  } as ReplicatePrediction;
+}
+
+async function downloadBytes(url: string): Promise<{ bytes: Uint8Array; mime: string | null }> {
+  const res = await fetch(url);
+  if (!res.ok) throw new HttpError(502, "audio_download_failed", `Failed to download audio (HTTP ${res.status})`);
+  const mime = res.headers.get("content-type");
+  const ab = await res.arrayBuffer();
+  return { bytes: new Uint8Array(ab), mime };
+}
+
+function utcDayString(d = new Date()): string {
+  return d.toISOString().slice(0, 10);
+}
+
+type BeatPreset = {
+  style: string;
+  bpm: number;
+  mood: string;
+  duration: number;
+  prompt?: string;
+};
+
+function buildBeatPrompt(p: BeatPreset): string {
+  const style = (p.style ?? "").trim().toLowerCase();
+  const mood = (p.mood ?? "").trim();
+  const bpm = Number.isFinite(p.bpm) ? Math.max(60, Math.min(220, Math.floor(p.bpm))) : 120;
+
+  const base =
+    (p.prompt && p.prompt.trim())
+      ? p.prompt.trim()
+      : style === "amapiano"
+        ? "Amapiano instrumental, deep log drum, smooth groove, slow build"
+        : style === "dancehall"
+          ? "Dancehall instrumental, aggressive bass, hype drops, punchy drums"
+          : style === "afrobeats"
+            ? "Afrobeats instrumental, African rhythm, energetic drums, crowd friendly"
+            : "African instrumental beat, modern drums, catchy groove";
+
+  const moodPart = mood ? `, mood: ${mood}` : "";
+  return `${base}${moodPart}, ${bpm} bpm`;
+}
+
+function buildBattleBeat120Prompt(input: {
+  style: string;
+  bpm: number;
+  key: string;
+  sectionTemplate: string;
+  mood?: string;
+  promptOverride?: string;
+}): string {
+  const style = String(input.style ?? "").trim() || "afrobeats";
+  const mood = String(input.mood ?? "").trim();
+  const key = String(input.key ?? "").trim() || "A minor";
+  const sectionTemplate = String(input.sectionTemplate ?? "").trim() || "intro-build-drop-outro";
+  const bpm = clampInt(asInt(input.bpm, 120), 60, 220);
+
+  if (input.promptOverride && String(input.promptOverride).trim()) {
+    return `${String(input.promptOverride).trim()}, ${bpm} bpm, key: ${key}, structure: ${sectionTemplate}, total length 120 seconds`;
+  }
+
+  const base = buildBeatPrompt({
+    style,
+    bpm,
+    mood,
+    duration: 120,
+  });
+
+  return `${base}, key: ${key}, structure: ${sectionTemplate}, 120-second battle arrangement with intro (0-15s), build (15-45s), drop (45-90s), outro (90-120s), keep strong transitions and battle energy`;
+}
+
+type DjStyleRule = {
+  bpmMin: number;
+  bpmMax: number;
+  switchSpeed: "slow" | "medium" | "fast" | "aggressive";
+  energyBias: number;
+};
+
+const DJ_STYLES: Record<string, DjStyleRule> = {
+  amapiano: { bpmMin: 108, bpmMax: 115, switchSpeed: "slow", energyBias: 0.6 },
+  afrobeats: { bpmMin: 110, bpmMax: 125, switchSpeed: "medium", energyBias: 0.75 },
+  dancehall: { bpmMin: 125, bpmMax: 140, switchSpeed: "fast", energyBias: 0.9 },
+  battle: { bpmMin: 120, bpmMax: 135, switchSpeed: "aggressive", energyBias: 1.0 },
+};
+
+function normalizeStyle(styleRaw: unknown): string {
+  const s = String(styleRaw ?? "").trim().toLowerCase();
+  return s;
+}
+
+function styleRule(style: string | undefined): DjStyleRule | undefined {
+  if (!style) return undefined;
+  return DJ_STYLES[style];
+}
+
+function filterByStyle(songPool: DjSong[], rule?: DjStyleRule): DjSong[] {
+  if (!rule) return songPool;
+  const out = songPool.filter((s) => Number.isFinite(s.bpm) && s.bpm >= rule.bpmMin && s.bpm <= rule.bpmMax);
+  // If the filter is too strict and removes everything, fall back to original pool.
+  return out.length > 0 ? out : songPool;
+}
+
+function styleDecision(style: string | undefined, pressureState: string): {
+  overrideDecision?: DjDecision;
+  note?: string;
+} {
+  if (!style) return {};
+
+  if (style === "battle" && pressureState === "losing") {
+    return { overrideDecision: "switch_genre_fast", note: "battle_losing_hard_switch" };
+  }
+  if (style === "amapiano" && pressureState === "winning") {
+    return { overrideDecision: "maintain_vibe", note: "amapiano_winning_extend_groove" };
+  }
+  if (style === "dancehall" && (pressureState === "stable" || pressureState === "losing")) {
+    return { overrideDecision: "go_all_out", note: "dancehall_hype_push" };
+  }
+
+  return {};
+}
+
+function clampInt(n: number, min: number, max: number): number {
+  if (!Number.isFinite(n)) return min;
+  return Math.max(min, Math.min(max, Math.floor(n)));
+}
+
+function utcIsoWeekStart(d = new Date()): Date {
+  const day = d.getUTCDay();
+  // Convert Sunday(0)..Saturday(6) to days since Monday(0).
+  const daysSinceMonday = (day + 6) % 7;
+
+  const start = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+  start.setUTCDate(start.getUTCDate() - daysSinceMonday);
+  start.setUTCHours(0, 0, 0, 0);
+  return start;
+}
+
+type CreatorRoleId = "artist" | "dj";
+type CreatorCapabilityId = "live_host" | "battle_access" | "withdrawals";
+
+type CreatorUsageAction = "battle_host" | "battle_join";
+
+function battleHostWeeklyLimit(planId: string): number {
+  const pid = normalizePlanId(planId);
+  if (pid === "artist_starter" || pid === "dj_starter") return 1;
+  if (pid === "artist_pro" || pid === "dj_pro") return 10;
+  if (pid === "artist_premium" || pid === "dj_premium") return -1;
+  return 0;
+}
+
+function battleJoinWeeklyLimit(planId: string): number {
+  const pid = normalizePlanId(planId);
+  if (pid === "artist_starter" || pid === "dj_starter") return 1;
+  if (
+    pid === "artist_pro" ||
+    pid === "dj_pro" ||
+    pid === "artist_premium" ||
+    pid === "dj_premium"
+  ) {
+    return -1;
+  }
+  return 0;
+}
+
+async function tryConsumeWeeklyCreatorUsage(
+  sb: ReturnType<typeof supabaseAdmin>,
+  params: {
+    uid: string;
+    role: CreatorRoleId;
+    action: CreatorUsageAction;
+    limit: number;
+    ref: string;
+  },
+): Promise<{ allowed: boolean; consumed: boolean; used: number | null; limit: number; weekStart: string | null }> {
+  const { uid, role, action, limit, ref } = params;
+
+  const { data, error } = await sb.rpc("creator_usage_try_consume_weekly", {
+    p_user_id: uid,
+    p_role: role,
+    p_action: action,
+    p_limit: limit,
+    p_ref: ref,
+  });
+
+  if (error) {
+    throw new HttpError(500, "db_error", `Failed to enforce usage limit: ${error.message}`);
+  }
+
+  const payload = data as any;
+  if (!payload || payload.ok !== true) {
+    throw new HttpError(500, "db_error", "Usage limit check failed");
+  }
+
+  const allowed = payload.allowed === true;
+  const consumed = payload.consumed === true;
+  const usedRaw = payload.used;
+  const used = typeof usedRaw === "number" && Number.isFinite(usedRaw)
+    ? usedRaw
+    : usedRaw === null || usedRaw === undefined
+    ? null
+    : Number(usedRaw);
+  const weekStartRaw = payload.week_start ?? payload.weekStart ?? null;
+  const weekStart = weekStartRaw ? String(weekStartRaw) : null;
+
+  return {
+    allowed,
+    consumed,
+    used: Number.isFinite(used as number) ? (used as number) : null,
+    limit,
+    weekStart,
+  };
+}
+
+function starterPlanIdForCreatorRole(role: CreatorRoleId): string {
+  return role === "artist" ? "artist_starter" : "dj_starter";
+}
+
+function isStarterCreatorPlanId(rawPlanId: string): boolean {
+  const pid = normalizePlanId(rawPlanId);
+  return pid === "artist_starter" || pid === "dj_starter";
+}
+
+function capabilityPlanIdForCreatorRole(role: CreatorRoleId, rawPlanId: string): string {
+  const planId = normalizePlanId(rawPlanId) || starterPlanIdForCreatorRole(role);
+
+  if (role === "artist") {
+    switch (planId) {
+      case "free":
+      case "starter":
+      case "artist_free":
+        return "artist_starter";
+      case "premium":
+      case "pro":
+        return "artist_pro";
+      case "platinum":
+      case "elite":
+      case "vip":
+        return "artist_premium";
+      default:
+        return planId;
+    }
+  }
+
+  switch (planId) {
+    case "free":
+    case "starter":
+    case "dj_free":
+      return "dj_starter";
+    case "premium":
+    case "pro":
+      return "dj_pro";
+    case "platinum":
+    case "elite":
+    case "vip":
+      return "dj_premium";
+    default:
+      return planId;
+  }
+}
+
+async function resolveCreatorRoleForUid(
+  sb: ReturnType<typeof supabaseAdmin>,
+  uid: string,
+): Promise<CreatorRoleId | null> {
+  const normalizedUid = String(uid ?? "").trim();
+  if (!normalizedUid) return null;
+
+  try {
+    const row = await sb
+      .from("creator_profiles")
+      .select("role")
+      .eq("user_id", normalizedUid)
+      .limit(1)
+      .maybeSingle();
+    const role = String((row.data as any)?.role ?? "").trim().toLowerCase();
+    if (role === "artist" || role === "dj") return role;
+  } catch (_) {
+    // ignore
+  }
+
+  try {
+    const row = await sb
+      .from("profiles")
+      .select("role")
+      .eq("id", normalizedUid)
+      .limit(1)
+      .maybeSingle();
+    const role = String((row.data as any)?.role ?? "").trim().toLowerCase();
+    if (role === "artist" || role === "dj") return role;
+  } catch (_) {
+    // ignore
+  }
+
+  // Some deployments model `profiles.id` as UUID and store Firebase UID in a separate column.
+  // Try common Firebase UID columns as a tolerant fallback.
+  for (const col of ["firebase_uid", "user_id", "uid"] as const) {
+    try {
+      const row = await sb
+        .from("profiles")
+        .select("role")
+        .eq(col, normalizedUid)
+        .limit(1)
+        .maybeSingle();
+      if (row.error) {
+        // Avoid failing hard on UUID-typed columns or missing columns.
+        if (isInvalidUuidSyntax(row.error)) continue;
+        const missing = tryParseMissingColumnForTable(row.error, "profiles");
+        if (missing) continue;
+      }
+      const role = String((row.data as any)?.role ?? "").trim().toLowerCase();
+      if (role === "artist" || role === "dj") return role;
+    } catch (_) {
+      // ignore
+    }
+  }
+
+  for (const [table, role] of [["artists", "artist"], ["djs", "dj"]] as const) {
+    for (const column of ["firebase_uid", "user_id"] as const) {
+      try {
+        const row = await sb
+          .from(table)
+          .select("id")
+          .eq(column, normalizedUid)
+          .limit(1)
+          .maybeSingle();
+        if (!row.error && row.data) return role;
+      } catch (_) {
+        // ignore
+      }
+    }
+  }
+
+  return null;
+}
+
+async function resolveCreatorFallbackPlanId(
+  sb: ReturnType<typeof supabaseAdmin>,
+  uid: string,
+  rawPlanId: unknown,
+): Promise<string> {
+  const planId = normalizePlanId(rawPlanId) || "free";
+  if (!isFreeLikePlanId(planId) && planId !== "free") {
+    return planId;
+  }
+
+  const creatorRole = await resolveCreatorRoleForUid(sb, uid);
+  if (!creatorRole) return planId;
+  return starterPlanIdForCreatorRole(creatorRole);
+}
+
+function getNestedValue(record: Record<string, unknown> | undefined, path: string): unknown {
+  let current: unknown = record;
+  for (const part of path.split(".")) {
+    const next = asRecord(current);
+    if (!next || !(part in next)) return undefined;
+    current = next[part];
+  }
+  return current;
+}
+
+function getNestedBoolean(record: Record<string, unknown> | undefined, path: string): boolean | undefined {
+  const value = getNestedValue(record, path);
+  if (typeof value === "boolean") return value;
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (normalized === "true") return true;
+    if (normalized === "false") return false;
+  }
+  return undefined;
+}
+
+function getNestedString(record: Record<string, unknown> | undefined, path: string): string | undefined {
+  const value = getNestedValue(record, path);
+  if (value === undefined || value === null) return undefined;
+  const text = String(value).trim();
+  return text || undefined;
+}
+
+async function resolveCreatorCapabilityContext(
+  sb: ReturnType<typeof supabaseAdmin>,
+  uid: string,
+  roleHint?: CreatorRoleId,
+): Promise<{
+  role: CreatorRoleId;
+  planId: string;
+  features: Record<string, unknown>;
+  perks: Record<string, unknown>;
+} | null> {
+  const role = roleHint ?? await resolveCreatorRoleForUid(sb, uid);
+  if (!role) return null;
+
+  const sub = await getUserSubscription(sb, uid);
+  const planId = capabilityPlanIdForCreatorRole(role, sub.planId);
+  const dbEntitlements = await readPlanEntitlementsByPlanId(sb, planId);
+  const fallbackEntitlements = defaultEntitlementsForPlanId(planId);
+
+  return {
+    role,
+    planId,
+    features: mergeRecordsDeep(fallbackEntitlements.features, dbEntitlements?.features) ?? {},
+    perks: mergeRecordsDeep(fallbackEntitlements.perks, dbEntitlements?.perks) ?? {},
+  };
+}
+
+function creatorCapabilityAllowed(
+  context: { features: Record<string, unknown>; perks: Record<string, unknown> },
+  capability: CreatorCapabilityId,
+): boolean {
+  switch (capability) {
+    case "live_host": {
+      return getNestedBoolean(context.features, "creator.live.host") ??
+        getNestedBoolean(context.features, "creator.live.enabled") ??
+        getNestedBoolean(context.perks, "creator.live.enabled") ??
+        getNestedBoolean(context.features, "creator.monetization.live") ??
+        getNestedBoolean(context.perks, "creator.monetization.live") ??
+        false;
+    }
+    case "battle_access": {
+      return getNestedBoolean(context.features, "creator.live.battles") ??
+        getNestedBoolean(context.perks, "creator.live.battles") ??
+        getNestedBoolean(context.features, "creator.monetization.battles") ??
+        getNestedBoolean(context.perks, "creator.monetization.battles") ??
+        getNestedBoolean(context.features, "battles.enabled") ??
+        getNestedBoolean(context.perks, "battles.enabled") ??
+        false;
+    }
+    case "withdrawals": {
+      const access = getNestedString(context.features, "creator.withdrawals.access") ??
+        getNestedString(context.perks, "creator.withdrawals.access") ??
+        getNestedString(context.features, "withdrawals.access") ??
+        getNestedString(context.perks, "withdrawals.access") ??
+        "none";
+      return access !== "none";
+    }
+  }
+}
+
+async function assertCreatorCapability(
+  sb: ReturnType<typeof supabaseAdmin>,
+  uid: string,
+  capability: CreatorCapabilityId,
+  roleHint?: CreatorRoleId,
+): Promise<{ role: CreatorRoleId; planId: string }> {
+  const context = await resolveCreatorCapabilityContext(sb, uid, roleHint);
+  if (!context) {
+    throw new HttpError(403, "forbidden", "Creator account required");
+  }
+
+  if (creatorCapabilityAllowed(context, capability)) {
+    return { role: context.role, planId: context.planId };
+  }
+
+  if (capability === "live_host") {
+    throw new HttpError(
+      403,
+      "plan_upgrade_required",
+      context.role === "artist"
+        ? "Live streaming starts on Artist Premium."
+        : "Live DJ sets start on DJ Premium.",
+    );
+  }
+
+  if (capability === "battle_access") {
+    throw new HttpError(
+      403,
+      "plan_upgrade_required",
+      context.role === "artist"
+        ? "Battles are reserved for Artist Platinum."
+        : "Battles are reserved for DJ Platinum.",
+    );
+  }
+
+  throw new HttpError(
+    403,
+    "plan_upgrade_required",
+    context.role === "artist"
+      ? "Withdrawals start on Artist Premium."
+      : "Withdrawals start on DJ Premium.",
+  );
+}
+
+async function getUserSubscription(
+  sb: ReturnType<typeof supabaseAdmin>,
+  uid: string,
+): Promise<{ planId: string; status: string; isPremiumActive: boolean }> {
+  const { row, warning } = await readLatestUserSubscriptionRow(sb, uid);
+  if (warning) {
+    const fallbackPlanId = await resolveCreatorFallbackPlanId(sb, uid, "free");
+    return { planId: fallbackPlanId, status: "inactive", isPremiumActive: false };
+  }
+
+  const now = new Date();
+  const sub = row as any;
+
+  const rawPlanId = normalizePlanId(sub?.plan_id ?? sub?.planId ?? sub?.plan ?? "free") || "free";
+  const planId = await resolveCreatorFallbackPlanId(sb, uid, rawPlanId);
+  const rawStatus = String(sub?.status ?? sub?.state ?? "inactive").trim() || "inactive";
+
+  const endRaw =
+    sub?.current_period_end ??
+    sub?.currentPeriodEnd ??
+    sub?.end_date ??
+    sub?.endDate ??
+    sub?.ends_at ??
+    sub?.endsAt ??
+    null;
+  const end = endRaw ? new Date(String(endRaw)) : null;
+
+  const isFree = isFreeLikePlanId(planId);
+  const statusIsActive = rawStatus === "active" || rawStatus === "trialing";
+  const timeIsActive = end ? end.getTime() > now.getTime() : statusIsActive;
+  const effectiveStatus = statusIsActive && timeIsActive ? rawStatus : "inactive";
+  const isPremiumActive = !isFree && effectiveStatus !== "inactive";
+
+  return { planId, status: isFree ? "inactive" : effectiveStatus, isPremiumActive };
+}
+
+const USER_SUBSCRIPTION_UID_COLUMNS = ["uid", "user_id", "user_uid"] as const;
+
+function normalizeSubscriptionUserIdCandidate(value: unknown): string | null {
+  const s = typeof value === "string" ? value.trim() : "";
+  return s ? s : null;
+}
+
+async function getSubscriptionUserIdCandidatesForFirebaseUid(
+  sb: ReturnType<typeof supabaseAdmin>,
+  firebaseUid: string,
+): Promise<string[]> {
+  const uid = normalizeSubscriptionUserIdCandidate(firebaseUid);
+  if (!uid) return [];
+
+  const out = new Set<string>([uid]);
+
+  const addFromRow = (row: unknown) => {
+    const r = row as any;
+    const keys = ["id", "uid", "user_id", "user_uid", "firebase_uid"] as const;
+    for (const k of keys) {
+      const v = normalizeSubscriptionUserIdCandidate(r?.[k]);
+      if (v) out.add(v);
+    }
+  };
+
+  // `users` table (when deployed) often holds UUID <-> Firebase UID mapping.
+  for (const col of ["firebase_uid", "uid", "user_id"] as const) {
+    try {
+      const { data, error } = await sb
+        .from("users")
+        .select("*")
+        .eq(col, uid)
+        .limit(1)
+        .maybeSingle();
+      if (!error && data) {
+        addFromRow(data);
+        break;
+      }
+    } catch (_) {
+      // ignore
+    }
+  }
+
+  // creators tables (optional): can also provide UUID/user_id candidates.
+  for (const table of ["artists", "djs"] as const) {
+    for (const col of ["firebase_uid", "user_id"] as const) {
+      try {
+        const { data, error } = await sb
+          .from(table)
+          .select("*")
+          .eq(col, uid)
+          .limit(1)
+          .maybeSingle();
+        if (!error && data) {
+          addFromRow(data);
+          break;
+        }
+      } catch (_) {
+        // ignore
+      }
+    }
+  }
+
+  return Array.from(out).filter(Boolean);
+}
+
+async function readLatestUserSubscriptionRow(
+  sb: ReturnType<typeof supabaseAdmin>,
+  uid: string,
+): Promise<{ row: Record<string, unknown> | null; warning?: string }> {
+  let lastErrorMessage = "";
+  let missingColumnErrorMessage = "";
+  let sawQueryableColumn = false;
+
+  for (const column of USER_SUBSCRIPTION_UID_COLUMNS) {
+    // Prefer an active/trialing row when present.
+    const active = await sb
+      .from("user_subscriptions")
+      .select("*")
+      .eq(column, uid)
+      .in("status", ["active", "trialing"])
+      .order("updated_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (!active.error && active.data) {
+      return { row: active.data as Record<string, unknown> };
+    }
+
+    if (active.error) {
+      const missing = tryParseMissingColumnForTable(active.error, "user_subscriptions");
+      if (missing) {
+        if (!sawQueryableColumn && !missingColumnErrorMessage) {
+          missingColumnErrorMessage = active.error.message;
+        }
+        continue;
+      }
+
+      lastErrorMessage = active.error.message;
+      continue;
+    }
+
+    sawQueryableColumn = true;
+
+    const anyRow = await sb
+      .from("user_subscriptions")
+      .select("*")
+      .eq(column, uid)
+      .order("updated_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (!anyRow.error && anyRow.data) {
+      return { row: (anyRow.data as Record<string, unknown>) };
+    }
+
+    if (anyRow.error) {
+      const missing = tryParseMissingColumnForTable(anyRow.error, "user_subscriptions");
+      if (missing) {
+        if (!sawQueryableColumn && !missingColumnErrorMessage) {
+          missingColumnErrorMessage = anyRow.error.message;
+        }
+        continue;
+      }
+
+      lastErrorMessage = anyRow.error.message;
+      continue;
+    }
+  }
+
+  // Legacy fallback: older systems may have stored subscription keys as internal UUIDs.
+  // When the authenticated id is a Firebase UID, derive candidate ids for the same user
+  // and query across them.
+  try {
+    const candidates = await getSubscriptionUserIdCandidatesForFirebaseUid(sb, uid);
+    const ids = Array.from(new Set(candidates.map((v) => String(v ?? "").trim()).filter(Boolean)));
+    if (ids.length > 1) {
+      const uuidIds = ids.filter(looksLikeUuid);
+
+      for (const column of USER_SUBSCRIPTION_UID_COLUMNS) {
+        // Prefer an active/trialing row when present.
+        let active = await sb
+          .from("user_subscriptions")
+          .select("*")
+          .in(column, ids)
+          .in("status", ["active", "trialing"])
+          .order("updated_at", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        if (active.error && isInvalidUuidSyntax(active.error) && uuidIds.length > 0 && uuidIds.length < ids.length) {
+          active = await sb
+            .from("user_subscriptions")
+            .select("*")
+            .in(column, uuidIds)
+            .in("status", ["active", "trialing"])
+            .order("updated_at", { ascending: false })
+            .limit(1)
+            .maybeSingle();
+        }
+
+        if (!active.error && active.data) {
+          return { row: (active.data as Record<string, unknown>) };
+        }
+
+        if (active.error) {
+          const missing = tryParseMissingColumnForTable(active.error, "user_subscriptions");
+          if (missing) {
+            if (!sawQueryableColumn && !missingColumnErrorMessage) {
+              missingColumnErrorMessage = active.error.message;
+            }
+            continue;
+          }
+
+          lastErrorMessage = active.error.message;
+          continue;
+        }
+
+        sawQueryableColumn = true;
+
+        let anyRow = await sb
+          .from("user_subscriptions")
+          .select("*")
+          .in(column, ids)
+          .order("updated_at", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        if (anyRow.error && isInvalidUuidSyntax(anyRow.error) && uuidIds.length > 0 && uuidIds.length < ids.length) {
+          anyRow = await sb
+            .from("user_subscriptions")
+            .select("*")
+            .in(column, uuidIds)
+            .order("updated_at", { ascending: false })
+            .limit(1)
+            .maybeSingle();
+        }
+
+        if (!anyRow.error && anyRow.data) {
+          return { row: (anyRow.data as Record<string, unknown>) };
+        }
+
+        if (anyRow.error) {
+          const missing = tryParseMissingColumnForTable(anyRow.error, "user_subscriptions");
+          if (missing) {
+            if (!sawQueryableColumn && !missingColumnErrorMessage) {
+              missingColumnErrorMessage = anyRow.error.message;
+            }
+            continue;
+          }
+
+          lastErrorMessage = anyRow.error.message;
+          continue;
+        }
+
+        sawQueryableColumn = true;
+      }
+    }
+  } catch (_) {
+    // ignore
+  }
+
+  const warning = lastErrorMessage || (!sawQueryableColumn ? missingColumnErrorMessage : "");
+  return { row: null, warning: warning || undefined };
+}
+
+async function getAiPricing(sb: ReturnType<typeof supabaseAdmin>, action: AiAction): Promise<AiPricing> {
+  const fallback = DEFAULT_AI_PRICING[action];
+  const q = await sb
+    .from("ai_pricing")
+    .select("action,coin_cost,daily_free_limit,enabled")
+    .eq("action", action)
+    .maybeSingle();
+
+  if (q.error || !q.data) return fallback;
+
+  const row = q.data as Record<string, unknown>;
+  return {
+    action,
+    coin_cost: clampInt(asInt(row.coin_cost, fallback.coin_cost), 0, 1_000_000),
+    daily_free_limit: clampInt(asInt(row.daily_free_limit, fallback.daily_free_limit), 0, 10_000),
+    enabled: Boolean(row.enabled ?? fallback.enabled),
+  };
+}
+
+async function getAiUsage(
+  sb: ReturnType<typeof supabaseAdmin>,
+  uid: string,
+  action: AiAction,
+  day: string,
+): Promise<{ freeUses: number; paidUses: number }> {
+  const q = await sb
+    .from("ai_usage_daily")
+    .select("free_uses,paid_uses")
+    .eq("user_id", uid)
+    .eq("action", action)
+    .eq("day", day)
+    .maybeSingle();
+
+  if (q.error || !q.data) return { freeUses: 0, paidUses: 0 };
+  const r = q.data as Record<string, unknown>;
+  return { freeUses: asInt(r.free_uses, 0), paidUses: asInt(r.paid_uses, 0) };
+}
+
+async function recordAiUsage(
+  sb: ReturnType<typeof supabaseAdmin>,
+  uid: string,
+  action: AiAction,
+  day: string,
+  isFree: boolean,
+): Promise<void> {
+  // Prefer RPC for atomic increment if present; fall back to upsert/update.
+  const rpc = await sb.rpc("ai_record_usage", {
+    p_user_id: uid,
+    p_action: action,
+    p_day: day,
+    p_is_free: isFree,
+  });
+  if (!rpc.error) return;
+
+  await sb
+    .from("ai_usage_daily")
+    .upsert({ user_id: uid, action, day, free_uses: 0, paid_uses: 0 }, { onConflict: "user_id,action,day" });
+
+  const current = await getAiUsage(sb, uid, action, day);
+  const next = isFree
+    ? { free_uses: current.freeUses + 1, paid_uses: current.paidUses }
+    : { free_uses: current.freeUses, paid_uses: current.paidUses + 1 };
+
+  await sb
+    .from("ai_usage_daily")
+    .update({ ...next, updated_at: new Date().toISOString() })
+    .eq("user_id", uid)
+    .eq("action", action)
+    .eq("day", day);
+}
+
+async function getWalletCoinBalance(sb: ReturnType<typeof supabaseAdmin>, uid: string): Promise<number> {
+  const q = await sb.from("wallets").select("coin_balance").eq("user_id", uid).maybeSingle();
+  if (q.error || !q.data) return 0;
+  const r = q.data as Record<string, unknown>;
+  return asInt(r.coin_balance, 0);
+}
+
+async function getAiCreditBalance(sb: ReturnType<typeof supabaseAdmin>, uid: string): Promise<number> {
+  const q = await sb.from("ai_credit_wallets").select("credit_balance").eq("user_id", uid).maybeSingle();
+  if (q.error || !q.data) return 0;
+  const r = q.data as Record<string, unknown>;
+  return asInt(r.credit_balance, 0);
+}
+
+type AiGuardResult = {
+  pricing: AiPricing;
+  day: string;
+  isPremiumActive: boolean;
+  planId: string;
+  payment_method: "premium" | "free" | "credits" | "coins";
+  coin_cost: number;
+  credits_cost: number;
+  free_remaining: number;
+  ai_credit_balance: number;
+  coin_balance: number;
+};
+
+async function guardAiAction(
+  sb: ReturnType<typeof supabaseAdmin>,
+  uid: string,
+  action: AiAction,
+  meta: Record<string, unknown> | null,
+): Promise<AiGuardResult> {
+  const day = utcDayString();
+  const sub = await getUserSubscription(sb, uid);
+  const pricing = await getAiPricing(sb, action);
+
+  if (!pricing.enabled) {
+    throw new HttpError(403, "ai_disabled", "This AI feature is temporarily disabled");
+  }
+
+  const usage = await getAiUsage(sb, uid, action, day);
+  const freeRemaining = Math.max(pricing.daily_free_limit - usage.freeUses, 0);
+
+  // Premium: unlimited and free.
+  if (sub.isPremiumActive) {
+    await recordAiUsage(sb, uid, action, day, true);
+    await sb.from("ai_spend_events").insert({
+      user_id: uid,
+      action,
+      payment_method: "premium",
+      coin_cost: 0,
+      credits_cost: 0,
+      meta,
+    });
+
+    return {
+      pricing,
+      day,
+      isPremiumActive: true,
+      planId: sub.planId,
+      payment_method: "premium",
+      coin_cost: 0,
+      credits_cost: 0,
+      free_remaining: freeRemaining,
+      ai_credit_balance: await getAiCreditBalance(sb, uid),
+      coin_balance: await getWalletCoinBalance(sb, uid),
+    };
+  }
+
+  // Free tier allowance
+  if (freeRemaining > 0) {
+    await recordAiUsage(sb, uid, action, day, true);
+    await sb.from("ai_spend_events").insert({
+      user_id: uid,
+      action,
+      payment_method: "free",
+      coin_cost: 0,
+      credits_cost: 0,
+      meta,
+    });
+
+    return {
+      pricing,
+      day,
+      isPremiumActive: false,
+      planId: sub.planId,
+      payment_method: "free",
+      coin_cost: 0,
+      credits_cost: 0,
+      free_remaining: freeRemaining - 1,
+      ai_credit_balance: await getAiCreditBalance(sb, uid),
+      coin_balance: await getWalletCoinBalance(sb, uid),
+    };
+  }
+
+  const coinCost = pricing.coin_cost;
+  const creditsCost = coinCost; // 1 coin == 1 AI credit by default
+
+  // Prefer earned AI credits first.
+  const creditBalance = await getAiCreditBalance(sb, uid);
+  if (creditBalance >= creditsCost && creditsCost > 0) {
+    const refKey = `ai:${action}:${day}:${crypto.randomUUID()}`;
+    const spent = await sb.rpc("ai_spend_credits", {
+      p_user_id: uid,
+      p_action: action,
+      p_credits_cost: creditsCost,
+      p_ref_key: refKey,
+      p_meta: meta,
+    });
+
+    if (spent.error) {
+      // If something fails in credits path, fall back to coin path.
+    } else {
+      await recordAiUsage(sb, uid, action, day, false);
+      await sb.from("ai_spend_events").insert({
+        user_id: uid,
+        action,
+        payment_method: "credits",
+        coin_cost: 0,
+        credits_cost: creditsCost,
+        meta,
+      });
+
+      return {
+        pricing,
+        day,
+        isPremiumActive: false,
+        planId: sub.planId,
+        payment_method: "credits",
+        coin_cost: 0,
+        credits_cost: creditsCost,
+        free_remaining: 0,
+        ai_credit_balance: Math.max(creditBalance - creditsCost, 0),
+        coin_balance: await getWalletCoinBalance(sb, uid),
+      };
+    }
+  }
+
+  // Fall back to wallet coins.
+  if (coinCost <= 0) {
+    throw new HttpError(500, "pricing_error", "Invalid pricing configuration");
+  }
+
+  const spendCoins = await sb.rpc("ai_spend_coins", {
+    p_user_id: uid,
+    p_action: action,
+    p_coin_cost: coinCost,
+    p_meta: meta,
+  });
+
+  if (spendCoins.error) {
+    const coinBal = await getWalletCoinBalance(sb, uid);
+    const err = new HttpError(
+      402,
+      "payment_required",
+      "Not enough AI credits or coins. Earn credits by winning battles or add more coins.",
+    );
+    (err as any).details = {
+      action,
+      coin_cost: coinCost,
+      credits_cost: creditsCost,
+      coin_balance: coinBal,
+      ai_credit_balance: creditBalance,
+    };
+    throw err;
+  }
+
+  await recordAiUsage(sb, uid, action, day, false);
+  // ai_spend_coins already inserts an ai_spend_events row with payment_method=coins.
+  return {
+    pricing,
+    day,
+    isPremiumActive: false,
+    planId: sub.planId,
+    payment_method: "coins",
+    coin_cost: coinCost,
+    credits_cost: 0,
+    free_remaining: 0,
+    ai_credit_balance: creditBalance,
+    coin_balance: Math.max((await getWalletCoinBalance(sb, uid)) - coinCost, 0),
+  };
+}
+
+function binToStep(value: number, step: number, minBin: number, maxBin: number): number {
+  const s = Math.max(1, Math.floor(step));
+  const b = Math.floor(value / s) * s;
+  return clampInt(b, minBin, maxBin);
+}
+
+async function tryMlDecision(
+  sb: ReturnType<typeof supabaseAdmin>,
+  params: {
+    style: string;
+    pressureState: string;
+    bpm: number;
+    likesPerMin: number;
+    coinsPerMin: number;
+    viewersChange: number;
+  },
+): Promise<{ decision: DjDecision; confidence: number; bins: Record<string, number> } | null> {
+  // Binning keeps the policy table small + stable.
+  const bins = {
+    bpm_bin: binToStep(params.bpm, 5, 60, 220),
+    likes_bin: binToStep(params.likesPerMin, 10, 0, 1000),
+    coins_bin: binToStep(params.coinsPerMin, 2, 0, 500),
+    viewers_bin: binToStep(params.viewersChange, 5, -500, 500),
+  };
+
+  const { data, error } = await sb
+    .from("dj_ai_policy")
+    .select("decision, confidence")
+    .eq("style", params.style)
+    .eq("pressure_state", params.pressureState)
+    .eq("bpm_bin", bins.bpm_bin)
+    .eq("likes_bin", bins.likes_bin)
+    .eq("coins_bin", bins.coins_bin)
+    .eq("viewers_bin", bins.viewers_bin)
+    .maybeSingle();
+
+  if (error || !data) return null;
+
+  const decisionRaw = String((data as any).decision ?? "").trim();
+  const confidenceRaw = (data as any).confidence;
+  const confidence = typeof confidenceRaw === "number" ? confidenceRaw : Number(confidenceRaw);
+  if (!decisionRaw || !Number.isFinite(confidence)) return null;
+
+  const decision =
+    decisionRaw === "switch_genre_fast" ||
+      decisionRaw === "increase_energy" ||
+      decisionRaw === "maintain_vibe" ||
+      decisionRaw === "go_all_out"
+      ? (decisionRaw as DjDecision)
+      : null;
+
+  if (!decision) return null;
+  return { decision, confidence, bins };
+}
+
+function asNum(value: unknown, fallback = 0): number {
+  const n = typeof value === "number" ? value : Number(String(value ?? "").trim());
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function asInt(value: unknown, fallback = 0): number {
+  return Math.trunc(asNum(value, fallback));
+}
+
+function asNonEmptyString(value: unknown): string {
+  return String(value ?? "").trim();
+}
+
+function calculatePressure(
+  likesPerMin: number,
+  coinsPerMin: number,
+  viewersChange: number,
+  battleTimeRemaining?: number,
+): number {
+  let score = 0;
+  score += likesPerMin * 0.5;
+  score += coinsPerMin * 1.5;
+
+  if (viewersChange < 0) {
+    score -= Math.abs(viewersChange) * 2;
+  } else {
+    score += viewersChange;
+  }
+
+  // Time pressure: when time is low, small performance dips matter more.
+  if (battleTimeRemaining !== undefined && Number.isFinite(battleTimeRemaining)) {
+    const t = Math.max(0, Math.floor(battleTimeRemaining));
+    if (t <= 20) score -= 15;
+    else if (t <= 45) score -= 5;
+  }
+
+  return score;
+}
+
+function pressureDecision(pressureScore: number): "dominating" | "winning" | "stable" | "losing" {
+  if (pressureScore > 100) return "dominating";
+  if (pressureScore > 50) return "winning";
+  if (pressureScore > 20) return "stable";
+  return "losing";
+}
+
+function djBattleDecision(
+  pressureState: string,
+): "switch_genre_fast" | "increase_energy" | "maintain_vibe" | "go_all_out" {
+  if (pressureState === "losing") return "switch_genre_fast";
+  if (pressureState === "stable") return "increase_energy";
+  if (pressureState === "winning") return "maintain_vibe";
+  return "go_all_out";
+}
+
+function pickNextSongId(params: {
+  decision: string;
+  currentSongId?: string;
+  currentSongBpm?: number;
+  currentSongEnergy?: number;
+  currentSongGenre?: string;
+  pool: DjSong[];
+  style?: DjStyleRule;
+}): string {
+  const currentId = (params.currentSongId ?? "").trim();
+  const currentBpm = Number.isFinite(params.currentSongBpm ?? NaN) ? (params.currentSongBpm as number) : 0;
+  const currentEnergy = Number.isFinite(params.currentSongEnergy ?? NaN) ? (params.currentSongEnergy as number) : 0.7;
+  const currentGenre = (params.currentSongGenre ?? "").trim().toLowerCase();
+
+  const candidates = params.pool.filter((s) => s.id.trim() && (!currentId || s.id.trim() !== currentId));
+  if (candidates.length === 0) {
+    return params.pool[0]?.id ?? "";
+  }
+
+  const wantDifferentGenre = params.decision === "switch_genre_fast" && currentGenre.length > 0;
+  const wantSameGenre = params.decision === "maintain_vibe" && currentGenre.length > 0;
+
+  const switchSpeed = params.style?.switchSpeed ?? "medium";
+  const energyBias = Number.isFinite(params.style?.energyBias ?? NaN) ? (params.style!.energyBias) : 0.75;
+
+  const bpmDeltaWeight =
+    switchSpeed === "slow" ? 0.5 : switchSpeed === "medium" ? 0.25 : switchSpeed === "fast" ? 0.1 : 0.05;
+  const energyDeltaWeight =
+    switchSpeed === "slow" ? 1.2 : switchSpeed === "medium" ? 0.8 : switchSpeed === "fast" ? 0.4 : 0.2;
+
+  // Style target energy provides personality; still allows spikes when decision demands it.
+  const styleTargetEnergy = Math.max(0.4, Math.min(1.0, energyBias));
+
+  function scoreSong(s: DjSong): number {
+    const bpm = Number.isFinite(s.bpm) ? s.bpm : 0;
+    const energy = Number.isFinite(s.energy) ? s.energy : 0.7;
+    const genre = (s.genre ?? "").trim().toLowerCase();
+
+    const bpmDelta = Math.abs(bpm - currentBpm);
+    const energyDelta = Math.abs(energy - currentEnergy);
+    const styleEnergyDelta = Math.abs(energy - styleTargetEnergy);
+
+    if (params.decision === "switch_genre_fast") {
+      // Fast vibe switch: prefer high energy, not too far from BPM.
+      return energy * 105 - bpmDelta * bpmDeltaWeight - energyDelta * 30 * energyDeltaWeight;
+    }
+    if (params.decision === "increase_energy") {
+      return energy * 120 + bpm * 0.05 - energyDelta * 25 * energyDeltaWeight - styleEnergyDelta * 10;
+    }
+    if (params.decision === "maintain_vibe") {
+      const genreBonus = wantSameGenre && genre && genre === currentGenre ? 25 : 0;
+      return (
+        genreBonus +
+        (100 - energyDelta * 100 * energyDeltaWeight) +
+        energy * 10 -
+        bpmDelta * bpmDeltaWeight -
+        styleEnergyDelta * 15
+      );
+    }
+    // go_all_out
+    return energy * 145 + bpm * 0.1 - bpmDelta * (bpmDeltaWeight * 0.5);
+  }
+
+  let best: DjSong | null = null;
+  let bestScore = -Infinity;
+
+  for (const s of candidates) {
+    const genre = (s.genre ?? "").trim().toLowerCase();
+    if (wantDifferentGenre && genre && genre === currentGenre) continue;
+    if (wantSameGenre && genre && genre !== currentGenre) continue;
+
+    const sc = scoreSong(s);
+    if (sc > bestScore) {
+      bestScore = sc;
+      best = s;
+    }
+  }
+
+  if (!best) {
+    // If strict genre filter eliminated everything, relax it.
+    for (const s of candidates) {
+      const sc = scoreSong(s);
+      if (sc > bestScore) {
+        bestScore = sc;
+        best = s;
+      }
+    }
+  }
+
+  return best?.id ?? candidates[0].id;
+}
+
+const corsHeaders: HeadersInit = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers":
+    "authorization, x-client-info, apikey, content-type, x-weafrica-test-token, x-vercel-protection-bypass, x-vercel-set-bypass-cookie, x-debug-token",
+  "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+  // Allow web clients (Flutter Web / browser fetch) to read our build tag header.
+  "Access-Control-Expose-Headers": "x-weafrica-build-tag",
+};
+
+const supabaseUrl = (Deno.env.get("SUPABASE_URL") ?? "").trim();
+const supabaseAnonKey = (Deno.env.get("SUPABASE_ANON_KEY") ?? "").trim();
+const supabaseServiceRoleKey =
+  (Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? Deno.env.get("SUPABASE_SERVICE_ROLE") ?? "").trim();
+
+function isDnsResolutionError(error: unknown): boolean {
+  const text = String(error ?? "").toLowerCase();
+  return text.includes("name resolution failed") || text.includes("dns") || text.includes("enotfound");
+}
+
+function withHost(url: string, host: string): string {
+  try {
+    const u = new URL(url);
+    u.host = host;
+    return u.toString();
+  } catch {
+    return url;
+  }
+}
+
+const supabaseFetch: typeof fetch = async (input, init) => {
+  const asUrl = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+
+  try {
+    return await fetch(input as RequestInfo | URL, init);
+  } catch (e) {
+    if (!isDnsResolutionError(e)) throw e;
+
+    // Local Docker networking can intermittently fail to resolve short hostnames
+    // like `kong`; retry with stable aliases/IP before failing.
+    const retryCandidates = [
+      withHost(asUrl, "api.supabase.internal:8000"),
+      withHost(asUrl, "172.18.0.2:8000"),
+    ].filter((u, i, arr) => u !== asUrl && arr.indexOf(u) === i);
+
+    let lastError: unknown = e;
+    for (const retryUrl of retryCandidates) {
+      try {
+        return await fetch(retryUrl, init);
+      } catch (err) {
+        lastError = err;
+      }
+    }
+
+    throw lastError;
+  }
+};
+
+// Used to mint short-lived JWTs compatible with Supabase Realtime RLS.
+// NOTE: Supabase secrets disallow names starting with `SUPABASE_`, so we use a WEAFRICA_* name.
+// Local dev: extract from `supabase_auth_*` container env (GOTRUE_JWT_SECRET) and set:
+//   supabase secrets set WEAFRICA_SUPABASE_JWT_SECRET=<value>
+const supabaseJwtSecret = (
+  Deno.env.get("WEAFRICA_SUPABASE_JWT_SECRET") ??
+  Deno.env.get("WEAFRICA_JWT_SECRET") ??
+  Deno.env.get("JWT_SECRET") ??
+  ""
+).trim();
+
+function requireSupabaseJwtSecret(): string {
+  if (!supabaseJwtSecret) {
+    throw new HttpError(
+      501,
+      "not_configured",
+      "Missing WEAFRICA_SUPABASE_JWT_SECRET (or JWT_SECRET). Required to mint Supabase-compatible JWTs for Realtime.",
+    );
+  }
+  return supabaseJwtSecret;
+}
+
+async function mintSupabaseRealtimeJwt(opts: { uid: string; expiresInSeconds?: number }): Promise<{ token: string; expires_in: number }> {
+  const uid = String(opts.uid ?? "").trim();
+  if (!uid) throw new HttpError(400, "bad_request", "uid is required");
+
+  const expiresInSeconds = Number.isFinite(opts.expiresInSeconds)
+    ? Math.max(60, Math.min(24 * 60 * 60, Math.floor(opts.expiresInSeconds!)))
+    : 60 * 60;
+
+  const now = Math.floor(Date.now() / 1000);
+  const exp = now + expiresInSeconds;
+  const secret = new TextEncoder().encode(requireSupabaseJwtSecret());
+  const { SignJWT } = await getJoseModule();
+
+  // NOTE:
+  // - We use `sub` as Firebase UID (TEXT) because this project stores UIDs as TEXT.
+  // - Policies should reference `auth.jwt() ->> 'sub'` (not `auth.uid()`) to avoid UUID casting.
+  const token = await new SignJWT({
+    role: "authenticated",
+    uid,
+  })
+    .setProtectedHeader({ alg: "HS256", typ: "JWT" })
+    .setIssuer("supabase")
+    .setAudience("authenticated")
+    .setSubject(uid)
+    .setIssuedAt(now)
+    .setExpirationTime(exp)
+    .sign(secret);
+
+  return { token, expires_in: expiresInSeconds };
+}
+
+function firebaseProjectIdFromEnv(): string {
+  return (
+    Deno.env.get("FIREBASE_PROJECT_ID") ??
+    Deno.env.get("GCLOUD_PROJECT") ??
+    Deno.env.get("GOOGLE_CLOUD_PROJECT") ??
+    ""
+  ).trim();
+}
+
+// Developer-only diagnostics route guard.
+// If unset, /api/diag is disabled (hidden).
+const debugDiagToken =
+  (
+    Deno.env.get("WEAFRICA_DEBUG_DIAG_TOKEN") ??
+    // Back-compat (older runbooks/scripts)
+    Deno.env.get("WEAFRICA_DIAG_TOKEN") ??
+    Deno.env.get("DEBUG_DIAG_TOKEN") ??
+    ""
+  ).trim();
+
+const enableTestRoutes = (Deno.env.get("WEAFRICA_ENABLE_TEST_ROUTES") ?? "").trim().toLowerCase() === "true";
+const testToken = (Deno.env.get("WEAFRICA_TEST_TOKEN") ?? "").trim();
+
+// STEP 10: ML (hybrid) toggle
+const enableDjAiMl = (Deno.env.get("WEAFRICA_DJ_AI_USE_ML") ?? "").trim().toLowerCase() === "true";
+
+// PayChangu (Standard Checkout + webhooks)
+const paychanguSecretKey = (Deno.env.get("PAYCHANGU_SECRET_KEY") ?? Deno.env.get("PAYCHANGU_API_KEY") ?? "").trim();
+const paychanguWebhookSecret = (Deno.env.get("PAYCHANGU_WEBHOOK_SECRET") ?? Deno.env.get("PAYCHANGU_WEBHOOK_SECRET_KEY") ?? "").trim();
+const paychanguApiBase = (Deno.env.get("PAYCHANGU_API_BASE") ?? "https://api.paychangu.com").trim().replace(/\/+$/, "");
+const paychanguCallbackUrlEnv = (Deno.env.get("PAYCHANGU_CALLBACK_URL") ?? "").trim();
+const paychanguReturnUrlEnv = (Deno.env.get("PAYCHANGU_RETURN_URL") ?? "").trim();
+
+function fcmServerKeyFromEnv(): string {
+  return (
+    Deno.env.get("FCM_SERVER_KEY") ??
+    Deno.env.get("FIREBASE_FCM_SERVER_KEY") ??
+    Deno.env.get("FIREBASE_SERVER_KEY") ??
+    ""
+  ).trim();
+}
+
+async function listDeviceTokensForUser(sb: any, uid: string): Promise<string[]> {
+  const user = String(uid ?? "").trim();
+  if (!user) return [];
+
+  const table = "notification_device_tokens";
+
+  const attempts: Array<{ select: string; where: { col: string; val: unknown }[] }> = [
+    { select: "fcm_token", where: [{ col: "user_id", val: user }, { col: "is_active", val: true }] },
+    { select: "fcm_token", where: [{ col: "uid", val: user }, { col: "is_active", val: true }] },
+    { select: "fcm_token", where: [{ col: "user_uid", val: user }, { col: "is_active", val: true }] },
+    { select: "token", where: [{ col: "user_uid", val: user }] },
+    { select: "token", where: [{ col: "user_id", val: user }] },
+  ];
+
+  for (const a of attempts) {
+    try {
+      let q = sb.from(table).select(a.select).limit(50);
+      for (const w of a.where) {
+        q = q.eq(w.col, w.val);
+      }
+      const { data, error } = await q;
+      if (error) continue;
+      if (!Array.isArray(data)) continue;
+      const tokens = data
+        .map((r: any) => String(r?.[a.select] ?? "").trim())
+        .filter((t: string) => t.length > 10);
+      if (tokens.length) return Array.from(new Set(tokens));
+    } catch (_) {
+      // ignore
+    }
+  }
+
+  // Fallback: legacy single-token storage in users table.
+  try {
+    const { data, error } = await sb
+      .from("users")
+      .select("fcm_token")
+      .eq("id", user)
+      .limit(1)
+      .maybeSingle();
+    if (!error) {
+      const token = String((data as any)?.fcm_token ?? "").trim();
+      if (token.length > 10) {
+        return [token];
+      }
+    }
+  } catch (_) {
+    // ignore
+  }
+
+  // Fallback: some deployments mirror token to profiles.
+  try {
+    const { data, error } = await sb
+      .from("profiles")
+      .select("fcm_token")
+      .eq("id", user)
+      .limit(1)
+      .maybeSingle();
+    if (!error) {
+      const token = String((data as any)?.fcm_token ?? "").trim();
+      if (token.length > 10) {
+        return [token];
+      }
+    }
+  } catch (_) {
+    // ignore
+  }
+
+  return [];
+}
+
+async function resolveSongNotificationTarget(
+  sb: any,
+  songId: string,
+): Promise<{ ownerUid: string | null; title: string | null }> {
+  const normalizedSongId = String(songId ?? "").trim();
+  if (!normalizedSongId) {
+    return { ownerUid: null, title: null };
+  }
+
+  try {
+    const { data, error } = await sb
+      .from("songs")
+      .select("*")
+      .eq("id", normalizedSongId)
+      .limit(1)
+      .maybeSingle();
+
+    if (error || !data || typeof data !== "object") {
+      return { ownerUid: null, title: null };
+    }
+
+    const row = data as Record<string, unknown>;
+    const title = String(row.title ?? row.name ?? "").trim() || null;
+
+    for (const key of ["user_id", "artist_uid", "firebase_uid", "uid"] as const) {
+      const value = String(row[key] ?? "").trim();
+      if (value) {
+        return { ownerUid: value, title };
+      }
+    }
+
+    const artistId = String(row.artist_id ?? "").trim();
+    if (artistId) {
+      try {
+        const artist = await sb
+          .from("artists")
+          .select("user_id,firebase_uid")
+          .eq("id", artistId)
+          .limit(1)
+          .maybeSingle();
+        const artistUid = String((artist.data as any)?.user_id ?? (artist.data as any)?.firebase_uid ?? "").trim();
+        if (artistUid) {
+          return { ownerUid: artistUid, title };
+        }
+      } catch (_) {
+        // ignore
+      }
+    }
+
+    const djId = String((row as any).dj_id ?? "").trim();
+    if (djId) {
+      try {
+        const dj = await sb
+          .from("djs")
+          .select("user_id,firebase_uid")
+          .eq("id", djId)
+          .limit(1)
+          .maybeSingle();
+        const djUid = String((dj.data as any)?.user_id ?? (dj.data as any)?.firebase_uid ?? "").trim();
+        if (djUid) {
+          return { ownerUid: djUid, title };
+        }
+      } catch (_) {
+        // ignore
+      }
+    }
+
+    return { ownerUid: null, title };
+  } catch (_) {
+    return { ownerUid: null, title: null };
+  }
+}
+
+async function resolveVideoNotificationTarget(
+  sb: any,
+  videoId: string,
+): Promise<{ ownerUid: string | null; title: string | null }> {
+  const normalizedVideoId = String(videoId ?? "").trim();
+  if (!normalizedVideoId) {
+    return { ownerUid: null, title: null };
+  }
+
+  const tableAttempts: Array<{ table: string; col: string }> = [
+    // Canonical videos table usually uses UUID id.
+    ...(looksLikeUuid(normalizedVideoId) ? [{ table: "videos", col: "id" }] : []),
+    // Compatibility paths for deployments where pulse content uses text IDs.
+    { table: "videos", col: "video_id" },
+    { table: "pulse_videos", col: "id" },
+    { table: "pulse_videos", col: "video_id" },
+  ];
+
+  for (const attempt of tableAttempts) {
+    try {
+      const { data, error } = await sb
+        .from(attempt.table)
+        .select("*")
+        .eq(attempt.col, normalizedVideoId)
+        .limit(1)
+        .maybeSingle();
+
+      if (error || !data || typeof data !== "object") {
+        continue;
+      }
+
+      const row = data as Record<string, unknown>;
+      const title = String(row.title ?? row.caption ?? row.name ?? "").trim() || null;
+
+      for (const key of ["user_id", "artist_uid", "firebase_uid", "uid"] as const) {
+        const value = String(row[key] ?? "").trim();
+        if (value) {
+          return { ownerUid: value, title };
+        }
+      }
+
+      const artistId = String(row.artist_id ?? "").trim();
+      if (artistId) {
+        try {
+          const artist = await sb
+            .from("artists")
+            .select("user_id,firebase_uid")
+            .eq("id", artistId)
+            .limit(1)
+            .maybeSingle();
+          const artistUid = String((artist.data as any)?.user_id ?? (artist.data as any)?.firebase_uid ?? "").trim();
+          if (artistUid) {
+            return { ownerUid: artistUid, title };
+          }
+        } catch (_) {
+          // ignore
+        }
+      }
+    } catch (_) {
+      // ignore and continue probing variants
+    }
+  }
+
+  return { ownerUid: null, title: null };
+}
+
+async function sendFcmPushToTokens(opts: {
+  tokens: string[];
+  title: string;
+  body: string;
+  data?: Record<string, string>;
+  channelId?: string;
+  sound?: string;
+  ttlSeconds?: number;
+}): Promise<void> {
+  const serverKey = fcmServerKeyFromEnv();
+  if (!serverKey) {
+    console.log(
+      "FCM send skipped: missing server key. Set FCM_SERVER_KEY (or FIREBASE_FCM_SERVER_KEY/FIREBASE_SERVER_KEY) in Supabase secrets/env.",
+    );
+    return;
+  }
+
+  const tokens = (opts.tokens ?? []).map((t) => String(t).trim()).filter(Boolean);
+  if (!tokens.length) return;
+
+  const channelId = String(opts.channelId ?? "battle_challenges").trim() || "battle_challenges";
+  const sound = String(opts.sound ?? "default").trim() || "default";
+  const ttlSecondsRaw = Number(opts.ttlSeconds ?? 300);
+  const ttlSeconds = Number.isFinite(ttlSecondsRaw)
+    ? Math.max(0, Math.min(60 * 60 * 24 * 7, Math.floor(ttlSecondsRaw)))
+    : 300;
+
+  const data = {
+    title: opts.title,
+    body: opts.body,
+    channel_id: channelId,
+    sound,
+    ...(opts.data ?? {}),
+  };
+
+  console.log(
+    `FCM send attempt: tokens=${Math.min(tokens.length, 500)} channel=${channelId} ttl=${ttlSeconds}s type=${String((opts.data ?? {}).type ?? '').trim() || 'unknown'}`,
+  );
+
+  const res = await fetch("https://fcm.googleapis.com/fcm/send", {
+    method: "POST",
+    headers: {
+      Authorization: `key=${serverKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      registration_ids: tokens.slice(0, 500),
+      notification: {
+        title: opts.title,
+        body: opts.body,
+        sound,
+        click_action: "FLUTTER_NOTIFICATION_CLICK",
+        android_channel_id: channelId,
+      },
+      data,
+      priority: "high",
+      time_to_live: ttlSeconds,
+      content_available: true,
+      mutable_content: true,
+    }),
+  });
+
+  if (!res.ok) {
+    try {
+      const text = await res.text();
+      console.log(`FCM send failed: HTTP ${res.status} ${text}`);
+    } catch (_) {
+      console.log(`FCM send failed: HTTP ${res.status}`);
+    }
+    return;
+  }
+
+  try {
+    const payload = await res.json();
+    const success = Number((payload as any)?.success ?? 0);
+    const failure = Number((payload as any)?.failure ?? 0);
+    const canonicalIds = Number((payload as any)?.canonical_ids ?? 0);
+    console.log(
+      `FCM send result: success=${Number.isFinite(success) ? success : 'n/a'} failure=${Number.isFinite(failure) ? failure : 'n/a'} canonical_ids=${Number.isFinite(canonicalIds) ? canonicalIds : 'n/a'}`,
+    );
+  } catch (_) {
+    console.log(`FCM send result: HTTP ${res.status} (non-JSON response)`);
+  }
+}
+
+async function listDeviceTokensForUsersBulk(sb: any, uids: string[]): Promise<string[]> {
+  const uniqueUids = Array.from(new Set((uids ?? []).map((u) => String(u ?? '').trim()).filter(Boolean)));
+  if (!uniqueUids.length) return [];
+
+  const table = 'notification_device_tokens';
+
+  // Attempt the most common schema (this repo): token + user_uid.
+  try {
+    const { data, error } = await sb
+      .from(table)
+      .select('token,user_uid')
+      .in('user_uid', uniqueUids);
+
+    if (!error && Array.isArray(data)) {
+      const tokens = data
+        .map((r: any) => String(r?.token ?? '').trim())
+        .filter((t: string) => t.length > 10);
+      if (tokens.length) return Array.from(new Set(tokens));
+    }
+  } catch (_) {
+    // ignore
+  }
+
+  // Attempt schema variant: fcm_token + user_uid + is_active.
+  try {
+    const { data, error } = await sb
+      .from(table)
+      .select('fcm_token,user_uid,is_active')
+      .in('user_uid', uniqueUids)
+      .eq('is_active', true);
+
+    if (!error && Array.isArray(data)) {
+      const tokens = data
+        .map((r: any) => String(r?.fcm_token ?? '').trim())
+        .filter((t: string) => t.length > 10);
+      if (tokens.length) return Array.from(new Set(tokens));
+    }
+  } catch (_) {
+    // ignore
+  }
+
+  // Fallback: per-user lookup (slower but robust).
+  const all: string[] = [];
+  for (const uid of uniqueUids) {
+    try {
+      const tokens = await listDeviceTokensForUser(sb, uid);
+      for (const t of tokens) all.push(t);
+    } catch (_) {
+      // ignore
+    }
+  }
+  return Array.from(new Set(all));
+}
+
+type JourneyEventType =
+  | "signup"
+  | "app_open"
+  | "upload_completed"
+  | "live_started"
+  | "battle_joined"
+  | "battle_hosted"
+  | string;
+
+type JourneyTemplate = {
+  title: string;
+  body: string;
+  data?: Record<string, string>;
+};
+
+function isoAfterMinutes(minutes: number, from = new Date()): string {
+  const ms = Math.max(0, Math.floor(minutes * 60_000));
+  return new Date(from.getTime() + ms).toISOString();
+}
+
+function safeIso(d: unknown): string | null {
+  if (!d) return null;
+  try {
+    const dt = d instanceof Date ? d : new Date(String(d));
+    if (!Number.isFinite(dt.getTime())) return null;
+    return dt.toISOString();
+  } catch (_) {
+    return null;
+  }
+}
+
+function buildJourneyTemplate(templateKey: string, state?: Record<string, unknown> | null): JourneyTemplate {
+  const key = String(templateKey ?? "").trim().toLowerCase();
+  const planId = String(state?.plan_id ?? state?.planId ?? "").trim().toLowerCase();
+
+  // NOTE: Keep copy minimal + safe. More granular A/B copy can be added later.
+  switch (key) {
+    case "welcome_5m":
+      return {
+        title: "Welcome to WEAFRICA",
+        body: "Your creator journey starts now. Upload your first track or video to get discovered.",
+      };
+    case "upload_prompt_3h":
+      return {
+        title: "Upload your first release",
+        body: "Post your first track or video today and start building your audience.",
+      };
+    case "go_live_day2":
+      return {
+        title: "Go live today",
+        body: "Go live and connect with fans in real time. Your next supporters are waiting.",
+      };
+    case "battle_prompt_day4":
+      return {
+        title: "Try a Live Battle",
+        body: "Challenge another creator and grow faster with battles.",
+      };
+    case "milestone_plays": {
+      const threshold = Number(state?.threshold ?? state?.current_value ?? 0) || 0;
+      return {
+        title: "Play milestone reached",
+        body: threshold > 0
+          ? `Your music just crossed ${threshold} plays. Keep the momentum going.`
+          : "Your music is picking up momentum. Open the app to keep growing.",
+        data: { type: "plays_milestone" },
+      };
+    }
+    case "milestone_followers": {
+      const threshold = Number(state?.threshold ?? state?.current_value ?? 0) || 0;
+      return {
+        title: "New fan milestone",
+        body: threshold > 0
+          ? `You just crossed ${threshold} followers. Your audience is growing.`
+          : "Your audience is growing. Open the app and keep them engaged.",
+        data: { type: "followers_milestone" },
+      };
+    }
+    case "milestone_earnings": {
+      const threshold = Number(state?.threshold ?? state?.current_value ?? 0) || 0;
+      return {
+        title: "Earnings milestone reached",
+        body: threshold > 0
+          ? `You have now earned ${threshold} in creator revenue. Keep going.`
+          : "You have new creator earnings. Open the app for the latest breakdown.",
+        data: { type: "earnings" },
+      };
+    }
+    case "trial_24h": {
+      return {
+        title: "Trial ending soon",
+        body: "Your access ends in 24 hours. Upgrade to keep momentum.",
+        data: { type: "subscriptions" },
+      };
+    }
+    case "trial_48h": {
+      return {
+        title: "2 days left in your trial",
+        body: "Your fans are waiting for more. Upgrade soon to keep your momentum going.",
+        data: { type: "subscriptions" },
+      };
+    }
+    case "trial_3h":
+      return {
+        title: "Only a few hours left",
+        body: "Your trial ends soon. Upgrade now to keep going.",
+        data: { type: "subscriptions" },
+      };
+    case "trial_ended":
+      return {
+        title: "Keep creating",
+        body: "Upgrade to unlock more uploads, lives, and battles.",
+        data: { type: "subscriptions" },
+      };
+    default:
+      return {
+        title: "WEAFRICA",
+        body: "Open the app to continue.",
+      };
+  }
+}
+
+async function fetchUserSubscriptionSnapshot(sb: any, uid: string): Promise<{
+  planId: string | null;
+  status: string | null;
+  periodStart: string | null;
+  periodEnd: string | null;
+  trialEligible: boolean;
+  trialDurationDays: number;
+}> {
+  const out = {
+    planId: null as string | null,
+    status: null as string | null,
+    periodStart: null as string | null,
+    periodEnd: null as string | null,
+    trialEligible: false,
+    trialDurationDays: 0,
+  };
+
+  try {
+    const { data } = await sb
+      .from("user_subscriptions")
+      .select("plan_id,status,current_period_start,current_period_end")
+      .eq("uid", uid)
+      .maybeSingle();
+
+    if (data) {
+      out.planId = String(data.plan_id ?? "").trim() || null;
+      out.status = String(data.status ?? "").trim() || null;
+      out.periodStart = safeIso(data.current_period_start);
+      out.periodEnd = safeIso(data.current_period_end);
+    }
+  } catch (_) {
+    // ignore
+  }
+
+  const planId = (out.planId ?? "").trim();
+  if (!planId) return out;
+
+  try {
+    const { data } = await sb
+      .from("subscription_plans")
+      .select("trial_eligible,trial_duration_days")
+      .eq("plan_id", planId)
+      .maybeSingle();
+    if (data) {
+      out.trialEligible = Boolean(data.trial_eligible ?? data.trialEligible);
+      out.trialDurationDays = Math.max(0, Number(data.trial_duration_days ?? data.trialDurationDays ?? 0) || 0);
+    }
+  } catch (_) {
+    // ignore
+  }
+
+  return out;
+}
+
+async function enqueueJourneyPushes(
+  sb: any,
+  uid: string,
+  pushes: Array<{ template_key: string; dedupe_key: string; send_at: string; payload?: Record<string, unknown> }>,
+): Promise<void> {
+  const userUid = String(uid ?? "").trim();
+  if (!userUid) return;
+  const rows = (pushes ?? [])
+    .map((p) => ({
+      user_uid: userUid,
+      template_key: String(p.template_key ?? "").trim(),
+      dedupe_key: String(p.dedupe_key ?? "").trim(),
+      send_at: String(p.send_at ?? "").trim(),
+      payload: p.payload ?? {},
+      status: "pending",
+      updated_at: new Date().toISOString(),
+    }))
+    .filter((r) => r.template_key && r.dedupe_key && r.send_at);
+
+  if (!rows.length) return;
+
+  try {
+    await sb
+      .from("creator_journey_push_queue")
+      .upsert(rows, { onConflict: "user_uid,dedupe_key" });
+  } catch (_) {
+    // ignore
+  }
+}
+
+async function cancelPendingJourneyPushes(
+  sb: any,
+  uid: string,
+  templateKeys: string[],
+): Promise<void> {
+  const userUid = String(uid ?? "").trim();
+  const keys = (templateKeys ?? []).map((k) => String(k ?? "").trim()).filter(Boolean);
+  if (!userUid || !keys.length) return;
+
+  try {
+    await sb
+      .from("creator_journey_push_queue")
+      .update({ status: "canceled", updated_at: new Date().toISOString() })
+      .eq("user_uid", userUid)
+      .eq("status", "pending")
+      .in("template_key", keys);
+  } catch (_) {
+    // ignore
+  }
+}
+
+async function ensureCreatorJourneyBootstrap(sb: any, uid: string): Promise<Record<string, unknown> | null> {
+  const userUid = String(uid ?? "").trim();
+  if (!userUid) return null;
+
+  try {
+    const existing = await sb
+      .from("creator_journey_state")
+      .select("*")
+      .eq("user_uid", userUid)
+      .maybeSingle();
+
+    if (existing?.data) return existing.data as Record<string, unknown>;
+  } catch (_) {
+    // ignore
+  }
+
+  const now = new Date();
+  const sub = await fetchUserSubscriptionSnapshot(sb, userUid);
+
+  const startedAt = now.toISOString();
+  const trialStartedAt = sub.trialEligible ? startedAt : null;
+  const trialEndsAt = sub.trialEligible
+    ? (sub.periodEnd ?? (sub.trialDurationDays > 0
+      ? new Date(now.getTime() + sub.trialDurationDays * 24 * 60 * 60 * 1000).toISOString()
+      : null))
+    : null;
+
+  const row = {
+    user_uid: userUid,
+    flow_version: 1,
+    started_at: startedAt,
+    plan_id: sub.planId,
+    subscription_status: sub.status,
+    trial_started_at: trialStartedAt,
+    trial_ends_at: trialEndsAt,
+    last_event_at: startedAt,
+    created_at: startedAt,
+    updated_at: startedAt,
+  };
+
+  try {
+    const { data } = await sb
+      .from("creator_journey_state")
+      .upsert(row, { onConflict: "user_uid" })
+      .select("*")
+      .maybeSingle();
+
+    // Schedule defaults.
+    const pushes: Array<{ template_key: string; dedupe_key: string; send_at: string; payload?: Record<string, unknown> }> = [
+      { template_key: "welcome_5m", dedupe_key: "v1:welcome_5m", send_at: isoAfterMinutes(5, now) },
+      { template_key: "upload_prompt_3h", dedupe_key: "v1:upload_prompt_3h", send_at: isoAfterMinutes(180, now) },
+      { template_key: "go_live_day2", dedupe_key: "v1:go_live_day2", send_at: isoAfterMinutes(48 * 60, now) },
+      { template_key: "battle_prompt_day4", dedupe_key: "v1:battle_prompt_day4", send_at: isoAfterMinutes(96 * 60, now) },
+    ];
+
+    if (trialEndsAt) {
+      const ends = new Date(trialEndsAt);
+      if (Number.isFinite(ends.getTime())) {
+        pushes.push(
+          { template_key: "trial_48h", dedupe_key: "v1:trial_48h", send_at: new Date(ends.getTime() - 48 * 60 * 60 * 1000).toISOString() },
+          { template_key: "trial_24h", dedupe_key: "v1:trial_24h", send_at: new Date(ends.getTime() - 24 * 60 * 60 * 1000).toISOString() },
+          { template_key: "trial_3h", dedupe_key: "v1:trial_3h", send_at: new Date(ends.getTime() - 3 * 60 * 60 * 1000).toISOString() },
+          { template_key: "trial_ended", dedupe_key: "v1:trial_ended", send_at: new Date(ends.getTime() + 60 * 60 * 1000).toISOString() },
+        );
+      }
+    }
+
+    await enqueueJourneyPushes(sb, userUid, pushes);
+    return (data ?? row) as Record<string, unknown>;
+  } catch (_) {
+    return row as Record<string, unknown>;
+  }
+}
+
+async function logCreatorJourneyEvent(opts: {
+  sb: any;
+  uid: string;
+  eventType: JourneyEventType;
+  eventKey?: string;
+  occurredAt?: string;
+  metadata?: Record<string, unknown>;
+}): Promise<void> {
+  const sb = opts.sb;
+  const uid = String(opts.uid ?? "").trim();
+  if (!uid) return;
+
+  const eventType = String(opts.eventType ?? "").trim();
+  if (!eventType) return;
+
+  const eventKey = String(opts.eventKey ?? "").trim();
+  const occurredAt = safeIso(opts.occurredAt) ?? new Date().toISOString();
+  const metadata = opts.metadata ?? {};
+
+  // Ensure state exists.
+  const state = await ensureCreatorJourneyBootstrap(sb, uid);
+
+  // Event insert (best-effort). Dedupe only when event_key is provided.
+  try {
+    const row = {
+      user_uid: uid,
+      event_type: eventType,
+      event_key: eventKey,
+      occurred_at: occurredAt,
+      metadata,
+      created_at: new Date().toISOString(),
+    };
+
+    if (eventKey) {
+      await sb
+        .from("creator_journey_events")
+        .upsert(row, { onConflict: "user_uid,event_type,event_key" });
+    } else {
+      await sb
+        .from("creator_journey_events")
+        .insert(row);
+    }
+  } catch (_) {
+    // ignore
+  }
+
+  // State update (best-effort).
+  const firstUploadAt = safeIso(state?.first_upload_at ?? (state as any)?.firstUploadAt);
+  const firstLiveAt = safeIso(state?.first_live_at ?? (state as any)?.firstLiveAt);
+  const firstBattleAt = safeIso(state?.first_battle_at ?? (state as any)?.firstBattleAt);
+  const isFirstUpload = eventType === "upload_completed" && !firstUploadAt;
+  const isFirstLive = eventType === "live_started" && !firstLiveAt;
+  const isFirstBattle = (eventType === "battle_joined" || eventType === "battle_hosted") && !firstBattleAt;
+
+  try {
+    const patch: Record<string, unknown> = {
+      last_event_at: occurredAt,
+      updated_at: new Date().toISOString(),
+    };
+
+    if (isFirstUpload) patch.first_upload_at = occurredAt;
+    if (isFirstLive) patch.first_live_at = occurredAt;
+    if (isFirstBattle) patch.first_battle_at = occurredAt;
+
+    await sb
+      .from("creator_journey_state")
+      .update(patch)
+      .eq("user_uid", uid);
+  } catch (_) {
+    // ignore
+  }
+
+  // Cancel irrelevant nudges.
+  if (eventType === "upload_completed") {
+    await cancelPendingJourneyPushes(sb, uid, ["upload_prompt_3h"]);
+    if (isFirstUpload) {
+      await enqueueJourneyPushes(sb, uid, [
+        {
+          template_key: "go_live_day2",
+          dedupe_key: "v1:go_live_day2",
+          send_at: isoAfterMinutes(12 * 60, new Date(occurredAt)),
+          payload: { source_event: "upload_completed" },
+        },
+      ]);
+    }
+  }
+  if (eventType === "live_started") {
+    await cancelPendingJourneyPushes(sb, uid, ["go_live_day2"]);
+    if (isFirstLive) {
+      await enqueueJourneyPushes(sb, uid, [
+        {
+          template_key: "battle_prompt_day4",
+          dedupe_key: "v1:battle_prompt_day4",
+          send_at: isoAfterMinutes(24 * 60, new Date(occurredAt)),
+          payload: { source_event: "live_started" },
+        },
+      ]);
+    }
+  }
+  if (eventType === "battle_joined" || eventType === "battle_hosted") {
+    await cancelPendingJourneyPushes(sb, uid, ["battle_prompt_day4"]);
+  }
+  if (eventType === "milestone_reached") {
+    const metric = String(metadata.metric ?? "").trim().toLowerCase();
+    const threshold = Math.max(0, Number(metadata.threshold ?? 0) || 0);
+    const currentValue = Math.max(0, Number(metadata.current_value ?? metadata.currentValue ?? 0) || 0);
+    const templateKey = metric === "plays"
+      ? "milestone_plays"
+      : metric === "followers"
+      ? "milestone_followers"
+      : metric === "earnings"
+      ? "milestone_earnings"
+      : "";
+
+    if (templateKey && threshold > 0) {
+      await enqueueJourneyPushes(sb, uid, [
+        {
+          template_key: templateKey,
+          dedupe_key: `v1:${templateKey}:${eventKey || `${metric}:${threshold}`}`,
+          send_at: isoAfterMinutes(1, new Date(occurredAt)),
+          payload: {
+            metric,
+            threshold,
+            current_value: currentValue,
+          },
+        },
+      ]);
+    }
+  }
+}
+
+function isMissingColumnSchemaCache(error: unknown, column: string, table: string): boolean {
+  const msg = String((error as any)?.message ?? error ?? "").toLowerCase();
+  return msg.includes("schema cache") &&
+    msg.includes(`could not find the '${column.toLowerCase()}' column`) &&
+    msg.includes(`'${table.toLowerCase()}'`);
+}
+
+function isOnConflictConstraintMissing(error: unknown): boolean {
+  const msg = String((error as any)?.message ?? error ?? "").toLowerCase();
+  // Postgres/PostgREST typical wording when on_conflict targets a non-unique column.
+  return msg.includes("no unique or exclusion constraint") && msg.includes("on conflict");
+}
+
+function tryParseMissingColumnForTable(
+  error: unknown,
+  table: string,
+): string | null {
+  const msg = String((error as any)?.message ?? error ?? "");
+
+  // PostgREST schema-cache miss (most common in Supabase).
+  // Example: "Could not find the 'months' column of 'paychangu_payments' in the schema cache"
+  {
+    const m = msg.match(/could not find the '([^']+)' column of '([^']+)' in the schema cache/i);
+    if (m && m[2] && m[2].toLowerCase() === table.toLowerCase()) return String(m[1]);
+  }
+
+  // Postgres error (occasionally surfaced if bypassing PostgREST).
+  // Example: "column \"months\" of relation \"paychangu_payments\" does not exist"
+  {
+    const m = msg.match(/column\s+"([^"]+)"\s+of\s+relation\s+"([^"]+)"\s+does\s+not\s+exist/i);
+    if (m && m[2] && m[2].toLowerCase() === table.toLowerCase()) return String(m[1]);
+  }
+
+  return null;
+}
+
+function isNotNullViolation(error: unknown, column: string): boolean {
+  const msg = String((error as any)?.message ?? error ?? "").toLowerCase();
+  return msg.includes(`null value in column \"${column.toLowerCase()}\"`) && msg.includes("violates not-null constraint");
+}
+
+function looksLikeUuid(value: unknown): boolean {
+  if (typeof value !== "string") return false;
+  const v = value.trim();
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(v);
+}
+
+function normalizeCountryCode(input: unknown): string | null {
+  const raw = String(input ?? "").trim();
+  if (!raw) return null;
+
+  const upper = raw.toUpperCase();
+  if (/^[A-Z]{2}$/.test(upper)) return upper;
+
+  const lower = raw.toLowerCase();
+  // Minimal, Malawi-first mapping to support existing UI defaults.
+  if (lower === "mw" || lower === "mwi" || lower.includes("malawi")) return "MW";
+
+  return null;
+}
+
+function isInvalidUuidSyntax(error: unknown): boolean {
+  const msg = String((error as any)?.message ?? error ?? "").toLowerCase();
+  return msg.includes("invalid input syntax for type uuid") || msg.includes("22p02");
+}
+
+async function upsertPaychanguPaymentTolerant(
+  sb: ReturnType<typeof supabaseAdmin>,
+  row: Record<string, unknown>,
+): Promise<void> {
+  // Some deployments may have older versions of `paychangu_payments`.
+  // Instead of guessing which columns to omit (which can accidentally drop
+  // required columns like `user_id`), only omit a column when the API tells us
+  // it is missing from the PostgREST schema cache.
+  const table = "paychangu_payments";
+  const omit = new Set<string>();
+
+  // Identifier semantics:
+  // - `uid` is the canonical Firebase UID (text).
+  // - `user_id` is a legacy/compat column that may be TEXT or UUID depending on deployment.
+  //   If it's UUID in a Firebase-auth project, writing the Firebase UID will crash.
+  const base: Record<string, unknown> = { ...row };
+
+  // Always try to keep `uid` populated (Firebase UID).
+  if (base.uid == null && base.user_id != null) base.uid = base.user_id;
+
+  // Only populate user_id from uid when the uid *looks like* a UUID.
+  // This avoids sending Firebase UIDs into UUID-typed user_id columns.
+  if (base.user_id == null && base.uid != null && looksLikeUuid(base.uid)) {
+    base.user_id = base.uid;
+  }
+
+  // If caller provided both and they are the same non-UUID string, drop user_id.
+  // This prevents legacy schemas with `user_id uuid` from failing.
+  if (
+    typeof base.uid === "string" &&
+    typeof base.user_id === "string" &&
+    base.uid.trim() === base.user_id.trim() &&
+    !looksLikeUuid(base.user_id)
+  ) {
+    delete base.user_id;
+  }
+
+  const buildAttempt = (): Record<string, unknown> => {
+    const out: Record<string, unknown> = { ...base };
+    for (const k of omit) delete out[k];
+    return out;
+  };
+
+  const ensureNotOmittedIfRequired = (error: unknown) => {
+    if (isNotNullViolation(error, "user_id")) omit.delete("user_id");
+    if (isNotNullViolation(error, "uid")) omit.delete("uid");
+  };
+
+  const omitUuidTypedIdsOnSyntaxError = (error: unknown) => {
+    if (!isInvalidUuidSyntax(error)) return;
+
+    // Best-effort: when a legacy schema has user_id uuid, omit user_id.
+    // We'll still keep `uid` (text) so the payment can proceed.
+    omit.add("user_id");
+  };
+
+  let lastErr: unknown;
+
+  const conflictTargets = ["tx_ref", "reference"];
+  for (const onConflict of conflictTargets) {
+    // 1) Prefer upsert for idempotency.
+    for (let i = 0; i < 12; i++) {
+      if (omit.has(onConflict)) break; // can't upsert on a column we're omitting
+
+      const attempt = buildAttempt();
+      const { error } = await sb
+        .from(table)
+        .upsert(attempt, { onConflict });
+      if (!error) return;
+
+      lastErr = error;
+      const missing = tryParseMissingColumnForTable(error, table);
+      if (missing) {
+        omit.add(missing);
+        continue;
+      }
+
+      omitUuidTypedIdsOnSyntaxError(error);
+
+      ensureNotOmittedIfRequired(error);
+
+      // If ON CONFLICT cannot be used, fall back to insert immediately.
+      if (isOnConflictConstraintMissing(error)) break;
+
+      // Unknown error: stop iterating for this conflict target.
+      break;
+    }
+
+    // 2) Fallback: plain insert (no ON CONFLICT). This sacrifices idempotency
+    // but avoids blocking checkout if DB constraints haven't been applied yet.
+    for (let j = 0; j < 12; j++) {
+      const attempt = buildAttempt();
+      const { error } = await sb
+        .from(table)
+        .insert(attempt);
+      if (!error) return;
+
+      lastErr = error;
+      const missing = tryParseMissingColumnForTable(error, table);
+      if (missing) {
+        omit.add(missing);
+        continue;
+      }
+
+      omitUuidTypedIdsOnSyntaxError(error);
+
+      ensureNotOmittedIfRequired(error);
+      break;
+    }
+  }
+
+  throw lastErr;
+}
+
+// Agora (RTC tokens)
+const agoraAppId = (Deno.env.get("AGORA_APP_ID") ?? "").trim();
+const agoraAppCertificate =
+  (Deno.env.get("AGORA_APP_CERTIFICATE") ?? Deno.env.get("AGORA_APP_CERT") ?? "").trim();
+
+// STEP 1.5 (Coins + Wallet + Gifts)
+// Gift catalog is stored in Postgres (public.live_gifts).
+
+type LiveGiftCatalogRow = {
+  id: string;
+  name: string;
+  coin_cost: number;
+  icon_name: string;
+  enabled: boolean;
+  sort_order: number;
+};
+
+async function getGiftCatalogRow(
+  sb: ReturnType<typeof supabaseAdmin>,
+  giftId: string,
+): Promise<LiveGiftCatalogRow | null> {
+  const { data, error } = await sb
+    .from("live_gifts")
+    .select("id,name,coin_cost,icon_name,enabled,sort_order")
+    .eq("id", giftId)
+    .eq("enabled", true)
+    .maybeSingle();
+
+  if (error) {
+    const msg = error.message ?? String(error);
+    const looksMissing = msg.includes("PGRST205") || msg.includes("live_gifts");
+    if (looksMissing) {
+      throw new HttpError(
+        503,
+        "not_configured",
+        "Gift catalog not configured. Apply migrations (live_gifts table) and refresh schema cache.",
+      );
+    }
+    throw new HttpError(500, "db_error", `Failed to read gift catalog: ${msg}`);
+  }
+
+  if (!data) return null;
+
+  return {
+    id: String((data as any).id ?? ""),
+    name: String((data as any).name ?? ""),
+    coin_cost: Number((data as any).coin_cost ?? 0),
+    icon_name: String((data as any).icon_name ?? ""),
+    enabled: Boolean((data as any).enabled ?? false),
+    sort_order: Number((data as any).sort_order ?? 100),
+  };
+}
+
+type SubscriptionEntitlementContext = {
+  planId: string;
+  status: string;
+  isPremiumActive: boolean;
+  features: Record<string, unknown>;
+  perks: Record<string, unknown>;
+};
+
+type ConsumerPlanTierId = "free" | "premium" | "platinum";
+type ConsumerGiftingTierId = "limited" | "standard" | "vip";
+
+async function resolveSubscriptionEntitlementContext(
+  sb: ReturnType<typeof supabaseAdmin>,
+  uid: string,
+): Promise<SubscriptionEntitlementContext> {
+  const sub = await getUserSubscription(sb, uid);
+  const planId = normalizePlanId(sub.planId || "free") || "free";
+  const dbEntitlements = await readPlanEntitlementsByPlanId(sb, planId);
+  const fallbackEntitlements = defaultEntitlementsForPlanId(planId);
+
+  return {
+    planId,
+    status: sub.status,
+    isPremiumActive: sub.isPremiumActive,
+    features: mergeRecordsDeep(fallbackEntitlements.features, dbEntitlements?.features) ?? {},
+    perks: mergeRecordsDeep(fallbackEntitlements.perks, dbEntitlements?.perks) ?? {},
+  };
+}
+
+function consumerPlanTierFromPlanId(rawPlanId: string): ConsumerPlanTierId {
+  const planId = normalizePlanId(rawPlanId);
+
+  if (
+    planId === "platinum" ||
+    planId === "vip" ||
+    planId === "family" ||
+    planId === "artist_premium" ||
+    planId === "dj_premium"
+  ) {
+    return "platinum";
+  }
+
+  if (
+    planId === "premium" ||
+    planId === "pro" ||
+    planId === "artist_pro" ||
+    planId === "dj_pro"
+  ) {
+    return "premium";
+  }
+
+  return "free";
+}
+
+function normalizeConsumerGiftingTier(raw: unknown): ConsumerGiftingTierId | undefined {
+  const value = String(raw ?? "").trim().toLowerCase();
+  switch (value) {
+    case "free":
+    case "limited":
+    case "basic":
+      return "limited";
+    case "premium":
+    case "standard":
+      return "standard";
+    case "vip":
+    case "platinum":
+      return "vip";
+    default:
+      return undefined;
+  }
+}
+
+function resolveConsumerGiftingTier(context: SubscriptionEntitlementContext): ConsumerGiftingTierId {
+  const explicit = normalizeConsumerGiftingTier(
+    getNestedString(context.features, "engagement.gifting.tier") ??
+      getNestedString(context.features, "gifting.tier") ??
+      getNestedString(context.features, "live.gifts.tier") ??
+      getNestedString(context.features, "gifting") ??
+      getNestedString(context.perks, "engagement.gifting.tier") ??
+      getNestedString(context.perks, "gifting.tier") ??
+      getNestedString(context.perks, "live.gifts.tier") ??
+      getNestedString(context.perks, "gifting"),
+  );
+
+  if (explicit) return explicit;
+
+  switch (consumerPlanTierFromPlanId(context.planId)) {
+    case "platinum":
+      return "vip";
+    case "premium":
+      return "standard";
+    case "free":
+    default:
+      return "limited";
+  }
+}
+
+function consumerGiftingTierRank(tier: ConsumerGiftingTierId): number {
+  switch (tier) {
+    case "limited":
+      return 0;
+    case "standard":
+      return 1;
+    case "vip":
+      return 2;
+  }
+}
+
+function giftAccessTierForGift(giftId: string, coinCost: number): ConsumerGiftingTierId {
+  const normalizedGiftId = String(giftId ?? "").trim().toLowerCase();
+  const effectiveCoinCost = Number.isFinite(coinCost) ? coinCost : 0;
+
+  if (normalizedGiftId.includes("rocket") || effectiveCoinCost >= 250) {
+    return "vip";
+  }
+
+  if (
+    normalizedGiftId.includes("diamond") ||
+    normalizedGiftId.includes("crown") ||
+    normalizedGiftId.includes("mic") ||
+    effectiveCoinCost >= 500
+  ) {
+    return "standard";
+  }
+
+  return "limited";
+}
+
+function assertConsumerGiftAccess(
+  context: SubscriptionEntitlementContext,
+  requiredTier: ConsumerGiftingTierId,
+): void {
+  if (requiredTier === "limited") return;
+
+  const currentTier = resolveConsumerGiftingTier(context);
+  if (consumerGiftingTierRank(currentTier) >= consumerGiftingTierRank(requiredTier)) {
+    return;
+  }
+
+  const requiredPlan = requiredTier === "vip" ? "Platinum" : "Premium";
+  throw new HttpError(403, "upgrade_required", `${requiredPlan} is required for this gift`);
+}
+
+function consumerSongRequestsEnabled(context: SubscriptionEntitlementContext): boolean {
+  const explicit =
+    getNestedBoolean(context.features, "live.song_requests.enabled") ??
+    getNestedBoolean(context.features, "song_requests.enabled") ??
+    getNestedBoolean(context.features, "song_requests") ??
+    getNestedBoolean(context.perks, "live.song_requests.enabled") ??
+    getNestedBoolean(context.perks, "song_requests.enabled") ??
+    getNestedBoolean(context.perks, "song_requests");
+
+  if (typeof explicit === "boolean") return explicit;
+
+  return consumerPlanTierFromPlanId(context.planId) === "platinum";
+}
+
+function assertConsumerSongRequestAccess(context: SubscriptionEntitlementContext): void {
+  if (consumerSongRequestsEnabled(context)) return;
+  throw new HttpError(403, "upgrade_required", "Platinum is required for song requests");
+}
+
+type TicketAccessTier = "standard" | "vip" | "priority";
+
+function normalizeTicketAccessTier(raw: unknown): TicketAccessTier {
+  const value = String(raw ?? "").trim().toLowerCase();
+  if (!value) return "standard";
+
+  if (
+    value === "standard" ||
+    value === "event" ||
+    value === "events" ||
+    value === "live" ||
+    value === "battle" ||
+    value === "concert"
+  ) {
+    return "standard";
+  }
+
+  if (
+    value === "priority" ||
+    value === "priority_vip" ||
+    value === "vip_priority" ||
+    value === "exclusive" ||
+    value === "platinum" ||
+    value.includes("priority")
+  ) {
+    return "priority";
+  }
+
+  if (
+    value === "vip" ||
+    value === "vip_event" ||
+    value === "premium" ||
+    value === "subscriber" ||
+    value.includes("vip")
+  ) {
+    return "vip";
+  }
+
+  return "standard";
+}
+
+function consumerCanAccessTicketTier(planId: string, tier: TicketAccessTier): boolean {
+  const consumerTier = consumerPlanTierFromPlanId(planId);
+
+  if (tier === "standard") return true;
+  if (tier === "vip") return consumerTier === "premium" || consumerTier === "platinum";
+  return consumerTier === "platinum";
+}
+
+function requiredPlanForTicketTier(tier: TicketAccessTier): string {
+  if (tier === "standard") return "Free";
+  if (tier === "vip") return "Premium";
+  return "Platinum";
+}
+
+function supabasePublic() {
+  if (!supabaseUrl || !supabaseAnonKey) {
+    throw new Error("Missing SUPABASE_URL or SUPABASE_ANON_KEY env vars.");
+  }
+  return createClient(supabaseUrl, supabaseAnonKey, {
+    auth: { persistSession: false, autoRefreshToken: false },
+    global: { fetch: supabaseFetch },
+  });
+}
+
+function supabaseAdmin() {
+  if (!supabaseUrl || !supabaseServiceRoleKey) {
+    throw new Error("Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY env vars.");
+  }
+  return createClient(supabaseUrl, supabaseServiceRoleKey, {
+    auth: { persistSession: false, autoRefreshToken: false },
+    global: { fetch: supabaseFetch },
+  });
+}
+
+function supabaseRefFromUrl(raw: string): string | null {
+  try {
+    const u = new URL(raw);
+    const host = u.host;
+
+    // Common Supabase origins:
+    // - https://<ref>.supabase.co
+    // - https://<ref>.functions.supabase.co
+    if (host.endsWith(".functions.supabase.co")) {
+      const ref = host.replace(".functions.supabase.co", "").split(".")[0];
+      return ref ? ref.trim() : null;
+    }
+    if (host.endsWith(".supabase.co")) {
+      const ref = host.replace(".supabase.co", "").split(".")[0];
+      return ref ? ref.trim() : null;
+    }
+
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+function supabaseKeyMeta(key: string): { role?: string; ref?: string } {
+  const payload = tryDecodeJwtPayload(key);
+  if (!payload) return {};
+
+  const role = payload.role ? String(payload.role) : undefined;
+  const ref = payload.ref ? String(payload.ref) : undefined;
+  return { role, ref };
+}
+
+function requireSupabaseAdmin() {
+  if (!supabaseServiceRoleKey) {
+    throw new HttpError(
+      501,
+      "not_configured",
+      "SUPABASE_SERVICE_ROLE_KEY is required for subscriptions. Configure it on the Edge Function.",
+    );
+  }
+
+  // Safety check: it's easy to accidentally set the anon key here.
+  // When artists RLS is FORCEd (and has no INSERT policy), that mistake causes
+  // creator provisioning to silently fail and return null artist_id.
+  const meta = supabaseKeyMeta(supabaseServiceRoleKey);
+  if (meta.role && meta.role !== "service_role") {
+    throw new HttpError(
+      501,
+      "not_configured",
+      `SUPABASE_SERVICE_ROLE_KEY must be a service_role key (observed role=${meta.role}). ` +
+        "Open Supabase Dashboard → Project Settings → API → service_role key, then update the Edge Function secret.",
+    );
+  }
+
+  // Best-effort mismatch guard: prevent connecting to the wrong project.
+  const urlRef = supabaseRefFromUrl(supabaseUrl);
+  if (meta.ref && urlRef && meta.ref !== urlRef) {
+    throw new HttpError(
+      501,
+      "not_configured",
+      `SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY point to different projects (urlRef=${urlRef}, keyRef=${meta.ref}). ` +
+        "Fix Edge Function secrets so both refer to the same Supabase project.",
+    );
+  }
+
+  return supabaseAdmin();
+}
+
+function json(
+  body: unknown,
+  opts: { status?: number; headers?: HeadersInit } = {},
+): Response {
+  return new Response(JSON.stringify(body), {
+    status: opts.status ?? 200,
+    headers: {
+      "Content-Type": "application/json; charset=utf-8",
+      "x-weafrica-build-tag": BUILD_TAG,
+      ...corsHeaders,
+      ...(opts.headers ?? {}),
+    },
+  });
+}
+
+function html(body: string, opts: { status?: number; headers?: HeadersInit } = {}): Response {
+  return new Response(body, {
+    status: opts.status ?? 200,
+    headers: {
+      "Content-Type": "text/html; charset=utf-8",
+      "x-weafrica-build-tag": BUILD_TAG,
+      ...corsHeaders,
+      ...(opts.headers ?? {}),
+    },
+  });
+}
+
+async function readJson(req: Request): Promise<JsonObject> {
+  const raw = await req.text();
+  if (!raw.trim()) return {};
+  const decoded = JSON.parse(raw);
+  if (!decoded || typeof decoded !== "object" || Array.isArray(decoded)) return {};
+  return decoded as JsonObject;
+}
+
+async function readRawBody(req: Request): Promise<string> {
+  return await req.text();
+}
+
+function asNumber(v: unknown): number | null {
+  if (typeof v === "number" && Number.isFinite(v)) return v;
+  if (typeof v === "string" && v.trim() !== "" && Number.isFinite(Number(v))) return Number(v);
+  return null;
+}
+
+function resolveUploadQuota(features: Record<string, unknown>): {
+  unlimited: boolean;
+  limit: number | null;
+  requiredPlan: string;
+} {
+  const uploads = features["uploads"];
+  const uploadLimit = asNumber(features["upload_limit"]);
+
+  const unlimited =
+    uploads === "unlimited" ||
+    uploads === true;
+
+  const requiredPlan =
+    (typeof features["required_plan_for_unlimited_uploads"] === "string" &&
+      (features["required_plan_for_unlimited_uploads"] as string)) ||
+    "artist_premium";
+
+  // Support a few shapes safely:
+  // - { uploads: "unlimited" }
+  // - { uploads: "limited", upload_limit: 10 }
+  // - { uploads: 10 }  (legacy)
+  if (unlimited) return { unlimited: true, limit: null, requiredPlan };
+
+  const legacyNumeric = asNumber(uploads);
+  const limit =
+    uploadLimit ??
+    legacyNumeric ??
+    // Fail-safe default if plan says "limited" but doesn't supply a limit
+    (uploads === "limited" ? 10 : null);
+
+  return { unlimited: false, limit, requiredPlan };
+}
+
+async function enforceUploadQuota(opts: {
+  supabaseAdmin: ReturnType<typeof supabaseAdmin>;
+  userId: string;
+  features: Record<string, unknown>;
+
+  // Configure to match your schema:
+  tables?: Array<{ table: string; ownerColumn: string }>;
+}): Promise<void> {
+  const { unlimited, limit, requiredPlan } = resolveUploadQuota(opts.features);
+  if (unlimited || limit == null) return;
+
+  const tables = opts.tables ?? [
+    { table: "songs", ownerColumn: "artist_id" },
+    { table: "videos", ownerColumn: "artist_id" },
+  ];
+
+  let total = 0;
+
+  for (const t of tables) {
+    const { count, error } = await opts.supabaseAdmin
+      .from(t.table)
+      .select("id", { head: true, count: "exact" })
+      .eq(t.ownerColumn, opts.userId);
+
+    if (error) {
+      throw new HttpError(
+        503,
+        "UPLOAD_QUOTA_CHECK_FAILED",
+        `Upload quota check unavailable: ${error.message}`,
+      );
+    }
+
+    total += count ?? 0;
+  }
+
+  if (total >= limit) {
+    throw new HttpError(
+      403,
+      "upload_limit_exceeded",
+      `Upload limit reached (${total}/${limit}). Upgrade to ${requiredPlan} for unlimited uploads.`,
+    );
+  }
+}
+
+function isMissingColumnError(message: string, column: string): boolean {
+  const m = (message ?? "").toLowerCase();
+  const c = (column ?? "").toLowerCase();
+  return m.includes("does not exist") && m.includes(c);
+}
+
+function toHex(bytes: ArrayBuffer): string {
+  const arr = new Uint8Array(bytes);
+  let out = "";
+  for (const b of arr) out += b.toString(16).padStart(2, "0");
+  return out;
+}
+
+async function hmacSha256Hex(payload: string, secret: string): Promise<string> {
+  const enc = new TextEncoder();
+  const key = await crypto.subtle.importKey(
+    "raw",
+    enc.encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  const sig = await crypto.subtle.sign("HMAC", key, enc.encode(payload));
+  return toHex(sig);
+}
+
+function isTruthySuccess(status: string): boolean {
+  const s = (status ?? "").toLowerCase();
+  return s === "success" || s === "successful" || s === "paid";
+}
+
+function deriveCallbackUrl(reqUrl: URL): { callbackUrl: string; returnUrl: string } {
+  const origin = reqUrl.origin;
+  const callbackUrl = paychanguCallbackUrlEnv || `${origin}/api/paychangu/callback`;
+  const returnUrl = paychanguReturnUrlEnv || `${origin}/api/paychangu/return`;
+  return { callbackUrl, returnUrl };
+}
+
+function splitName(full?: string): { first?: string; last?: string } {
+  const s = (full ?? "").trim();
+  if (!s) return {};
+  const parts = s.split(/\s+/).filter(Boolean);
+  if (parts.length === 1) return { first: parts[0] };
+  return { first: parts[0], last: parts.slice(1).join(" ") };
+}
+
+async function paychanguVerify(txRef: string): Promise<JsonObject> {
+  if (!paychanguSecretKey) {
+    throw new HttpError(501, "not_configured", "Missing PAYCHANGU_SECRET_KEY");
+  }
+
+  const verifyUrl = `${paychanguApiBase}/verify-payment/${encodeURIComponent(txRef)}`;
+  const res = await fetch(verifyUrl, {
+    method: "GET",
+    headers: {
+      "Accept": "application/json",
+      "Authorization": `Bearer ${paychanguSecretKey}`,
+    },
+  });
+
+  const text = await res.text();
+  let decoded: unknown;
+  try {
+    decoded = JSON.parse(text);
+  } catch {
+    throw new HttpError(502, "bad_gateway", `PayChangu verify returned non-JSON (HTTP ${res.status})`);
+  }
+
+  if (!decoded || typeof decoded !== "object" || Array.isArray(decoded)) {
+    throw new HttpError(502, "bad_gateway", "PayChangu verify returned invalid payload");
+  }
+
+  const obj = decoded as JsonObject;
+  if (res.status < 200 || res.status >= 300) {
+    throw new HttpError(502, "bad_gateway", `PayChangu verify failed (HTTP ${res.status}): ${JSON.stringify(obj)}`);
+  }
+
+  return obj;
+}
+
+function bearerToken(req: Request): string {
+  const auth = req.headers.get("authorization") ?? "";
+  if (!auth.toLowerCase().startsWith("bearer ")) return "";
+  return auth.slice(7).trim();
+}
+
+function tryDecodeJwtPayload(token: string): Record<string, unknown> | null {
+  try {
+    const parts = token.split(".");
+    if (parts.length < 2) return null;
+    // base64url decode
+    const b64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+    const padded = b64 + "===".slice((b64.length + 3) % 4);
+    const json = atob(padded);
+    const obj = JSON.parse(json);
+    if (!obj || typeof obj !== "object" || Array.isArray(obj)) return null;
+    return obj as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+async function requireFirebaseUser(req: Request): Promise<{ uid: string; email?: string }>
+{
+  const token = bearerToken(req);
+  if (!token) {
+    throw new HttpError(401, "unauthorized", "Missing Authorization: Bearer <Firebase ID token>");
+  }
+
+  const firebaseProjectId = firebaseProjectIdFromEnv();
+  if (!firebaseProjectId) {
+    throw new Error("Missing FIREBASE_PROJECT_ID env var (or GCLOUD_PROJECT). Required for Firebase token verification.");
+  }
+
+  let payload: Record<string, unknown>;
+  try {
+    const jose = await getJoseModule();
+    const firebaseJwks = await getFirebaseJwks();
+    const verified = await jose.jwtVerify(token, firebaseJwks, {
+      issuer: `https://securetoken.google.com/${firebaseProjectId}`,
+      audience: firebaseProjectId,
+    });
+    payload = verified.payload as unknown as Record<string, unknown>;
+  } catch (e) {
+    const unsafe = tryDecodeJwtPayload(token);
+    const observedIss = unsafe?.iss ? String(unsafe.iss) : "";
+    const observedAud = unsafe?.aud ? String(unsafe.aud) : "";
+    const expectedIss = `https://securetoken.google.com/${firebaseProjectId}`;
+
+    console.log(`Firebase auth debug: firebaseProjectId=${firebaseProjectId}, expectedIss=${expectedIss}, observedIss=${observedIss}, observedAud=${observedAud}, error=${e instanceof Error ? e.message : String(e)}`);
+
+    throw new HttpError(
+      401,
+      "unauthorized",
+      `Firebase token verification failed: ${e instanceof Error ? e.message : String(e)}. ` +
+        `Check Edge Function env FIREBASE_PROJECT_ID. Expected iss=${expectedIss} aud=${firebaseProjectId}. ` +
+        `Observed iss=${observedIss || "(unknown)"} aud=${observedAud || "(unknown)"}`,
+    );
+  }
+
+  const uid = String(payload.user_id ?? payload.sub ?? "").trim();
+  if (!uid) {
+    throw new HttpError(401, "unauthorized", "Invalid Firebase token (missing uid)");
+  }
+
+  const email = payload.email ? String(payload.email) : undefined;
+  return { uid, email };
+}
+
+async function requireCreatorRole(uid: string, role: "dj" | "artist") {
+  const sb = requireSupabaseAdmin();
+  const q = await sb
+    .from("creator_profiles")
+    .select("role")
+    .eq("user_id", uid)
+    .limit(1)
+    .maybeSingle();
+
+  if (q.error) {
+    throw new HttpError(500, "db_error", `Failed to resolve creator role: ${q.error.message}`);
+  }
+
+  const observed = String((q.data as any)?.role ?? "").trim().toLowerCase();
+  if (!observed) {
+    throw new HttpError(403, "forbidden", "Creator account required");
+  }
+  if (observed !== role) {
+    throw new HttpError(403, "forbidden", `Role mismatch (expected ${role}, got ${observed})`);
+  }
+}
+
+type AdminContext = {
+  uid: string;
+  email?: string;
+  admin: Record<string, unknown>;
+};
+
+async function requireAdminPermission(
+  req: Request,
+  opts: { can_manage_artists?: boolean } = {},
+): Promise<AdminContext> {
+  const { uid, email } = await requireFirebaseUser(req);
+  const sb = requireSupabaseAdmin();
+
+  let q = sb
+    .from("admins_with_permissions")
+    .select("*")
+    .limit(1);
+
+  if (email && email.trim().length > 0) {
+    q = q.eq("email", email.trim());
+  } else {
+    q = q.eq("uid", uid);
+  }
+
+  const { data, error } = await q.maybeSingle();
+  if (error) {
+    throw new HttpError(500, "db_error", `Failed to resolve admin permissions: ${error.message}`);
+  }
+  if (!data) {
+    throw new HttpError(403, "forbidden", "Admin access required");
+  }
+
+  const status = String((data as any).status ?? "").trim().toLowerCase();
+  if (status && status !== "active") {
+    throw new HttpError(403, "forbidden", "Admin account is not active");
+  }
+
+  if (opts.can_manage_artists) {
+    const allowed = Boolean((data as any).can_manage_artists);
+    if (!allowed) {
+      throw new HttpError(403, "forbidden", "Missing permission: can_manage_artists");
+    }
+  }
+
+  return { uid, email, admin: data as any };
+}
+
+async function maybeRefreshBeatAudioJob(sb: any, uid: string, jobId: string, job: any) {
+  if (!job) return;
+  if (!job.provider_prediction_id) return;
+  if (job.status !== "queued" && job.status !== "running") return;
+
+  const provider = String(job.provider ?? "replicate").trim().toLowerCase();
+
+  let providerStatus: "running" | "succeeded" | "failed" = "running";
+  let providerOutUrl: string | null = null;
+  let providerError: string | null = null;
+
+  if (provider === "stability") {
+    const st = await stabilityGetAudioStatus(String(job.provider_prediction_id));
+    providerStatus = st.status;
+    providerOutUrl = st.outUrl ?? null;
+    providerError = st.error ?? null;
+  } else {
+    const pred = await replicateGetPrediction(String(job.provider_prediction_id));
+    if (pred.status === "failed" || pred.status === "canceled") {
+      providerStatus = "failed";
+      providerError = String(pred.error ?? "provider_failed");
+    } else if (pred.status === "starting" || pred.status === "processing") {
+      providerStatus = "running";
+    } else if (pred.status === "succeeded") {
+      providerStatus = "succeeded";
+      providerOutUrl = firstUrlFromOutput(pred.output);
+      if (!providerOutUrl) {
+        providerStatus = "failed";
+        providerError = "missing_audio_url";
+      }
+    }
+  }
+
+  if (providerStatus === "failed") {
+    await sb
+      .from("ai_beat_audio_jobs")
+      .update({ status: "failed", error: String(providerError ?? "provider_failed") })
+      .eq("id", jobId)
+      .eq("user_id", uid);
+
+    job.status = "failed";
+    job.error = String(providerError ?? "provider_failed");
+    return;
+  }
+
+  if (providerStatus === "running") {
+    job.status = "running";
+    return;
+  }
+
+  if (providerStatus === "succeeded" && !job.storage_path) {
+    const outUrl = providerOutUrl;
+    if (!outUrl) {
+      await sb
+        .from("ai_beat_audio_jobs")
+        .update({ status: "failed", error: "missing_audio_url" })
+        .eq("id", jobId)
+        .eq("user_id", uid);
+
+      job.status = "failed";
+      job.error = "missing_audio_url";
+      return;
+    }
+
+    const dl = await downloadBytes(outUrl);
+    const mime = (dl.mime ?? "audio/mpeg").split(";")[0].trim() || "audio/mpeg";
+    const ext = mime === "audio/wav" ? "wav" : "mp3";
+    const objectPath = `${uid}/${jobId}.${ext}`;
+
+    const up = await sb.storage.from(aiBeatsBucket).upload(objectPath, dl.bytes, {
+      contentType: mime,
+      upsert: true,
+    });
+
+    if (up.error) {
+      await sb
+        .from("ai_beat_audio_jobs")
+        .update({ status: "failed", error: `storage_upload_failed:${up.error.message}` })
+        .eq("id", jobId)
+        .eq("user_id", uid);
+
+      job.status = "failed";
+      job.error = `storage_upload_failed:${up.error.message}`;
+      return;
+    }
+
+    await sb
+      .from("ai_beat_audio_jobs")
+      .update({
+        status: "succeeded",
+        storage_bucket: aiBeatsBucket,
+        storage_path: objectPath,
+        output_mime: mime,
+        output_bytes: dl.bytes.byteLength,
+      })
+      .eq("id", jobId)
+      .eq("user_id", uid);
+
+    job.status = "succeeded";
+    job.storage_bucket = aiBeatsBucket;
+    job.storage_path = objectPath;
+    job.output_mime = mime;
+    job.output_bytes = dl.bytes.byteLength;
+  }
+}
+
+function requireTestAccess(req: Request) {
+  if (!enableTestRoutes) {
+    throw new HttpError(404, "not_found", "Test routes are disabled");
+  }
+  if (!testToken) return;
+
+  const provided = (req.headers.get("x-weafrica-test-token") ?? "").trim();
+  if (!provided || provided !== testToken) {
+    throw new HttpError(403, "forbidden", "Missing/invalid x-weafrica-test-token");
+  }
+}
+
+class HttpError extends Error {
+  status: number;
+  code: string;
+
+  constructor(status: number, code: string, message: string) {
+    super(message);
+    this.status = status;
+    this.code = code;
+  }
+}
+
+Deno.serve(async (req: Request) => {
+  if (req.method === "OPTIONS") {
+    return new Response(null, { status: 204, headers: corsHeaders });
+  }
+
+  const url = new URL(req.url);
+  const path = url.pathname;
+
+  // When deployed as function name `api`, Supabase can be invoked via either:
+  // - https://<ref>.functions.supabase.co/api/<rest>
+  // - https://<ref>.supabase.co/functions/v1/api/<rest>
+  // Normalize so handlers can match on `/<rest>` consistently.
+  const fnPrefix = "/functions/v1/api";
+  let normalized = path.startsWith(fnPrefix)
+    ? path.slice(fnPrefix.length) || "/"
+    : (path.startsWith("/api/") ? path.slice(4) : path);
+
+  // Guard against accidental double-prefixing when clients set a baseUrl ending
+  // with "/api" and still call paths like "/api/<route>".
+  if (normalized.startsWith("/api/")) normalized = normalized.slice(4);
+  if (normalized === "/api") normalized = "/";
+
+  try {
+    // Realtime auth bridge
+    // POST /api/realtime/token
+    // Expects: Authorization: Bearer <Firebase ID token>
+    // Returns: { token: <Supabase JWT>, expires_in }
+    if (req.method === "POST" && normalized === "/realtime/token") {
+      // Production path: require a real Firebase ID token.
+      // Local/dev path: if no Bearer token is provided, allow test-token access
+      // only when WEAFRICA_ENABLE_TEST_ROUTES=true.
+      const providedBearer = bearerToken(req);
+      const firebaseProjectId = firebaseProjectIdFromEnv();
+      const expectedIss = firebaseProjectId ? `https://securetoken.google.com/${firebaseProjectId}` : "";
+      const bearerPayload = providedBearer ? tryDecodeJwtPayload(providedBearer) : null;
+      const looksLikeFirebaseIdToken = Boolean(expectedIss && bearerPayload?.iss === expectedIss);
+
+      let uid: string;
+      if (providedBearer && looksLikeFirebaseIdToken) {
+        uid = (await requireFirebaseUser(req)).uid;
+      } else {
+        requireTestAccess(req);
+        const body = await readJson(req);
+        uid = String(body.uid ?? body.user_id ?? body.userId ?? body.firebase_uid ?? body.firebaseUid ?? "").trim();
+        if (!uid) {
+          throw new HttpError(400, "bad_request", "uid is required (dev/test mode)");
+        }
+      }
+      const minted = await mintSupabaseRealtimeJwt({ uid });
+      return json({ ok: true, uid, ...minted });
+    }
+
+    // Albums (public, consumer-safe)
+    // GET /api/albums?limit=&offset=&artist_id=
+    if (req.method === "GET" && normalized.startsWith("/albums")) {
+      const parts = normalized.split("/").filter(Boolean);
+      const sb = supabaseServiceRoleKey ? supabaseAdmin() : supabasePublic();
+
+      // List
+      if (parts.length === 1) {
+        const limitRaw = Number(url.searchParams.get("limit") ?? 20);
+        const offsetRaw = Number(url.searchParams.get("offset") ?? 0);
+        const limit = Number.isFinite(limitRaw) ? Math.max(1, Math.min(100, Math.floor(limitRaw))) : 20;
+        const offset = Number.isFinite(offsetRaw) ? Math.max(0, Math.floor(offsetRaw)) : 0;
+        const artistId = String(url.searchParams.get("artist_id") ?? "").trim();
+        const nowIso = new Date().toISOString();
+
+        const missingIsActive = (msg: string) =>
+          msg.toLowerCase().includes("is_active") &&
+          (msg.toLowerCase().includes("could not find") ||
+            msg.toLowerCase().includes("schema cache") ||
+            msg.toLowerCase().includes("column") ||
+            msg.toLowerCase().includes("does not exist"));
+
+        const run = async (withIsActive: boolean) => {
+          let q = sb
+            .from("albums")
+            .select("*")
+            .eq("visibility", "public")
+            .not("published_at", "is", null)
+            .lte("release_at", nowIso)
+            .order("release_at", { ascending: false })
+            .order("published_at", { ascending: false });
+
+          if (withIsActive) q = q.eq("is_active", true);
+          if (artistId) q = q.eq("artist_id", artistId);
+          return await q.range(offset, offset + limit - 1);
+        };
+
+        let { data, error } = await run(true);
+        if (error && missingIsActive(error.message)) {
+          ({ data, error } = await run(false));
+        }
+        if (error) {
+          throw new HttpError(500, "db_error", `Failed to list albums: ${error.message}`);
+        }
+        return json({ ok: true, albums: data ?? [], limit, offset });
+      }
+
+      // Detail
+      if (parts.length === 2) {
+        const id = parts[1];
+        const nowIso = new Date().toISOString();
+        const missingIsActive = (msg: string) =>
+          msg.toLowerCase().includes("is_active") &&
+          (msg.toLowerCase().includes("could not find") ||
+            msg.toLowerCase().includes("schema cache") ||
+            msg.toLowerCase().includes("column") ||
+            msg.toLowerCase().includes("does not exist"));
+
+        const run = async (withIsActive: boolean) => {
+          let q = sb
+            .from("albums")
+            .select("*")
+            .eq("id", id)
+            .eq("visibility", "public")
+            .not("published_at", "is", null)
+            .lte("release_at", nowIso)
+            .limit(1);
+
+          if (withIsActive) q = q.eq("is_active", true);
+          return await q.maybeSingle();
+        };
+
+        let { data, error } = await run(true);
+        if (error && missingIsActive(error.message)) {
+          ({ data, error } = await run(false));
+        }
+
+        if (error) {
+          throw new HttpError(500, "db_error", `Failed to read album: ${error.message}`);
+        }
+        if (!data) {
+          throw new HttpError(404, "not_found", "Album not found");
+        }
+        return json({ ok: true, album: data });
+      }
+
+      // Tracks
+      // GET /api/albums/:id/tracks?limit=<n>
+      if (parts.length === 3 && parts[2] === "tracks") {
+        const id = parts[1];
+        const limitRaw = Number(url.searchParams.get("limit") ?? 200);
+        const limit = Number.isFinite(limitRaw) ? Math.max(1, Math.min(200, Math.floor(limitRaw))) : 200;
+
+        const omit = new Set<string>();
+        let data: any[] | null = null;
+        let error: any = null;
+
+        for (let attempt = 0; attempt < 8; attempt++) {
+          let q = sb
+            .from("songs")
+            .select("*")
+            .eq("album_id", id)
+            .order("created_at", { ascending: true })
+            .limit(limit);
+
+          // Best-effort publish gates; omit if schema lacks these columns.
+          if (!omit.has("status")) q = q.eq("status", "active");
+          if (!omit.has("is_active")) q = q.eq("is_active", true);
+          if (!omit.has("approved")) q = q.eq("approved", true);
+          if (!omit.has("is_public")) q = q.eq("is_public", true);
+          if (!omit.has("is_published")) q = q.eq("is_published", true);
+
+          const res = await q;
+          data = (res.data ?? null) as any;
+          error = res.error as any;
+
+          if (!error) break;
+
+          const missing = tryParseMissingColumnForTable(error, "songs");
+          if (missing) {
+            omit.add(missing);
+            continue;
+          }
+
+          break;
+        }
+
+        if (error) {
+          throw new HttpError(500, "db_error", `Failed to read album tracks: ${error.message}`);
+        }
+
+        return json({ ok: true, tracks: data ?? [], limit });
+      }
+    }
+
+    // Albums (admin publish)
+    // POST /api/admin/albums/:id/publish
+    if (req.method === "POST" && normalized.startsWith("/admin/albums/")) {
+      const parts = normalized.split("/").filter(Boolean);
+      if (parts.length === 4 && parts[0] === "admin" && parts[1] === "albums" && parts[3] === "publish") {
+        const albumId = parts[2];
+        await requireAdminPermission(req, { can_manage_artists: true });
+        const sb = requireSupabaseAdmin();
+        const nowIso = new Date().toISOString();
+
+        const missingIsActive = (msg: string) =>
+          msg.toLowerCase().includes("is_active") &&
+          (msg.toLowerCase().includes("could not find") ||
+            msg.toLowerCase().includes("schema cache") ||
+            msg.toLowerCase().includes("column") ||
+            msg.toLowerCase().includes("does not exist"));
+
+        const run = async (withIsActive: boolean) => {
+          const update: Record<string, unknown> = {
+            visibility: "public",
+            published_at: nowIso,
+            updated_at: nowIso,
+          };
+          if (withIsActive) update.is_active = true;
+
+          return await sb
+            .from("albums")
+            .update(update)
+            .eq("id", albumId)
+            .select("*")
+            .maybeSingle();
+        };
+
+        let { data, error } = await run(true);
+        if (error && missingIsActive(error.message)) {
+          ({ data, error } = await run(false));
+        }
+
+        if (error) {
+          throw new HttpError(500, "db_error", `Failed to publish album: ${error.message}`);
+        }
+        if (!data) {
+          throw new HttpError(404, "not_found", "Album not found");
+        }
+        return json({ ok: true, album: data });
+      }
+    }
+
+    // Albums (creator draft + publish)
+    // POST /api/albums/create
+    // Auth: Bearer <Firebase ID token>
+    // Body: { title: string, description?: string, cover_url?: string, publish?: boolean }
+    if (req.method === "POST" && normalized === "/albums/create") {
+      const { uid, email } = await requireFirebaseUser(req);
+      const sb = requireSupabaseAdmin();
+      const body = await readJson(req);
+
+      const title = String(body.title ?? body.name ?? "").trim();
+      const description = String(body.description ?? body.about ?? "").trim();
+      const coverUrl = String(body.cover_url ?? body.coverUrl ?? body.artwork_url ?? body.image_url ?? "").trim();
+
+      const publishRequestedRaw = body.publish ?? body.is_published ?? body.isPublished;
+      const publishRequested = publishRequestedRaw === undefined ? false : Boolean(publishRequestedRaw);
+
+      if (!title) {
+        throw new HttpError(400, "bad_request", "Missing title");
+      }
+
+      // Allow admin OR real artist accounts.
+      let allowed = false;
+      try {
+        let q = sb.from("admins_with_permissions").select("status").limit(1);
+        if (email && email.trim().length > 0) q = q.eq("email", email.trim());
+        else q = q.eq("uid", uid);
+        const admin = await q.maybeSingle();
+        const status = String((admin.data as any)?.status ?? "").trim().toLowerCase();
+        if (!admin.error && admin.data && (!status || status === "active")) allowed = true;
+      } catch (_) {
+        // ignore
+      }
+
+      let artistId: string | null = null;
+      if (!allowed) {
+        try {
+          const { data: artists, error: artistErr } = await sb
+            .from("artists")
+            .select("id,user_id,firebase_uid")
+            .or(`user_id.eq.${uid},firebase_uid.eq.${uid}`)
+            .limit(1);
+          if (!artistErr && artists && artists.length) {
+            artistId = String((artists[0] as any).id ?? "").trim() || null;
+            allowed = true;
+          }
+        } catch (_) {
+          // ignore
+        }
+      }
+
+      if (!allowed) {
+        throw new HttpError(
+          403,
+          "forbidden",
+          "Artist or admin access required. No matching record found for this account in the artists table.",
+        );
+      }
+
+      const now = new Date().toISOString();
+
+      const baseRow: Record<string, unknown> = {
+        title,
+        created_at: now,
+        updated_at: now,
+      };
+      if (description) baseRow.description = description;
+      if (coverUrl) baseRow.cover_url = coverUrl;
+
+      // Ownership hints (best-effort; omitted if columns don't exist).
+      baseRow.user_id = uid;
+      baseRow.artist_uid = uid;
+      if (artistId) baseRow.artist_id = artistId;
+
+      const publishFlags: Record<string, unknown> = publishRequested
+        ? {
+          is_published: true,
+          visibility: "public",
+          is_active: true,
+          published_at: now,
+          release_at: now,
+        }
+        : {
+          is_published: false,
+          visibility: "private",
+          is_active: true,
+        };
+
+      const omit = new Set<string>();
+      const table = "albums";
+      const buildAttempt = (): Record<string, unknown> => {
+        const out: Record<string, unknown> = { ...baseRow, ...publishFlags };
+        for (const k of omit) delete out[k];
+        return out;
+      };
+
+      let lastErr: unknown = null;
+      for (let i = 0; i < 20; i++) {
+        const attempt = buildAttempt();
+        const { data, error } = await sb.from(table).insert(attempt).select("id").single();
+        if (!error) {
+          return json({ ok: true, album_id: (data as any)?.id ?? null }, { headers: corsHeaders });
+        }
+
+        lastErr = error;
+        const missing = tryParseMissingColumnForTable(error, table);
+        if (missing) {
+          omit.add(missing);
+          continue;
+        }
+
+        break;
+      }
+
+      const fallbackMsg = lastErr instanceof Error ? lastErr.message : String((lastErr as any)?.message ?? lastErr);
+      throw new HttpError(500, "create_failed", `Failed to create album: ${fallbackMsg}`);
+    }
+
+    // Finalize/publish an album created by this user.
+    // POST /api/albums/finalize
+    // Auth: Bearer <Firebase ID token>
+    // Body: { album_id: string, cover_url?: string, description?: string }
+    if (req.method === "POST" && normalized === "/albums/finalize") {
+      const { uid, email } = await requireFirebaseUser(req);
+      const sb = requireSupabaseAdmin();
+      const body = await readJson(req);
+
+      const albumId = String(body.album_id ?? body.albumId ?? body.id ?? "").trim();
+      if (!albumId) {
+        throw new HttpError(400, "bad_request", "Missing album_id");
+      }
+
+      // Allow admin OR album owner.
+      let allowed = false;
+      try {
+        let q = sb.from("admins_with_permissions").select("status").limit(1);
+        if (email && email.trim().length > 0) q = q.eq("email", email.trim());
+        else q = q.eq("uid", uid);
+        const admin = await q.maybeSingle();
+        const status = String((admin.data as any)?.status ?? "").trim().toLowerCase();
+        if (!admin.error && admin.data && (!status || status === "active")) allowed = true;
+      } catch (_) {
+        // ignore
+      }
+
+      let albumRow: Record<string, unknown> | null = null;
+      if (!allowed) {
+        const existing = await sb.from("albums").select("*").eq("id", albumId).maybeSingle();
+        if (existing.error) {
+          throw new HttpError(500, "db_error", `Failed to read album: ${existing.error.message}`);
+        }
+        if (!existing.data) {
+          throw new HttpError(404, "not_found", "Album not found");
+        }
+        albumRow = (existing.data as any) as Record<string, unknown>;
+
+        const userId = String((albumRow as any)?.user_id ?? "").trim();
+        const artistUid = String((albumRow as any)?.artist_uid ?? "").trim();
+        const firebaseUid = String((albumRow as any)?.firebase_uid ?? "").trim();
+        if (userId === uid || artistUid === uid || firebaseUid === uid) {
+          allowed = true;
+        }
+
+        if (!allowed) {
+          const albumArtistId = String((albumRow as any)?.artist_id ?? "").trim();
+          if (albumArtistId) {
+            try {
+              const { data: artists, error: artistErr } = await sb
+                .from("artists")
+                .select("id,user_id,firebase_uid")
+                .or(`user_id.eq.${uid},firebase_uid.eq.${uid}`)
+                .limit(1);
+              if (!artistErr && artists && artists.length) {
+                const requesterArtistId = String((artists[0] as any).id ?? "").trim();
+                if (requesterArtistId && requesterArtistId === albumArtistId) allowed = true;
+              }
+            } catch (_) {
+              // ignore
+            }
+          }
+        }
+      }
+
+      if (!allowed) {
+        throw new HttpError(403, "forbidden", "Not allowed to publish this album.");
+      }
+
+      const now = new Date().toISOString();
+      const coverUrl = String(body.cover_url ?? body.coverUrl ?? body.artwork_url ?? body.image_url ?? "").trim();
+      const description = String(body.description ?? body.about ?? "").trim();
+
+      const update: Record<string, unknown> = {
+        is_published: true,
+        visibility: "public",
+        is_active: true,
+        published_at: now,
+        release_at: now,
+        updated_at: now,
+      };
+      if (coverUrl) update.cover_url = coverUrl;
+      if (description) update.description = description;
+
+      const omit = new Set<string>();
+      const table = "albums";
+      const buildAttempt = (): Record<string, unknown> => {
+        const out: Record<string, unknown> = { ...update };
+        for (const k of omit) delete out[k];
+        return out;
+      };
+
+      let lastErr: unknown = null;
+      for (let i = 0; i < 20; i++) {
+        const attempt = buildAttempt();
+        const { data, error } = await sb.from(table).update(attempt).eq("id", albumId).select("*").maybeSingle();
+        if (!error) {
+          if (!data) throw new HttpError(404, "not_found", "Album not found");
+          return json({ ok: true, album: data }, { headers: corsHeaders });
+        }
+
+        lastErr = error;
+        const missing = tryParseMissingColumnForTable(error, table);
+        if (missing) {
+          omit.add(missing);
+          continue;
+        }
+        break;
+      }
+
+      const fallbackMsg = lastErr instanceof Error ? lastErr.message : String((lastErr as any)?.message ?? lastErr);
+      throw new HttpError(500, "finalize_failed", `Failed to publish album: ${fallbackMsg}`);
+    }
+
+    // Update album metadata (creator/admin).
+    // PUT /api/albums/:id
+    // Auth: Bearer <Firebase ID token>
+    // Body: { title?: string, description?: string, cover_url?: string }
+    if (req.method === "PUT" && normalized.startsWith("/albums/")) {
+      const parts = normalized.split("/").filter(Boolean);
+      if (parts.length === 2 && parts[0] === "albums") {
+        const albumId = parts[1];
+        if (!albumId) throw new HttpError(400, "bad_request", "Missing album id");
+
+        const { uid, email } = await requireFirebaseUser(req);
+        const sb = requireSupabaseAdmin();
+        const body = await readJson(req);
+
+        // Allow admin OR album owner.
+        let allowed = false;
+        try {
+          let q = sb.from("admins_with_permissions").select("status").limit(1);
+          if (email && email.trim().length > 0) q = q.eq("email", email.trim());
+          else q = q.eq("uid", uid);
+          const admin = await q.maybeSingle();
+          const status = String((admin.data as any)?.status ?? "").trim().toLowerCase();
+          if (!admin.error && admin.data && (!status || status === "active")) allowed = true;
+        } catch (_) {
+          // ignore
+        }
+
+        let albumRow: Record<string, unknown> | null = null;
+        if (!allowed) {
+          const existing = await sb.from("albums").select("*").eq("id", albumId).maybeSingle();
+          if (existing.error) {
+            throw new HttpError(500, "db_error", `Failed to read album: ${existing.error.message}`);
+          }
+          if (!existing.data) {
+            throw new HttpError(404, "not_found", "Album not found");
+          }
+          albumRow = (existing.data as any) as Record<string, unknown>;
+
+          const userId = String((albumRow as any)?.user_id ?? "").trim();
+          const artistUid = String((albumRow as any)?.artist_uid ?? "").trim();
+          const firebaseUid = String((albumRow as any)?.firebase_uid ?? "").trim();
+          if (userId === uid || artistUid === uid || firebaseUid === uid) {
+            allowed = true;
+          }
+
+          if (!allowed) {
+            const albumArtistId = String((albumRow as any)?.artist_id ?? "").trim();
+            if (albumArtistId) {
+              try {
+                const { data: artists, error: artistErr } = await sb
+                  .from("artists")
+                  .select("id,user_id,firebase_uid")
+                  .or(`user_id.eq.${uid},firebase_uid.eq.${uid}`)
+                  .limit(1);
+                if (!artistErr && artists && artists.length) {
+                  const requesterArtistId = String((artists[0] as any).id ?? "").trim();
+                  if (requesterArtistId && requesterArtistId === albumArtistId) allowed = true;
+                }
+              } catch (_) {
+                // ignore
+              }
+            }
+          }
+        }
+
+        if (!allowed) {
+          throw new HttpError(403, "forbidden", "Not allowed to edit this album.");
+        }
+
+        const has = (k: string) => Object.prototype.hasOwnProperty.call(body, k);
+        const hasTitle = has("title") || has("name");
+        const hasDescription = has("description") || has("about");
+        const hasCover =
+          has("cover_url") ||
+          has("coverUrl") ||
+          has("artwork_url") ||
+          has("artworkUrl") ||
+          has("image_url") ||
+          has("imageUrl");
+
+        const title = String(body.title ?? body.name ?? "").trim();
+        const description = String(body.description ?? body.about ?? "").trim();
+        const coverUrl = String(body.cover_url ?? body.coverUrl ?? body.artwork_url ?? body.image_url ?? "").trim();
+
+        const now = new Date().toISOString();
+        const update: Record<string, unknown> = {
+          updated_at: now,
+        };
+
+        if (hasTitle) {
+          if (!title) throw new HttpError(400, "bad_request", "Title cannot be empty");
+          update.title = title;
+        }
+
+        if (hasDescription) {
+          update.description = description ? description : null;
+        }
+
+        if (hasCover) {
+          update.cover_url = coverUrl ? coverUrl : null;
+        }
+
+        if (Object.keys(update).length <= 1) {
+          throw new HttpError(400, "bad_request", "No fields to update");
+        }
+
+        const omit = new Set<string>();
+        const table = "albums";
+        const buildAttempt = (): Record<string, unknown> => {
+          const out: Record<string, unknown> = { ...update };
+          for (const k of omit) delete out[k];
+          return out;
+        };
+
+        let lastErr: unknown = null;
+        for (let i = 0; i < 20; i++) {
+          const attempt = buildAttempt();
+          const { data, error } = await sb.from(table).update(attempt).eq("id", albumId).select("*").maybeSingle();
+          if (!error) {
+            if (!data) throw new HttpError(404, "not_found", "Album not found");
+            return json({ ok: true, album: data });
+          }
+
+          lastErr = error;
+          const missing = tryParseMissingColumnForTable(error, table);
+          if (missing) {
+            omit.add(missing);
+            continue;
+          }
+          break;
+        }
+
+        const fallbackMsg = lastErr instanceof Error ? lastErr.message : String((lastErr as any)?.message ?? lastErr);
+        throw new HttpError(500, "update_failed", `Failed to update album: ${fallbackMsg}`);
+      }
+    }
+
+    // Delete an album (creator/admin).
+    // DELETE /api/albums/:id
+    // Auth: Bearer <Firebase ID token>
+    if (req.method === "DELETE" && normalized.startsWith("/albums/")) {
+      const parts = normalized.split("/").filter(Boolean);
+      if (parts.length === 2 && parts[0] === "albums") {
+        const albumId = parts[1];
+        if (!albumId) throw new HttpError(400, "bad_request", "Missing album id");
+
+        const { uid, email } = await requireFirebaseUser(req);
+        const sb = requireSupabaseAdmin();
+
+        // Allow admin OR album owner.
+        let allowed = false;
+        try {
+          let q = sb.from("admins_with_permissions").select("status").limit(1);
+          if (email && email.trim().length > 0) q = q.eq("email", email.trim());
+          else q = q.eq("uid", uid);
+          const admin = await q.maybeSingle();
+          const status = String((admin.data as any)?.status ?? "").trim().toLowerCase();
+          if (!admin.error && admin.data && (!status || status === "active")) allowed = true;
+        } catch (_) {
+          // ignore
+        }
+
+        let albumRow: Record<string, unknown> | null = null;
+        if (!allowed) {
+          const existing = await sb.from("albums").select("*").eq("id", albumId).maybeSingle();
+          if (existing.error) {
+            throw new HttpError(500, "db_error", `Failed to read album: ${existing.error.message}`);
+          }
+          if (!existing.data) {
+            throw new HttpError(404, "not_found", "Album not found");
+          }
+          albumRow = (existing.data as any) as Record<string, unknown>;
+
+          const userId = String((albumRow as any)?.user_id ?? "").trim();
+          const artistUid = String((albumRow as any)?.artist_uid ?? "").trim();
+          const firebaseUid = String((albumRow as any)?.firebase_uid ?? "").trim();
+          if (userId === uid || artistUid === uid || firebaseUid === uid) {
+            allowed = true;
+          }
+
+          if (!allowed) {
+            const albumArtistId = String((albumRow as any)?.artist_id ?? "").trim();
+            if (albumArtistId) {
+              try {
+                const { data: artists, error: artistErr } = await sb
+                  .from("artists")
+                  .select("id,user_id,firebase_uid")
+                  .or(`user_id.eq.${uid},firebase_uid.eq.${uid}`)
+                  .limit(1);
+                if (!artistErr && artists && artists.length) {
+                  const requesterArtistId = String((artists[0] as any).id ?? "").trim();
+                  if (requesterArtistId && requesterArtistId === albumArtistId) allowed = true;
+                }
+              } catch (_) {
+                // ignore
+              }
+            }
+          }
+        }
+
+        if (!allowed) {
+          throw new HttpError(403, "forbidden", "Not allowed to delete this album.");
+        }
+
+        // Best-effort: detach songs to avoid FK constraints.
+        const now = new Date().toISOString();
+        const songsOmit = new Set<string>();
+        const buildDetach = (): Record<string, unknown> => {
+          const out: Record<string, unknown> = { album_id: null, updated_at: now };
+          for (const k of songsOmit) delete out[k];
+          return out;
+        };
+
+        for (let i = 0; i < 8; i++) {
+          const attempt = buildDetach();
+          const { error } = await sb.from("songs").update(attempt).eq("album_id", albumId);
+          if (!error) break;
+          const missing = tryParseMissingColumnForTable(error, "songs");
+          if (missing) {
+            songsOmit.add(missing);
+            continue;
+          }
+          break;
+        }
+
+        const { data, error } = await sb.from("albums").delete().eq("id", albumId).select("*").maybeSingle();
+        if (error) {
+          throw new HttpError(500, "db_error", `Failed to delete album: ${error.message}`);
+        }
+        if (!data) {
+          throw new HttpError(404, "not_found", "Album not found");
+        }
+
+        return json({ ok: true, album: data });
+      }
+    }
+
+    // Diagnostics (safe, no secrets)
+    // GET /api/diag
+    if (req.method === "GET" && normalized === "/diag") {
+      // Do not expose diagnostic surface to end-users in production.
+      // If no token is configured, pretend the route doesn't exist.
+      if (!debugDiagToken) {
+        throw new HttpError(404, "not_found", "Not found");
+      }
+      const provided = (
+        req.headers.get("x-debug-token") ??
+        // Back-compat (older runbooks/scripts)
+        req.headers.get("x-weafrica-diag-token") ??
+        ""
+      ).trim();
+      if (!provided || provided !== debugDiagToken) {
+        throw new HttpError(403, "forbidden", "Forbidden");
+      }
+
+      const firebaseProjectId = firebaseProjectIdFromEnv();
+      const hasFcmServerKey = Boolean(fcmServerKeyFromEnv());
+
+      return json({
+        ok: true,
+        service: "weafrica-api",
+        build: {
+          tag: BUILD_TAG,
+        },
+        server_time: new Date().toISOString(),
+        env: {
+          has_agora_app_id: Boolean(agoraAppId),
+          has_agora_app_certificate: Boolean(agoraAppCertificate),
+          has_replicate_api_token: Boolean(replicateApiToken),
+          has_fcm_server_key: hasFcmServerKey,
+          has_firebase_project_id: Boolean(firebaseProjectId),
+          firebase_project_id: firebaseProjectId || null,
+          firebase_expected_issuer: firebaseProjectId
+            ? `https://securetoken.google.com/${firebaseProjectId}`
+            : null,
+          enable_test_routes: enableTestRoutes,
+          has_test_token: Boolean(testToken),
+          // Back-compat alias (older docs/scripts used this key)
+          has_service_role_key: Boolean(supabaseServiceRoleKey),
+          has_supabase_service_role_key: Boolean(supabaseServiceRoleKey),
+        },
+        agora: {
+          token_endpoint: "/api/agora/token",
+          rtm_token_endpoint: "/api/agora/rtm/token",
+          token_version: AGORA_TOKEN_VERSION,
+          allowed_channel_prefixes: ["live_", "weafrica_live_", "weafrica_battle_"],
+          accepted_channel_keys: ["channel_id", "channelId", "channelName", "channel"],
+          accepted_role_values: [
+            "broadcaster",
+            "audience",
+            "publisher",
+            "subscriber",
+            "host",
+            "viewer",
+          ],
+          auth_rules: [
+            "audience tokens: no Firebase required",
+            "battle broadcaster tokens: Firebase required",
+            "non-battle broadcaster tokens: Firebase optional (else test access)",
+          ],
+        },
+      });
+    }
+
+    // Agora RTC token (Step 1+)
+    // POST /api/agora/token
+    // body: { channel_id: string, role: 'broadcaster'|'audience', ttl_seconds?: number, uid?: number }
+    if (req.method === "POST" && normalized === "/agora/token") {
+      const body = await readJson(req);
+      // Be tolerant to client payload naming (some code uses channelName/role=publisher).
+      const channelId = String(body.channel_id ?? body.channelId ?? body.channelName ?? body.channel ?? "").trim();
+
+      const roleInput = String(body.role ?? body.rtcRole ?? "audience").trim().toLowerCase();
+      // Normalize role to app-facing values: broadcaster|audience.
+      // Accept both naming conventions:
+      // - broadcaster|audience (app)
+      // - publisher|subscriber (Agora naming)
+      // - host|viewer (common naming)
+      const normalizedRole =
+        roleInput === "broadcaster" || roleInput === "publisher" || roleInput === "host"
+          ? "broadcaster"
+          : roleInput === "audience" || roleInput === "subscriber" || roleInput === "viewer"
+            ? "audience"
+            : "";
+      if (!normalizedRole) {
+        throw new HttpError(
+          400,
+          "bad_request",
+          "role must be broadcaster|audience (also accepts publisher|subscriber)",
+        );
+      }
+
+      const ttlSecondsRaw = Number(body.ttl_seconds ?? body.ttlSeconds ?? 3600);
+      const ttlSeconds = Number.isFinite(ttlSecondsRaw) ? Math.max(60, Math.min(24 * 3600, ttlSecondsRaw)) : 3600;
+      const uidRaw = Number(body.uid ?? 0);
+      const uid = Number.isFinite(uidRaw) ? Math.max(0, Math.floor(uidRaw)) : 0;
+
+      const allowedPrefixes = ["live_", "weafrica_live_", "weafrica_battle_"];
+      const isAllowed = !!channelId && allowedPrefixes.some((p) => channelId.startsWith(p));
+      if (!isAllowed) {
+        throw new HttpError(
+          400,
+          "bad_request",
+          "channel_id/channelName is required and must start with live_ (or weafrica_live_ / weafrica_battle_)",
+        );
+      }
+
+      const requestedBattleId = String(body.battle_id ?? body.battleId ?? "").trim();
+      const battleContext = resolveBattleContext({ channelId, battleId: requestedBattleId });
+      const isBattleChannel = battleContext.isBattle;
+      const battleId = battleContext.battleId;
+
+      // Auth:
+      // - Audience tokens: allowed without Firebase (viewer join)
+      // - Battle broadcaster tokens: require Firebase
+      // - Non-battle broadcaster tokens: accept Firebase if present; otherwise require test access
+      const providedBearer = bearerToken(req);
+      const isBroadcasterRole = normalizedRole === "broadcaster";
+      let firebaseUid: string | undefined;
+
+      if (isBattleChannel && isBroadcasterRole) {
+        firebaseUid = (await requireFirebaseUser(req)).uid;
+      } else if (!isBattleChannel && isBroadcasterRole) {
+        if (providedBearer) {
+          try {
+            firebaseUid = (await requireFirebaseUser(req)).uid;
+          } catch (_) {
+            // Ignore and fall back to test access.
+          }
+        }
+        if (!firebaseUid) {
+          requireTestAccess(req);
+        }
+      }
+
+      // Followers-only access control (audience join gate).
+      // Policy: evaluate once at join (token mint), not continuously mid-live.
+      if (!isBattleChannel && !isBroadcasterRole) {
+        const sb = requireSupabaseAdmin();
+        const { data: liveRow, error: liveErr } = await sb
+          .from("live_sessions")
+          .select("host_id,access_mode")
+          .eq("channel_id", channelId)
+          .maybeSingle();
+
+        if (liveErr) {
+          throw new HttpError(500, "db_error", `Failed to validate live access: ${liveErr.message}`);
+        }
+
+        const hostId = String((liveRow as any)?.host_id ?? "").trim();
+        const rawAccess = String((liveRow as any)?.access_mode ?? "").trim().toLowerCase();
+        const normalizedAccess =
+          rawAccess === "subscribers"
+            ? "followers"
+            : (rawAccess === "followers" || rawAccess === "public" || rawAccess === "private" ? rawAccess : "public");
+
+        if (normalizedAccess === "followers") {
+          if (!providedBearer) {
+            console.log("FOLLOWERS_ONLY_BLOCK", {
+              channel_id: channelId,
+              host_id: hostId,
+              viewer_uid: null,
+              reason: "missing_firebase_auth",
+            });
+            return json(
+              {
+                ok: false,
+                error: "forbidden",
+                message: "This live is for followers only.",
+                allowed: false,
+                reason: "FOLLOWERS_ONLY",
+                host_id: hostId,
+              },
+              { status: 403, headers: corsHeaders },
+            );
+          }
+
+          const viewerUid = (await requireFirebaseUser(req)).uid;
+          const allowed = await isUserFollowing(sb, hostId, viewerUid);
+          if (!allowed) {
+            await logCreatorJourneyEvent({
+              sb,
+              uid: viewerUid,
+              eventType: "FOLLOWERS_ONLY_BLOCK",
+              eventKey: channelId,
+              metadata: {
+                channel_id: channelId,
+                host_id: hostId,
+                reason: "not_following",
+              },
+            });
+            console.log("FOLLOWERS_ONLY_BLOCK", {
+              channel_id: channelId,
+              host_id: hostId,
+              viewer_uid: viewerUid,
+              reason: "not_following",
+            });
+            return json(
+              {
+                ok: false,
+                error: "forbidden",
+                message: "This live is for followers only.",
+                allowed: false,
+                reason: "FOLLOWERS_ONLY",
+                host_id: hostId,
+              },
+              { status: 403, headers: corsHeaders },
+            );
+          }
+
+          await logCreatorJourneyEvent({
+            sb,
+            uid: viewerUid,
+            eventType: "FOLLOWERS_ONLY_ALLOW",
+            eventKey: channelId,
+            metadata: {
+              channel_id: channelId,
+              host_id: hostId,
+              reason: "is_following",
+            },
+          });
+          console.log("FOLLOWERS_ONLY_ALLOW", {
+            channel_id: channelId,
+            host_id: hostId,
+            viewer_uid: viewerUid,
+            reason: "is_following",
+          });
+        }
+      }
+
+      if (!agoraAppId || !agoraAppCertificate) {
+        throw new HttpError(
+          501,
+          "not_configured",
+          "Agora token generation not configured. Set Edge Function env AGORA_APP_ID and AGORA_APP_CERTIFICATE.",
+        );
+      }
+      const expiresAt = Math.floor(Date.now() / 1000) + ttlSeconds;
+
+      // STEP 2.1: Enforce max 2 broadcasters for battle channels.
+      if (isBattleChannel && isBroadcasterRole) {
+        if (!battleId) {
+          throw new HttpError(400, "bad_request", "Invalid battle channel id");
+        }
+        if (!firebaseUid) {
+          throw new HttpError(401, "unauthorized", "Missing Firebase user");
+        }
+
+        const sb = requireSupabaseAdmin();
+
+        // Role escalation control for shared-channel battles:
+        // Only host_a_id and host_b_id may mint broadcaster tokens for this battle.
+        // (Prevents a random user from claiming the second host slot.)
+        const { data: battleRow, error: battleRowErr } = await sb
+          .from('live_battles')
+          .select('battle_id,channel_id,host_a_id,host_b_id,status')
+          .eq('battle_id', battleId)
+          .maybeSingle();
+
+        if (battleRowErr) {
+          throw new HttpError(500, 'db_error', `Failed to validate battle hosts: ${battleRowErr.message}`);
+        }
+        if (!battleRow) {
+          throw new HttpError(404, 'not_found', 'Battle not found');
+        }
+
+        const expectedChannel = String((battleRow as any)?.channel_id ?? '').trim();
+        if (expectedChannel && expectedChannel !== channelId) {
+          throw new HttpError(403, 'forbidden', 'Battle channel mismatch');
+        }
+
+        const hostAId = String((battleRow as any)?.host_a_id ?? '').trim();
+        const hostBId = String((battleRow as any)?.host_b_id ?? '').trim();
+        if (firebaseUid !== hostAId && firebaseUid !== hostBId) {
+          throw new HttpError(403, 'forbidden', 'Unauthorized broadcaster access');
+        }
+
+        const { error: claimErr } = await sb.rpc("battle_claim_host", {
+          p_battle_id: battleId,
+          p_channel_id: channelId,
+          p_user_id: firebaseUid,
+          p_agora_uid: uid,
+        });
+
+        if (claimErr) {
+          const msg = claimErr.message || "";
+          if (msg.includes("battle_full")) {
+            throw new HttpError(403, "battle_full", "Battle already has 2 hosts");
+          }
+          throw new HttpError(500, "db_error", `Failed to claim battle host: ${claimErr.message}`);
+        }
+      }
+
+      // Role escalation control for normal lives:
+      // If a live session row exists, only the recorded host may mint broadcaster tokens.
+      if (!isBattleChannel && isBroadcasterRole && firebaseUid) {
+        const sb = requireSupabaseAdmin();
+        const directHostChannel =
+          channelId === `live_${firebaseUid}` || channelId === `weafrica_live_${firebaseUid}`;
+
+        try {
+          const { data: liveRow, error: liveErr } = await sb
+            .from('live_sessions')
+            .select('host_id,is_live')
+            .eq('channel_id', channelId)
+            .maybeSingle();
+
+          if (liveErr) {
+            // Fail closed unless the channel encodes the host ID.
+            if (!directHostChannel) {
+              throw new HttpError(500, 'db_error', `Failed to validate live host: ${liveErr.message}`);
+            }
+          } else if (liveRow) {
+            const hostId = String((liveRow as any)?.host_id ?? '').trim();
+            if (hostId && hostId !== firebaseUid) {
+              throw new HttpError(403, 'forbidden', 'Unauthorized broadcaster access');
+            }
+          } else {
+            // Fail-closed if the live row does not exist yet.
+            // Only allow deterministic host channels (live_<uid>/weafrica_live_<uid>).
+            if (!directHostChannel) {
+              throw new HttpError(403, 'forbidden', 'Unauthorized broadcaster access');
+            }
+          }
+        } catch (e) {
+          if (e instanceof HttpError) throw e;
+          if (!directHostChannel) {
+            throw new HttpError(500, 'db_error', 'Failed to validate live host');
+          }
+        }
+      }
+
+      const token = await buildAgoraRtcTokenV006({
+        appId: agoraAppId,
+        appCertificate: agoraAppCertificate,
+        channelName: channelId,
+        uid,
+        isPublisher: isBroadcasterRole,
+        privilegeExpireTs: expiresAt,
+      });
+
+      return json({
+        ok: true,
+        token,
+        expires_at: expiresAt,
+        token_version: AGORA_TOKEN_VERSION,
+        // Debug fields (safe): helps clients verify they are using the same App ID
+        // and channel/uid/role that the token was minted for.
+        app_id: agoraAppId,
+        channel_id: channelId,
+        uid,
+        role: normalizedRole,
+        agora_role: isBroadcasterRole ? "publisher" : "subscriber",
+      });
+    }
+
+    // Agora RTM token (ephemeral comments/gifts)
+    // POST /api/agora/rtm/token
+    // body: { ttl_seconds?: number }
+    // Auth: Firebase required (or test access in debug environments).
+    if (req.method === "POST" && normalized === "/agora/rtm/token") {
+      const body = await readJson(req);
+
+      const ttlSecondsRaw = Number(body.ttl_seconds ?? body.ttlSeconds ?? 3600);
+      const ttlSeconds = Number.isFinite(ttlSecondsRaw) ? Math.max(60, Math.min(24 * 3600, ttlSecondsRaw)) : 3600;
+
+      const providedBearer = bearerToken(req);
+      let userId: string | undefined;
+
+      if (providedBearer) {
+        userId = (await requireFirebaseUser(req)).uid;
+      } else {
+        // Allow test access for local tooling.
+        requireTestAccess(req);
+        const override = String(body.user_id ?? body.userId ?? "").trim();
+        userId = override || "test";
+      }
+
+      if (!userId) {
+        throw new HttpError(401, "unauthorized", "Missing Firebase user");
+      }
+      if (userId.length > 64) {
+        throw new HttpError(400, "bad_request", "user_id too long (max 64 bytes)");
+      }
+
+      if (!agoraAppId || !agoraAppCertificate) {
+        throw new HttpError(
+          501,
+          "not_configured",
+          "Agora token generation not configured. Set Edge Function env AGORA_APP_ID and AGORA_APP_CERTIFICATE.",
+        );
+      }
+
+      const expiresAt = Math.floor(Date.now() / 1000) + ttlSeconds;
+
+      const token = await buildAgoraRtmTokenV006({
+        appId: agoraAppId,
+        appCertificate: agoraAppCertificate,
+        userId,
+        privilegeExpireTs: expiresAt,
+      });
+
+      return json({
+        ok: true,
+        token,
+        expires_at: expiresAt,
+        token_version: AGORA_TOKEN_VERSION,
+        app_id: agoraAppId,
+        user_id: userId,
+      });
+    }
+
+    // STEP 2.1: Battle status
+    // GET /api/battle/status?battle_id=...
+    // Public: safe to read.
+    if (req.method === "GET" && normalized === "/battle/status") {
+      const battleId = new URL(req.url).searchParams.get("battle_id")?.trim() ?? "";
+      if (!battleId) {
+        throw new HttpError(400, "bad_request", "battle_id is required");
+      }
+
+      const sb = requireSupabaseAdmin();
+      const { data, error } = await sb
+        .from("live_battles")
+        .select(
+          "battle_id, channel_id, status, title, category, duration_seconds, battle_type, beat_name, crowd_boost_enabled, coin_goal, country, host_a_id, host_b_id, host_a_agora_uid, host_b_agora_uid, host_a_ready, host_b_ready, started_at, ends_at, ended_at, timeline_anchor_at, timeline_anchor_elapsed_seconds, timeline_paused_at, timeline_perf_a_seconds, timeline_perf_b_seconds, timeline_judging_seconds, host_a_score, host_b_score, host_a_payout_coins, host_b_payout_coins, winner_uid, is_draw, total_spent_coins, platform_fee_coins, winner_payout_coins, loser_payout_coins, finalized_at, top_gifters, updated_at",
+        )
+        .eq("battle_id", battleId)
+        .maybeSingle();
+
+      if (error) {
+        throw new HttpError(500, "db_error", `Failed to load battle: ${error.message}`);
+      }
+      if (!data) {
+        return json({ ok: false, error: "not_found", battle_id: battleId }, { status: 404 });
+      }
+
+      // Option A (recommended): backend decides when the timer hits 0.
+      // If the battle is live and the scheduled end is in the past, finalize it
+      // server-side (idempotent). This avoids client authority/cheating.
+      if (data.status === "live" && data.ends_at) {
+        const endsAt = Date.parse(String(data.ends_at));
+        if (Number.isFinite(endsAt) && Date.now() >= endsAt) {
+          await sb.rpc("battle_finalize_due", { p_battle_id: battleId });
+          const refreshed = await sb
+            .from("live_battles")
+            .select(
+              "battle_id, channel_id, status, crowd_boost_enabled, host_a_id, host_b_id, host_a_agora_uid, host_b_agora_uid, host_a_ready, host_b_ready, started_at, ends_at, ended_at, timeline_anchor_at, timeline_anchor_elapsed_seconds, timeline_paused_at, timeline_perf_a_seconds, timeline_perf_b_seconds, timeline_judging_seconds, host_a_score, host_b_score, host_a_payout_coins, host_b_payout_coins, winner_uid, is_draw, total_spent_coins, platform_fee_coins, winner_payout_coins, loser_payout_coins, finalized_at, top_gifters, updated_at",
+            )
+            .eq("battle_id", battleId)
+            .maybeSingle();
+          if (!refreshed.error && refreshed.data) {
+            return json({ ok: true, battle: refreshed.data });
+          }
+        }
+      }
+
+      return json({ ok: true, battle: data });
+    }
+
+    // STEP 2.1b: Create battle (host only)
+    // POST /api/battle/create
+    // Auth: Bearer <Firebase ID token>
+    // body: { title: string, category?: string, duration_minutes?: number, duration_seconds?: number,
+    //         battle_type: string, beat_name: string, coin_goal: number, country: string, opponent_id?: string }
+    //
+    // Creates a live_battles row in 'waiting' state with host_a_id set.
+    if (req.method === "POST" && normalized === "/battle/create") {
+      const { uid } = await requireFirebaseUser(req);
+      const sb = requireSupabaseAdmin();
+      const body = await readJson(req);
+
+      const battleCapability = await assertCreatorCapability(sb, uid, "battle_access");
+
+      const titleRaw = String(body.title ?? body.battle_title ?? "Battle").trim();
+      const title = titleRaw.slice(0, 80) || "Battle";
+
+      const categoryRaw = String(body.category ?? "").trim().slice(0, 40);
+      const category = categoryRaw || null;
+
+      const battleTypeRaw = String(body.battle_type ?? body.battleType ?? "").trim().slice(0, 40);
+      const battleType = battleTypeRaw || null;
+
+      const beatNameRaw = String(body.beat_name ?? body.beatName ?? "").trim().slice(0, 120);
+      if (!beatNameRaw) {
+        throw new HttpError(400, "bad_request", "beat_name is required");
+      }
+      const beatName = beatNameRaw;
+
+      const countryRaw = String(body.country ?? "").trim().slice(0, 80);
+      if (!countryRaw) {
+        throw new HttpError(400, "bad_request", "country is required");
+      }
+      const country = countryRaw;
+
+      const coinGoalRaw = Number(body.coin_goal ?? body.coinGoal ?? NaN);
+      const coinGoal = Number.isFinite(coinGoalRaw) ? Math.max(0, Math.min(1_000_000_000, Math.floor(coinGoalRaw))) : NaN;
+      if (!Number.isFinite(coinGoal)) {
+        throw new HttpError(400, "bad_request", "coin_goal is required");
+      }
+
+      const durationMinutesRaw = Number(body.duration_minutes ?? body.durationMinutes ?? NaN);
+      const durationSecondsRaw = Number(body.duration_seconds ?? body.durationSeconds ?? NaN);
+      let durationSeconds: number | null = null;
+      if (Number.isFinite(durationSecondsRaw)) {
+        durationSeconds = Math.max(60, Math.min(6 * 3600, Math.floor(durationSecondsRaw)));
+      } else if (Number.isFinite(durationMinutesRaw)) {
+        durationSeconds = Math.max(60, Math.min(6 * 3600, Math.floor(durationMinutesRaw) * 60));
+      }
+      if (!durationSeconds) {
+        throw new HttpError(400, "bad_request", "duration_minutes is required");
+      }
+      if (isStarterCreatorPlanId(battleCapability.planId) && durationSeconds > 10 * 60) {
+        throw new HttpError(400, "starter_battle_duration_limit", "Starter creators are limited to 10-minute battles.");
+      }
+
+      const opponentId = String(body.opponent_id ?? body.opponentId ?? "").trim() || null;
+
+      // Optional battle setup metadata (best-effort; keep backward compatible)
+      const scheduledAtRaw = String(body.scheduled_at ?? body.scheduledAt ?? "").trim();
+      let scheduledAt: string | null = null;
+      if (scheduledAtRaw) {
+        const d = new Date(scheduledAtRaw);
+        if (!Number.isNaN(d.getTime())) {
+          scheduledAt = d.toISOString();
+        }
+      }
+
+      const accessModeRaw = String(body.access_mode ?? body.accessMode ?? "").trim().toLowerCase();
+      const accessMode = (accessModeRaw === 'subscribers' || accessModeRaw === 'ticket')
+        ? accessModeRaw
+        : (accessModeRaw === 'free' ? 'free' : null);
+
+      const priceCoinsRaw = Number(body.price_coins ?? body.priceCoins ?? NaN);
+      const priceCoins = Number.isFinite(priceCoinsRaw)
+        ? Math.max(0, Math.min(1_000_000, Math.floor(priceCoinsRaw)))
+        : null;
+
+      const giftEnabled = body.gift_enabled === undefined ? undefined : Boolean(body.gift_enabled);
+      const votingEnabled = body.voting_enabled === undefined ? undefined : Boolean(body.voting_enabled);
+
+      const formatRaw = String(body.battle_format ?? body.battleFormat ?? body.format ?? "").trim().toLowerCase();
+      const battleFormat = (formatRaw === 'rounds' || formatRaw === 'continuous') ? formatRaw : null;
+
+      const roundCountRaw = Number(body.round_count ?? body.roundCount ?? NaN);
+      const roundCount = Number.isFinite(roundCountRaw)
+        ? Math.max(1, Math.min(10, Math.floor(roundCountRaw)))
+        : null;
+
+      const battleId = crypto.randomUUID();
+      let channelId = uniqueBattleChannel(uid, battleId);
+      const now = new Date().toISOString();
+
+      const insertRowBase: Record<string, any> = {
+        battle_id: battleId,
+        status: "waiting",
+        host_a_id: uid,
+        host_b_id: opponentId,
+        title,
+        category,
+        duration_seconds: durationSeconds,
+        battle_type: battleType,
+        beat_name: beatName,
+        coin_goal: coinGoal,
+        country,
+        created_at: now,
+        updated_at: now,
+      };
+
+      if (scheduledAt) insertRowBase.scheduled_at = scheduledAt;
+      if (accessMode) insertRowBase.access_mode = accessMode;
+      if (priceCoins !== null) insertRowBase.price_coins = priceCoins;
+      if (giftEnabled !== undefined) insertRowBase.gift_enabled = giftEnabled;
+      if (votingEnabled !== undefined) insertRowBase.voting_enabled = votingEnabled;
+      if (battleFormat) insertRowBase.battle_format = battleFormat;
+      if (roundCount !== null) insertRowBase.round_count = roundCount;
+
+      let createError: unknown = null;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const insertRow = { ...insertRowBase, channel_id: channelId };
+        const { error } = await sb.from("live_battles").insert(insertRow);
+        if (!error) {
+          createError = null;
+          break;
+        }
+
+        createError = error;
+        if (!isChannelIdUniqueViolation(error)) {
+          break;
+        }
+
+        channelId = uniqueBattleChannel(uid, `${battleId}${attempt}${Date.now()}`);
+      }
+
+      if (createError) {
+        const msg = (createError as Record<string, unknown>)?.message ?? createError;
+        throw new HttpError(500, "db_error", `Failed to create battle: ${msg}`);
+      }
+
+      return json(
+        {
+          ok: true,
+          battle: {
+            battle_id: battleId,
+            channel_id: channelId,
+            status: "waiting",
+            title,
+            category,
+            duration_seconds: durationSeconds,
+            battle_type: battleType,
+            beat_name: beatName,
+            coin_goal: coinGoal,
+            country,
+            host_a_id: uid,
+            host_b_id: opponentId,
+            scheduled_at: scheduledAt,
+            access_mode: accessMode,
+            price_coins: priceCoins,
+            gift_enabled: giftEnabled,
+            voting_enabled: votingEnabled,
+            battle_format: battleFormat,
+            round_count: roundCount,
+          },
+        },
+        { headers: corsHeaders },
+      );
+    }
+
+    // STEP 2.1: Host ready
+    // POST /api/battle/ready
+    // Auth: Bearer <Firebase ID token>
+    // body: { battle_id: string, ready?: boolean }
+    if (req.method === "POST" && normalized === "/battle/ready") {
+      const { uid } = await requireFirebaseUser(req);
+      const body = await readJson(req);
+
+      const battleId = String(body.battle_id ?? body.battleId ?? "").trim();
+      const ready = body.ready === undefined ? true : Boolean(body.ready);
+      if (!battleId) {
+        throw new HttpError(400, "bad_request", "battle_id is required");
+      }
+
+      const sb = requireSupabaseAdmin();
+      const { data, error } = await sb.rpc("battle_set_ready", {
+        p_battle_id: battleId,
+        p_user_id: uid,
+        p_ready: ready,
+      });
+
+      if (error) {
+        const msg = error.message || "";
+        if (msg.includes("not_a_host")) {
+          throw new HttpError(403, "not_a_host", "Only battle hosts can set ready");
+        }
+        if (msg.includes("battle_not_found")) {
+          throw new HttpError(404, "not_found", "Battle not found");
+        }
+        throw new HttpError(500, "db_error", `Failed to set ready: ${error.message}`);
+      }
+
+      return json({ ok: true, battle: data });
+    }
+
+    // Battle fan voting (server-authoritative path)
+    // POST /api/battle/vote
+    // Auth: Bearer <Firebase ID token>
+    // body: { battle_id: string, voted_for: string }
+    if (req.method === "POST" && normalized === "/battle/vote") {
+      const { uid } = await requireFirebaseUser(req);
+      const body = await readJson(req);
+
+      const battleId = String(body.battle_id ?? body.battleId ?? "").trim();
+      const votedFor = String(body.voted_for ?? body.votedFor ?? "").trim();
+      if (!battleId) {
+        throw new HttpError(400, "bad_request", "battle_id is required");
+      }
+      if (!votedFor) {
+        throw new HttpError(400, "bad_request", "voted_for is required");
+      }
+
+      const sb = requireSupabaseAdmin();
+      const { data: battleRow, error: battleErr } = await sb
+        .from("live_battles")
+        .select("battle_id,status,host_a_id,host_b_id,voting_enabled")
+        .eq("battle_id", battleId)
+        .maybeSingle();
+
+      if (battleErr) {
+        throw new HttpError(500, "db_error", `Failed to load battle: ${battleErr.message}`);
+      }
+      if (!battleRow) {
+        throw new HttpError(404, "not_found", "Battle not found");
+      }
+
+      const status = String((battleRow as any)?.status ?? "").trim().toLowerCase();
+      const allowedStatuses = new Set(["waiting", "ready", "countdown", "live"]);
+      if (!allowedStatuses.has(status)) {
+        throw new HttpError(409, "battle_closed", "Battle voting is closed");
+      }
+
+      const votingEnabled = Boolean((battleRow as any)?.voting_enabled ?? true);
+      if (!votingEnabled) {
+        throw new HttpError(403, "voting_disabled", "Battle voting is disabled");
+      }
+
+      const hostAId = String((battleRow as any)?.host_a_id ?? "").trim();
+      const hostBId = String((battleRow as any)?.host_b_id ?? "").trim();
+      if (votedFor !== hostAId && votedFor !== hostBId) {
+        throw new HttpError(400, "bad_request", "voted_for must be one of battle hosts");
+      }
+      if (uid === hostAId || uid === hostBId) {
+        throw new HttpError(403, "not_allowed", "Hosts cannot vote in their own battle");
+      }
+
+      const { error: voteErr } = await sb.rpc("add_vote", {
+        p_battle_id: battleId,
+        p_user_id: uid,
+        p_voted_for: votedFor,
+      });
+
+      if (voteErr) {
+        const msg = String(voteErr.message ?? "");
+        if (msg.includes("battle_id_required")) {
+          throw new HttpError(400, "bad_request", "battle_id is required");
+        }
+        if (msg.includes("user_id_required")) {
+          throw new HttpError(401, "unauthorized", "User is required");
+        }
+        if (msg.includes("voted_for_required")) {
+          throw new HttpError(400, "bad_request", "voted_for is required");
+        }
+        throw new HttpError(500, "db_error", `Failed to cast vote: ${voteErr.message}`);
+      }
+
+      const [{ count: hostAVotes }, { count: hostBVotes }] = await Promise.all([
+        sb.from("battle_votes").select("id", { count: "exact", head: true }).eq("battle_id", battleId).eq("voted_for", hostAId),
+        sb.from("battle_votes").select("id", { count: "exact", head: true }).eq("battle_id", battleId).eq("voted_for", hostBId),
+      ]);
+
+      return json({
+        ok: true,
+        battle_id: battleId,
+        my_vote: votedFor,
+        votes: {
+          [hostAId]: hostAVotes ?? 0,
+          [hostBId]: hostBVotes ?? 0,
+        },
+      });
+    }
+
+    // STEP 4: Start battle after countdown
+    // POST /api/battle/start
+    // Auth: Bearer <Firebase ID token>
+    // body: { battle_id: string, duration_seconds?: number }
+    if (req.method === "POST" && normalized === "/battle/start") {
+      const { uid } = await requireFirebaseUser(req);
+      const body = await readJson(req);
+
+      const battleId = String(body.battle_id ?? body.battleId ?? "").trim();
+      const durationSecondsRaw = Number(body.duration_seconds ?? body.durationSeconds ?? 1200);
+      const durationSeconds = Number.isFinite(durationSecondsRaw)
+        ? Math.max(60, Math.min(6 * 3600, Math.floor(durationSecondsRaw)))
+        : 1200;
+
+      if (!battleId) {
+        throw new HttpError(400, "bad_request", "battle_id is required");
+      }
+
+      // Avoid duplicate push notifications if battle already started.
+      let alreadyLive = false;
+      try {
+        const sb0 = requireSupabaseAdmin();
+        const { data: existing } = await sb0
+          .from('live_battles')
+          .select('status')
+          .eq('battle_id', battleId)
+          .maybeSingle();
+        alreadyLive = String((existing as any)?.status ?? '').trim().toLowerCase() === 'live';
+      } catch (_) {
+        // ignore
+      }
+
+      const sb = requireSupabaseAdmin();
+      await assertCreatorCapability(sb, uid, "battle_access");
+      const { data, error } = await sb.rpc("battle_start", {
+        p_battle_id: battleId,
+        p_user_id: uid,
+        p_duration_seconds: durationSeconds,
+      });
+
+      if (error) {
+        const msg = error.message || "";
+        if (msg.includes("not_a_host")) {
+          throw new HttpError(403, "not_a_host", "Only battle hosts can start the battle");
+        }
+        if (msg.includes("not_ready")) {
+          throw new HttpError(409, "not_ready", "Both hosts must be ready before starting");
+        }
+        if (msg.includes("battle_not_found")) {
+          throw new HttpError(404, "not_found", "Battle not found");
+        }
+        if (msg.includes("battle_ended")) {
+          throw new HttpError(409, "ended", "Battle already ended");
+        }
+        throw new HttpError(500, "db_error", `Failed to start battle: ${error.message}`);
+      }
+
+      // Mirror into live_sessions so consumers can discover live battles via the same realtime table.
+      // Best-effort: battle state remains the source of truth in live_battles.
+      try {
+        const sb2 = requireSupabaseAdmin();
+        const battle: any = data ?? null;
+        const channelId = String(battle?.channel_id ?? battle?.channelId ?? defaultSharedBattleChannel(uid)).trim();
+
+        const hostAId = String(battle?.host_a_id ?? battle?.hostAId ?? '').trim();
+        const hostBId = String(battle?.host_b_id ?? battle?.hostBId ?? '').trim();
+
+        // Resolve names/avatars (optional).
+        const ids = [hostAId, hostBId].filter(Boolean);
+        const profileById: Record<string, any> = {};
+        if (ids.length) {
+          const { data: profs } = await sb2
+            .from('profiles')
+            .select('id,display_name,username,full_name,avatar_url,photo_url,image_url')
+            .in('id', ids);
+          if (Array.isArray(profs)) {
+            for (const p of profs) {
+              const id = String((p as any)?.id ?? '').trim();
+              if (id) profileById[id] = p;
+            }
+          }
+        }
+
+        const nameFor = (id: string) => {
+          const p = profileById[id];
+          const n = String(p?.display_name ?? p?.full_name ?? p?.username ?? '').trim();
+          return n || (id ? (id.length <= 10 ? id : `${id.slice(0, 10)}…`) : 'DJ');
+        };
+
+        const aName = hostAId ? nameFor(hostAId) : 'DJ A';
+        const bName = hostBId ? nameFor(hostBId) : 'DJ B';
+        const title = `${aName} vs ${bName}`;
+        const thumb = String(
+          profileById[hostAId]?.avatar_url ??
+            profileById[hostAId]?.photo_url ??
+            profileById[hostAId]?.image_url ??
+            ''
+        ).trim() || null;
+
+        const now = new Date().toISOString();
+
+        // Preserve viewer_count if the row already exists.
+        let existingViewerCount: number | null = null;
+        try {
+          const { data: existing } = await sb2
+            .from('live_sessions')
+            .select('viewer_count')
+            .eq('channel_id', channelId)
+            .maybeSingle();
+          const v = (existing as any)?.viewer_count;
+          existingViewerCount = typeof v === 'number' && Number.isFinite(v) ? v : null;
+        } catch (_) {
+          // ignore
+        }
+
+        await sb2
+          .from('live_sessions')
+          .upsert(
+            {
+              channel_id: channelId,
+              host_id: hostAId || uid,
+              artist_id: hostAId || uid,
+              host_name: aName,
+              thumbnail_url: thumb,
+              category: 'battle',
+              title,
+              viewer_count: existingViewerCount ?? 0,
+              is_live: true,
+              started_at: now,
+              last_heartbeat_at: now,
+              ended_at: null,
+              updated_at: now,
+            },
+            { onConflict: 'channel_id' },
+          );
+      } catch (e) {
+        console.log('battle start live_sessions mirror failed', e);
+      }
+
+      // Broadcast push notifications to live subscribers (best-effort).
+      // This mirrors the behavior of /api/live/sessions/start so battles are discoverable.
+      if (!alreadyLive) {
+        try {
+          const sb2 = requireSupabaseAdmin();
+
+          const { data: subs, error: subsErr } = await sb2
+            .from('live_notifications')
+            .select('user_uid')
+            .order('created_at', { ascending: false })
+            .limit(5000);
+
+          if (!subsErr && Array.isArray(subs) && subs.length) {
+            const uids = subs
+              .map((r: any) => String(r?.user_uid ?? '').trim())
+              .filter(Boolean);
+
+            await insertUserNotificationsBulk(sb2, {
+              receiverUids: uids,
+              senderUid: uid,
+              type: 'live_battle_now',
+              title: 'LIVE BATTLE',
+              body: 'A battle just went live. Tap to join.',
+              action: 'battle_start',
+              entityId: battleId,
+              entityType: 'battle',
+              data: {
+                battle_id: battleId,
+              },
+            });
+
+            const tokens = await listDeviceTokensForUsersBulk(sb2, uids);
+
+            const battle: any = data ?? null;
+            const ch = String(battle?.channel_id ?? battle?.channelId ?? defaultSharedBattleChannel(uid)).trim();
+            const hostAId = String(battle?.host_a_id ?? battle?.hostAId ?? '').trim();
+            const hostBId = String(battle?.host_b_id ?? battle?.hostBId ?? '').trim();
+
+            const titleText = 'LIVE BATTLE';
+            const bodyText = 'A battle just went live. Tap to join.';
+
+            for (let i = 0; i < tokens.length; i += 500) {
+              await sendFcmPushToTokens({
+                tokens: tokens.slice(i, i + 500),
+                title: titleText,
+                body: bodyText,
+                data: {
+                  type: 'live_battle_now',
+                  battle_id: battleId,
+                  channel_id: ch,
+                  host_a_id: hostAId,
+                  host_b_id: hostBId,
+                  title: titleText,
+                  body: bodyText,
+                },
+              });
+            }
+          }
+        } catch (e) {
+          console.log('battle push broadcast failed', e);
+        }
+      }
+
+      return json({ ok: true, battle: data });
+    }
+
+    // STEP 4: End battle (timer end / host-leave safety)
+    // POST /api/battle/end
+    // Auth: Bearer <Firebase ID token>
+    // body: { battle_id: string, reason?: string }
+    if (req.method === "POST" && normalized === "/battle/end") {
+      const { uid } = await requireFirebaseUser(req);
+      const body = await readJson(req);
+
+      const battleId = String(body.battle_id ?? body.battleId ?? "").trim();
+      const reason = String(body.reason ?? body.end_reason ?? body.endReason ?? "").trim();
+
+      if (!battleId) {
+        throw new HttpError(400, "bad_request", "battle_id is required");
+      }
+
+      const sb = requireSupabaseAdmin();
+      const { data, error } = await sb.rpc("battle_end", {
+        p_battle_id: battleId,
+        p_user_id: uid,
+        p_reason: reason,
+      });
+
+      if (error) {
+        const msg = error.message || "";
+        if (msg.includes("not_a_host")) {
+          throw new HttpError(403, "not_a_host", "Only battle hosts can end the battle");
+        }
+        if (msg.includes("battle_not_found")) {
+          throw new HttpError(404, "not_found", "Battle not found");
+        }
+        throw new HttpError(500, "db_error", `Failed to end battle: ${error.message}`);
+      }
+
+      // Mirror end into live_sessions (best-effort).
+      try {
+        const sb2 = requireSupabaseAdmin();
+        const battle: any = data ?? null;
+        const channelId = String(battle?.channel_id ?? battle?.channelId ?? defaultSharedBattleChannel(uid)).trim();
+        const now = new Date().toISOString();
+        await sb2
+          .from('live_sessions')
+          .update({
+            is_live: false,
+            ended_at: now,
+            last_heartbeat_at: now,
+            updated_at: now,
+          })
+          .eq('channel_id', channelId);
+      } catch (e) {
+        console.log('battle end live_sessions mirror failed', e);
+      }
+
+      return json({ ok: true, battle: data });
+    }
+
+    // Battle replay metadata (minimal v1)
+    //
+    // This is a URL-based replay registry for battles. Actual recording integration
+    // (e.g., Agora Cloud Recording) can be added later.
+    //
+    // GET /api/battle/replay?battle_id=...
+    // Public: only returns when replay is ready and has replay_url.
+    if (req.method === "GET" && normalized === "/battle/replay") {
+      const battleId = new URL(req.url).searchParams.get("battle_id")?.trim() ?? "";
+      if (!battleId) {
+        throw new HttpError(400, "bad_request", "battle_id is required");
+      }
+
+      const sb = requireSupabaseAdmin();
+      const { data, error } = await sb
+        .from("battle_replays")
+        .select("battle_id,provider,status,replay_url,started_at,stopped_at,created_at,updated_at")
+        .eq("battle_id", battleId)
+        .maybeSingle();
+
+      if (error) {
+        const msg = String(error.message ?? "");
+        if (msg.toLowerCase().includes('relation') && msg.toLowerCase().includes('battle_replays')) {
+          throw new HttpError(500, "schema_out_of_date", "Missing battle_replays table. Apply migration 20260331120000_battle_replays.sql");
+        }
+        throw new HttpError(500, "db_error", `Failed to load replay: ${error.message}`);
+      }
+      if (!data) {
+        return json({ ok: false, error: "not_found", battle_id: battleId }, { status: 404 });
+      }
+
+      const status = String((data as any)?.status ?? '').trim().toLowerCase();
+      const replayUrl = String((data as any)?.replay_url ?? '').trim();
+      if (status !== 'ready' || !replayUrl) {
+        return json({ ok: false, error: "not_ready", battle_id: battleId }, { status: 404 });
+      }
+
+      return json({ ok: true, replay: data });
+    }
+
+    // POST /api/battle/replay/start
+    // Auth: Bearer <Firebase ID token>
+    // body: { battle_id: string }
+    if (req.method === "POST" && normalized === "/battle/replay/start") {
+      const { uid } = await requireFirebaseUser(req);
+      const body = await readJson(req);
+
+      const battleId = String(body.battle_id ?? body.battleId ?? '').trim();
+      if (!battleId) {
+        throw new HttpError(400, "bad_request", "battle_id is required");
+      }
+
+      const sb = requireSupabaseAdmin();
+
+      const { data: battle, error: battleErr } = await sb
+        .from('live_battles')
+        .select('battle_id,channel_id,status,host_a_id,host_b_id')
+        .eq('battle_id', battleId)
+        .maybeSingle();
+
+      if (battleErr) {
+        throw new HttpError(500, "db_error", `Failed to load battle: ${battleErr.message}`);
+      }
+      if (!battle) {
+        throw new HttpError(404, "not_found", "Battle not found");
+      }
+
+      const hostA = String((battle as any)?.host_a_id ?? '').trim();
+      const hostB = String((battle as any)?.host_b_id ?? '').trim();
+      if (uid !== hostA && uid !== hostB) {
+        throw new HttpError(403, "not_a_host", "Only battle hosts can start replay recording");
+      }
+
+      const battleStatus = String((battle as any)?.status ?? '').trim().toLowerCase();
+      if (battleStatus === 'ended' || battleStatus === 'finalized') {
+        throw new HttpError(409, "ended", "Battle already ended");
+      }
+
+      const nowIso = new Date().toISOString();
+      const channelId = String((battle as any)?.channel_id ?? '').trim() || null;
+
+      // Avoid clobbering the original started_at if the host calls start twice.
+      const existing = await sb
+        .from('battle_replays')
+        .select('battle_id,status,replay_url,started_at')
+        .eq('battle_id', battleId)
+        .maybeSingle();
+
+      if (existing.error) {
+        const msg = String(existing.error.message ?? "");
+        if (msg.toLowerCase().includes('relation') && msg.toLowerCase().includes('battle_replays')) {
+          throw new HttpError(500, "schema_out_of_date", "Missing battle_replays table. Apply migration 20260331120000_battle_replays.sql");
+        }
+        throw new HttpError(500, "db_error", `Failed to load replay: ${existing.error.message}`);
+      }
+
+      const ex = existing.data as any;
+      if (ex) {
+        const st = String(ex?.status ?? '').trim().toLowerCase();
+        const url = String(ex?.replay_url ?? '').trim();
+        if (st === 'ready' && url) {
+          return json({ ok: true, battle_id: battleId, status: 'ready', replay_url: url });
+        }
+        if (st === 'recording') {
+          return json({ ok: true, battle_id: battleId, status: 'recording' });
+        }
+
+        const { error: updErr } = await sb
+          .from('battle_replays')
+          .update({
+            channel_id: channelId,
+            status: 'recording',
+            updated_at: nowIso,
+          })
+          .eq('battle_id', battleId);
+
+        if (updErr) {
+          throw new HttpError(500, "db_error", `Failed to start replay: ${updErr.message}`);
+        }
+
+        return json({ ok: true, battle_id: battleId, status: 'recording' });
+      }
+
+      const { error: insErr } = await sb.from('battle_replays').insert({
+        battle_id: battleId,
+        channel_id: channelId,
+        provider: 'manual',
+        status: 'recording',
+        started_by_uid: uid,
+        started_at: nowIso,
+        created_at: nowIso,
+        updated_at: nowIso,
+      });
+
+      if (insErr) {
+        const msg = String(insErr.message ?? "");
+        if (msg.toLowerCase().includes('relation') && msg.toLowerCase().includes('battle_replays')) {
+          throw new HttpError(500, "schema_out_of_date", "Missing battle_replays table. Apply migration 20260331120000_battle_replays.sql");
+        }
+        throw new HttpError(500, "db_error", `Failed to start replay: ${insErr.message}`);
+      }
+
+      return json({ ok: true, battle_id: battleId, status: 'recording' });
+    }
+
+    // POST /api/battle/replay/stop
+    // Auth: Bearer <Firebase ID token>
+    // body: { battle_id: string, replay_url?: string }
+    if (req.method === "POST" && normalized === "/battle/replay/stop") {
+      const { uid } = await requireFirebaseUser(req);
+      const body = await readJson(req);
+
+      const battleId = String(body.battle_id ?? body.battleId ?? '').trim();
+      if (!battleId) {
+        throw new HttpError(400, "bad_request", "battle_id is required");
+      }
+
+      const replayUrlRaw = String(body.replay_url ?? body.replayUrl ?? '').trim();
+      let replayUrl: string | null = null;
+      if (replayUrlRaw) {
+        if (replayUrlRaw.length > 2048) {
+          throw new HttpError(400, "bad_request", "replay_url is too long");
+        }
+        try {
+          const u = new URL(replayUrlRaw);
+          if (u.protocol !== 'https:' && u.protocol !== 'http:') {
+            throw new Error('invalid_protocol');
+          }
+          replayUrl = u.toString();
+        } catch {
+          throw new HttpError(400, "bad_request", "replay_url must be a valid URL");
+        }
+      }
+
+      const sb = requireSupabaseAdmin();
+
+      const { data: battle, error: battleErr } = await sb
+        .from('live_battles')
+        .select('battle_id,host_a_id,host_b_id')
+        .eq('battle_id', battleId)
+        .maybeSingle();
+
+      if (battleErr) {
+        throw new HttpError(500, "db_error", `Failed to load battle: ${battleErr.message}`);
+      }
+      if (!battle) {
+        throw new HttpError(404, "not_found", "Battle not found");
+      }
+
+      const hostA = String((battle as any)?.host_a_id ?? '').trim();
+      const hostB = String((battle as any)?.host_b_id ?? '').trim();
+      if (uid !== hostA && uid !== hostB) {
+        throw new HttpError(403, "not_a_host", "Only battle hosts can stop replay recording");
+      }
+
+      const nowIso = new Date().toISOString();
+
+      // Avoid wiping an existing replay_url if stop is called again without a URL.
+      const existing = await sb
+        .from('battle_replays')
+        .select('battle_id,status,replay_url')
+        .eq('battle_id', battleId)
+        .maybeSingle();
+
+      if (existing.error) {
+        const msg = String(existing.error.message ?? "");
+        if (msg.toLowerCase().includes('relation') && msg.toLowerCase().includes('battle_replays')) {
+          throw new HttpError(500, "schema_out_of_date", "Missing battle_replays table. Apply migration 20260331120000_battle_replays.sql");
+        }
+        throw new HttpError(500, "db_error", `Failed to load replay: ${existing.error.message}`);
+      }
+
+      const ex = existing.data as any;
+      if (ex) {
+        const st = String(ex?.status ?? '').trim().toLowerCase();
+        const url = String(ex?.replay_url ?? '').trim();
+        if (st === 'ready' && url && !replayUrl) {
+          return json({ ok: true, battle_id: battleId, status: 'ready', replay_url: url });
+        }
+
+        const patch: Record<string, any> = {
+          status: replayUrl ? 'ready' : 'processing',
+          stopped_at: nowIso,
+          updated_at: nowIso,
+        };
+        if (replayUrl) patch.replay_url = replayUrl;
+
+        const { error: updErr } = await sb.from('battle_replays').update(patch).eq('battle_id', battleId);
+        if (updErr) {
+          throw new HttpError(500, "db_error", `Failed to stop replay: ${updErr.message}`);
+        }
+
+        return json({ ok: true, battle_id: battleId, status: patch.status, replay_url: replayUrl ?? (url || null) });
+      }
+
+      const { error: insErr } = await sb.from('battle_replays').insert({
+        battle_id: battleId,
+        provider: 'manual',
+        status: replayUrl ? 'ready' : 'processing',
+        replay_url: replayUrl,
+        stopped_at: nowIso,
+        created_at: nowIso,
+        updated_at: nowIso,
+      });
+
+      if (insErr) {
+        const msg = String(insErr.message ?? "");
+        if (msg.toLowerCase().includes('relation') && msg.toLowerCase().includes('battle_replays')) {
+          throw new HttpError(500, "schema_out_of_date", "Missing battle_replays table. Apply migration 20260331120000_battle_replays.sql");
+        }
+        throw new HttpError(500, "db_error", `Failed to stop replay: ${insErr.message}`);
+      }
+
+      return json({ ok: true, battle_id: battleId, status: replayUrl ? 'ready' : 'processing', replay_url: replayUrl });
+    }
+
+    // STEP 7: Battle invites (direct)
+    // GET /api/battle/invites?box=inbox|outbox&status=pending|accepted|declined|expired|all
+    // Auth: Bearer <Firebase ID token>
+    if (req.method === "GET" && normalized === "/battle/invites") {
+      const { uid } = await requireFirebaseUser(req);
+      const url = new URL(req.url);
+      const box = (url.searchParams.get("box") ?? "inbox").trim().toLowerCase();
+      const status = (url.searchParams.get("status") ?? "pending").trim().toLowerCase();
+      const limitRaw = Number(url.searchParams.get("limit") ?? 50);
+      const limit = Number.isFinite(limitRaw) ? Math.max(1, Math.min(200, Math.floor(limitRaw))) : 50;
+
+      const sb = requireSupabaseAdmin();
+
+      // Best-effort cleanup so clients don't see ghost pending invites.
+      // Only touches invites relevant to the current user.
+      try {
+        const nowIso = new Date().toISOString();
+        let u = sb
+          .from("battle_invites")
+          .update({ status: "expired", responded_at: nowIso })
+          .eq("status", "pending")
+          .lte("expires_at", nowIso)
+          .is("responded_at", null);
+
+        if (box === "outbox") u = u.eq("from_uid", uid);
+        else if (box === "all") u = u.or(`to_uid.eq.${uid},from_uid.eq.${uid}`);
+        else u = u.eq("to_uid", uid);
+
+        await u;
+      } catch (_) {
+        // ignore
+      }
+
+      let q = sb
+        .from("battle_invites")
+        .select("id,battle_id,from_uid,to_uid,status,created_at,expires_at,responded_at")
+        .order("created_at", { ascending: false })
+        .limit(limit);
+
+      if (box === "outbox") q = q.eq("from_uid", uid);
+      else if (box === "all") q = q.or(`to_uid.eq.${uid},from_uid.eq.${uid}`);
+      else q = q.eq("to_uid", uid);
+
+      if (status !== "all") {
+        q = q.eq("status", status);
+      }
+
+      const { data, error } = await q;
+      if (error) {
+        console.log('battle invites list failed', { uid, box, status, error: error.message });
+        throw new HttpError(500, "db_error", "Failed to load invites");
+      }
+
+      const invites = (data ?? []) as any[];
+
+      // Attach profile info so the client can render names/avatars.
+      const ids = new Set<string>();
+      for (const inv of invites) {
+        const f = String(inv.from_uid ?? "").trim();
+        const t = String(inv.to_uid ?? "").trim();
+        if (f) ids.add(f);
+        if (t) ids.add(t);
+      }
+
+      let profilesById: Record<string, any> = {};
+      if (ids.size > 0) {
+        const { data: pData, error: pErr } = await sb
+          .from("profiles")
+          .select("id,username,display_name,avatar_url,role")
+          .in("id", Array.from(ids));
+
+        if (!pErr && Array.isArray(pData)) {
+          profilesById = Object.fromEntries(pData.map((p: any) => [String(p.id), p]));
+        }
+      }
+
+      for (const inv of invites) {
+        const f = String(inv.from_uid ?? "").trim();
+        const t = String(inv.to_uid ?? "").trim();
+        (inv as any).from_profile = profilesById[f] ?? null;
+        (inv as any).to_profile = profilesById[t] ?? null;
+      }
+
+      return json({ ok: true, invites });
+    }
+
+    // STEP 7: Create invite
+    // POST /api/battle/invite/create
+    // Auth: Bearer <Firebase ID token>
+    // body: { to_uid: string, ttl_seconds?: number, battle?: object }
+    if (req.method === "POST" && normalized === "/battle/invite/create") {
+      const { uid } = await requireFirebaseUser(req);
+      const body = await readJson(req);
+
+      const toUid = String(body.to_uid ?? body.toUid ?? body.to_user_id ?? body.toUserId ?? "").trim();
+      const ttlSecondsRaw = Number(body.ttl_seconds ?? body.ttlSeconds ?? 60);
+      const ttlSeconds = Number.isFinite(ttlSecondsRaw) ? Math.max(15, Math.min(300, Math.floor(ttlSecondsRaw))) : 60;
+
+      if (!toUid) {
+        throw new HttpError(400, "bad_request", "to_uid is required");
+      }
+      if (toUid === uid) {
+        throw new HttpError(400, "bad_request", "Cannot invite yourself");
+      }
+
+      const sb = requireSupabaseAdmin();
+      let senderRole: CreatorRoleId | null = null;
+
+      // Best-effort: expire stale pending invites for this sender to keep limits fair.
+      try {
+        const nowIso = new Date().toISOString();
+        await sb
+          .from("battle_invites")
+          .update({ status: "expired", responded_at: nowIso })
+          .eq("status", "pending")
+          .eq("from_uid", uid)
+          .lte("expires_at", nowIso)
+          .is("responded_at", null);
+      } catch (_) {
+        // ignore
+      }
+
+      // Anti-spam: prevent duplicate pending invites to the same user.
+      try {
+        const nowIso = new Date().toISOString();
+        const existing = await sb
+          .from("battle_invites")
+          .select("id")
+          .eq("status", "pending")
+          .eq("from_uid", uid)
+          .eq("to_uid", toUid)
+          .gt("expires_at", nowIso)
+          .limit(1);
+
+        if (!existing.error && Array.isArray(existing.data) && existing.data.length > 0) {
+          throw new HttpError(409, "already_pending", "Invite already sent (pending)");
+        }
+      } catch (e) {
+        if (e instanceof HttpError) throw e;
+        // ignore
+      }
+
+      // Anti-spam: cap active pending outbox invites.
+      try {
+        const nowIso = new Date().toISOString();
+        const pending = await sb
+          .from("battle_invites")
+          .select("id")
+          .eq("status", "pending")
+          .eq("from_uid", uid)
+          .gt("expires_at", nowIso)
+          .limit(10);
+        const count = !pending.error && Array.isArray(pending.data) ? pending.data.length : 0;
+        if (count >= 3) {
+          throw new HttpError(429, "too_many_pending", "Too many pending invites. Try again later.");
+        }
+      } catch (e) {
+        if (e instanceof HttpError) throw e;
+        // ignore
+      }
+
+      // Enforce creator-only invites (artist/dj can invite artist/dj).
+      try {
+        const { data: roleRows, error: roleErr } = await sb
+          .from("profiles")
+          .select("id,role")
+          .in("id", [uid, toUid]);
+
+        if (roleErr) {
+          console.log('battle invite role lookup failed', { uid, toUid, error: roleErr.message });
+          throw new HttpError(500, "db_error", "Failed to validate invite roles");
+        }
+
+        const rows = Array.isArray(roleRows) ? roleRows : [];
+        const fromRoleRaw = rows.find((r: any) => String(r?.id ?? '').trim() === uid)?.role;
+        const toRoleRaw = rows.find((r: any) => String(r?.id ?? '').trim() === toUid)?.role;
+
+        const fromRole = String(fromRoleRaw ?? "").trim().toLowerCase();
+        const toRole = String(toRoleRaw ?? "").trim().toLowerCase();
+
+        if (!fromRole) throw new HttpError(404, "from_profile_not_found", "Your profile was not found");
+        if (!toRole) throw new HttpError(404, "to_profile_not_found", "Recipient profile was not found");
+
+        if (fromRole !== "artist" && fromRole !== "dj") {
+          throw new HttpError(400, "invalid_role", "Battle invites are only available for artists and DJs");
+        }
+        if (toRole !== "artist" && toRole !== "dj") {
+          throw new HttpError(400, "invalid_role", "You can only invite artists or DJs to a battle");
+        }
+        senderRole = fromRole as CreatorRoleId;
+      } catch (e) {
+        if (e instanceof HttpError) throw e;
+        // ignore
+      }
+
+      const cap = await assertCreatorCapability(sb, uid, "battle_access", senderRole ?? undefined);
+
+      const hostLimit = battleHostWeeklyLimit(cap.planId);
+      if (hostLimit === 0) {
+        throw new HttpError(
+          403,
+          "plan_upgrade_required",
+          cap.role === "artist"
+            ? "Hosting battles starts on Artist Premium."
+            : "Hosting battles starts on DJ Premium.",
+        );
+      }
+
+      const hostUsageRef = `battle_host:${crypto.randomUUID()}`;
+      const hostUsage = await tryConsumeWeeklyCreatorUsage(sb, {
+        uid,
+        role: cap.role,
+        action: "battle_host",
+        limit: hostLimit,
+        ref: hostUsageRef,
+      });
+
+      if (!hostUsage.allowed) {
+        const limitLabel = hostLimit < 0 ? "unlimited" : `${hostLimit}/week`;
+        throw new HttpError(
+          429,
+          "limit_reached",
+          cap.role === "artist"
+            ? `You have reached your battle hosting limit (${limitLabel}). Upgrade for more.`
+            : `You have reached your battle hosting limit (${limitLabel}). Upgrade for more.`,
+        );
+      }
+
+      const { data, error } = await sb.rpc("battle_invite_create", {
+        p_from_uid: uid,
+        p_to_uid: toUid,
+        p_ttl_seconds: ttlSeconds,
+      });
+
+      if (error) {
+        if (hostUsage.consumed) {
+          try {
+            await sb
+              .from("creator_usage_events")
+              .delete()
+              .eq("user_id", uid)
+              .eq("action", "battle_host")
+              .eq("ref", hostUsageRef);
+          } catch (_) {
+            // ignore
+          }
+        }
+
+        const msg = error.message || "";
+        if (msg.toLowerCase().includes('column') && msg.toLowerCase().includes('ends_at')) {
+          throw new HttpError(
+            500,
+            "schema_out_of_date",
+            "Battle invites require live_battles.ends_at. Apply migration STEP 4 (ready/countdown) or the compat migration to add ends_at."
+          );
+        }
+        if (
+          msg.toLowerCase().includes('battle_id') &&
+          msg.toLowerCase().includes('type uuid') &&
+          msg.toLowerCase().includes('type text')
+        ) {
+          throw new HttpError(
+            500,
+            "schema_type_mismatch",
+            "Your database expects battle_id as UUID but the current invite RPC is inserting TEXT. Apply the latest battle_invite_create UUID-safe migration and redeploy."
+          );
+        }
+        if (msg.toLowerCase().includes('expires_at') && msg.toLowerCase().includes('ambiguous')) {
+          throw new HttpError(
+            500,
+            "rpc_bug",
+            "Database function battle_invite_create needs a patch (expires_at ambiguous). Apply the latest battle_invite_create fix migration and redeploy."
+          );
+        }
+        if (msg.includes("cannot_invite_self")) throw new HttpError(400, "bad_request", "Cannot invite yourself");
+        if (msg.includes("from_profile_not_found")) throw new HttpError(404, "from_profile_not_found", "Your profile was not found");
+        if (msg.includes("to_profile_not_found")) throw new HttpError(404, "to_profile_not_found", "Recipient profile was not found");
+        if (msg.includes("invalid_from_role") || msg.includes("invalid_to_role")) {
+          throw new HttpError(400, "invalid_role", "Battle invites are only available for artists and DJs");
+        }
+        if (msg.includes("role_mismatch")) {
+          throw new HttpError(400, "invalid_invite_target", "Battle invites currently support artist and DJ recipients.");
+        }
+        if (msg.includes("invite_already_pending")) throw new HttpError(409, "already_pending", "Invite already sent (pending)");
+        if (msg.includes("too_many_pending")) throw new HttpError(429, "too_many_pending", "Too many pending invites. Try again later.");
+        console.log('battle invite create failed', { uid, toUid, error: error.message });
+        throw new HttpError(500, "db_error", "Failed to create invite");
+      }
+
+      const row = Array.isArray(data) ? data[0] : data;
+      if (!row) {
+        throw new HttpError(500, "db_error", "Invite create returned no data");
+      }
+      const battleIdFromInvite = String((row as any)?.battle_id ?? (row as any)?.battleId ?? '').trim();
+      const inviteIdFromInvite = String((row as any)?.id ?? (row as any)?.invite_id ?? (row as any)?.inviteId ?? '').trim();
+      const normalizedInviteChannelId = uniqueBattleChannel(uid, battleIdFromInvite || inviteIdFromInvite || crypto.randomUUID());
+
+      // Best-effort: persist battle setup metadata into live_battles.
+      // This lets the consumer Live tab render premium LIVE NOW + UPCOMING cards.
+      try {
+        const battle = (body.battle && typeof body.battle === 'object' && !Array.isArray(body.battle))
+          ? (body.battle as Record<string, any>)
+          : ({} as Record<string, any>);
+
+        const title = String(battle.title ?? body.title ?? '').trim().slice(0, 80) || null;
+        const category = String(battle.category ?? '').trim().slice(0, 40) || null;
+
+        const durationSecondsRaw = Number(battle.duration_seconds ?? battle.durationSeconds ?? body.duration_seconds ?? body.durationSeconds);
+        const maxDurationSeconds = isStarterCreatorPlanId(cap.planId) ? 10 * 60 : 2 * 3600;
+        const durationSeconds = Number.isFinite(durationSecondsRaw)
+          ? Math.max(10 * 60, Math.min(maxDurationSeconds, Math.floor(durationSecondsRaw)))
+          : null;
+
+        const scheduledAtRaw = String(battle.scheduled_at ?? battle.scheduledAt ?? body.scheduled_at ?? body.scheduledAt ?? '').trim();
+        let scheduledAt: string | null = null;
+        if (scheduledAtRaw) {
+          const d = new Date(scheduledAtRaw);
+          if (!Number.isNaN(d.getTime())) {
+            scheduledAt = d.toISOString();
+          }
+        }
+
+        const accessModeRaw = String(battle.access_mode ?? battle.accessMode ?? 'free').trim().toLowerCase();
+        const accessMode = (accessModeRaw === 'subscribers' || accessModeRaw === 'ticket') ? accessModeRaw : 'free';
+
+        const priceCoinsRaw = Number(battle.price_coins ?? battle.priceCoins ?? 0);
+        const priceCoins = Number.isFinite(priceCoinsRaw) ? Math.max(0, Math.min(1_000_000, Math.floor(priceCoinsRaw))) : 0;
+
+        const giftEnabled = battle.gift_enabled === undefined ? undefined : Boolean(battle.gift_enabled);
+        const votingEnabled = battle.voting_enabled === undefined ? undefined : Boolean(battle.voting_enabled);
+
+        const formatRaw = String(battle.battle_format ?? battle.format ?? battle.rule_mode ?? '').trim().toLowerCase();
+        const battleFormat = (formatRaw === 'rounds') ? 'rounds' : 'continuous';
+
+        const roundCountRaw = Number(battle.round_count ?? battle.roundCount ?? 3);
+        const roundCount = Number.isFinite(roundCountRaw) ? Math.max(1, Math.min(10, Math.floor(roundCountRaw))) : 3;
+
+        const battleId = String((row as any)?.battle_id ?? (row as any)?.battleId ?? '').trim();
+        if (battleId) {
+          const patch: Record<string, any> = {
+            channel_id: normalizedInviteChannelId,
+            access_mode: accessMode,
+            price_coins: accessMode === 'ticket' ? priceCoins : 0,
+            battle_format: battleFormat,
+            round_count: battleFormat === 'rounds' ? roundCount : 0,
+          };
+          if (title) patch.title = title;
+          if (category) patch.category = category;
+          if (durationSeconds !== null) patch.duration_seconds = durationSeconds;
+          if (scheduledAt) patch.scheduled_at = scheduledAt;
+          if (giftEnabled !== undefined) patch.gift_enabled = giftEnabled;
+          if (votingEnabled !== undefined) patch.voting_enabled = votingEnabled;
+
+          // Production battle setup fields (best-effort).
+          const battleType = String(battle.battle_type ?? battle.battleType ?? body.battle_type ?? body.battleType ?? '').trim().slice(0, 40);
+          const beatName = String(battle.beat_name ?? battle.beatName ?? body.beat_name ?? body.beatName ?? '').trim().slice(0, 120);
+          const country = String(battle.country ?? body.country ?? '').trim().slice(0, 80);
+          const coinGoalRaw = Number(battle.coin_goal ?? battle.coinGoal ?? body.coin_goal ?? body.coinGoal);
+          const coinGoal = Number.isFinite(coinGoalRaw) ? Math.max(0, Math.min(1_000_000_000, Math.floor(coinGoalRaw))) : null;
+          if (battleType) patch.battle_type = battleType;
+          if (beatName) patch.beat_name = beatName;
+          if (country) patch.country = country;
+          if (coinGoal !== null) patch.coin_goal = coinGoal;
+
+          await sb.from('live_battles').update(patch).eq('battle_id', battleId);
+
+          const inviteId = String((row as any)?.id ?? '').trim();
+          if (inviteId) {
+            try {
+              await sb.from('battle_invites').update({ channel_id: normalizedInviteChannelId }).eq('id', inviteId);
+            } catch (_) {
+              // ignore schema drift
+            }
+          }
+        }
+      } catch (e) {
+        console.log(`Battle metadata save failed: ${e instanceof Error ? e.message : String(e)}`);
+      }
+
+      const responseInvite = {
+        ...(row as Record<string, unknown>),
+        channel_id: normalizedInviteChannelId,
+        channelId: normalizedInviteChannelId,
+      };
+
+      // Best-effort: send instant push to the recipient.
+      try {
+        await insertUserNotification(sb, {
+          receiverUid: toUid,
+          senderUid: uid,
+          type: "live_battle_invite",
+          title: "Battle challenge",
+          body: "You received a new battle invite.",
+          action: "battle_invite",
+          entityId: String((row as any)?.battle_id ?? (row as any)?.battleId ?? "").trim() || null,
+          entityType: "battle",
+          data: {
+            invite_id: String((row as any)?.invite_id ?? (row as any)?.inviteId ?? "").trim(),
+            channel_id: normalizedInviteChannelId,
+          },
+        });
+
+        const tokens = await listDeviceTokensForUser(sb, toUid);
+        if (tokens.length) {
+          const { data: fromProfile } = await sb
+            .from("profiles")
+            .select("username,display_name")
+            .eq("id", uid)
+            .maybeSingle();
+
+          const fromUsername = String((fromProfile as any)?.username ?? "").trim();
+          const fromName = String((fromProfile as any)?.display_name ?? "").trim();
+          const fromHandle = fromUsername ? `@${fromUsername}` : (fromName || "Someone");
+          const fromLabel = fromName || fromHandle;
+
+          await sendFcmPushToTokens({
+            tokens,
+            title: "Battle challenge",
+            body: `${fromLabel} invited you to a battle`,
+            channelId: "battle_challenges",
+            sound: "default",
+            ttlSeconds,
+            data: {
+              type: "live_battle_invite",
+              battle_id: String((row as any)?.battle_id ?? (row as any)?.battleId ?? "").trim(),
+              invite_id: String((row as any)?.invite_id ?? (row as any)?.inviteId ?? "").trim(),
+              channel_id: normalizedInviteChannelId,
+              from_uid: uid,
+              from_name: fromName,
+              from_handle: fromHandle,
+              from_username: fromUsername,
+            },
+          });
+        }
+      } catch (e) {
+        console.log(`Invite push send failed: ${e instanceof Error ? e.message : String(e)}`);
+      }
+
+      try {
+        await logCreatorJourneyEvent({
+          sb,
+          uid,
+          eventType: "battle_hosted",
+          eventKey: String((row as any)?.battle_id ?? (row as any)?.battleId ?? (row as any)?.invite_id ?? (row as any)?.inviteId ?? '').trim() || undefined,
+          metadata: {
+            invite_id: String((row as any)?.invite_id ?? (row as any)?.inviteId ?? '').trim(),
+            battle_id: String((row as any)?.battle_id ?? (row as any)?.battleId ?? '').trim(),
+            channel_id: normalizedInviteChannelId,
+            to_uid: toUid,
+          },
+        });
+      } catch (_) {
+        // ignore
+      }
+
+      return json({ ok: true, invite: responseInvite });
+    }
+
+    // STEP 7b: Invite to an existing battle (waiting)
+    // POST /api/battle/invite/send
+    // Auth: Bearer <Firebase ID token>
+    // body: { battle_id: string, to_uid: string, ttl_seconds?: number }
+    if (req.method === "POST" && normalized === "/battle/invite/send") {
+      const { uid } = await requireFirebaseUser(req);
+      const body = await readJson(req);
+
+      const battleId = String(body.battle_id ?? body.battleId ?? "").trim();
+      const toUid = String(body.to_uid ?? body.toUid ?? body.to_user_id ?? body.toUserId ?? "").trim();
+      const ttlSecondsRaw = Number(body.ttl_seconds ?? body.ttlSeconds ?? 300);
+      const ttlSeconds = Number.isFinite(ttlSecondsRaw) ? Math.max(15, Math.min(300, Math.floor(ttlSecondsRaw))) : 300;
+
+      if (!battleId) {
+        throw new HttpError(400, "bad_request", "battle_id is required");
+      }
+      if (!toUid) {
+        throw new HttpError(400, "bad_request", "to_uid is required");
+      }
+      if (toUid === uid) {
+        throw new HttpError(400, "bad_request", "Cannot invite yourself");
+      }
+
+      const sb = requireSupabaseAdmin();
+      await assertCreatorCapability(sb, uid, "battle_access");
+
+      const { data: battle, error: bErr } = await sb
+        .from("live_battles")
+        .select("battle_id, channel_id, status, host_a_id, host_b_id")
+        .eq("battle_id", battleId)
+        .maybeSingle();
+
+      if (bErr) {
+        throw new HttpError(500, "db_error", `Failed to load battle: ${bErr.message ?? bErr}`);
+      }
+      if (!battle) {
+        throw new HttpError(404, "not_found", "Battle not found");
+      }
+
+      const hostAId = String((battle as any).host_a_id ?? "").trim();
+      const hostBId = String((battle as any).host_b_id ?? "").trim();
+      const status = String((battle as any).status ?? "waiting").trim();
+      const channelId = String((battle as any).channel_id ?? "").trim();
+
+      if (!hostAId || hostAId !== uid) {
+        throw new HttpError(403, "forbidden", "Only the battle host can invite an opponent");
+      }
+      if (status === "ended") {
+        throw new HttpError(409, "conflict", "Battle already ended");
+      }
+
+      try {
+        const { data: roleRows, error: roleErr } = await sb
+          .from("profiles")
+          .select("id,role")
+          .in("id", [uid, toUid]);
+
+        if (roleErr) {
+          console.log('battle invite send role lookup failed', { uid, toUid, error: roleErr.message });
+          throw new HttpError(500, "db_error", "Failed to validate invite roles");
+        }
+
+        const rows = Array.isArray(roleRows) ? roleRows : [];
+        const fromRole = String(rows.find((r: any) => String(r?.id ?? '').trim() === uid)?.role ?? '').trim().toLowerCase();
+        const toRole = String(rows.find((r: any) => String(r?.id ?? '').trim() === toUid)?.role ?? '').trim().toLowerCase();
+
+        if (!fromRole) throw new HttpError(404, "from_profile_not_found", "Your profile was not found");
+        if (!toRole) throw new HttpError(404, "to_profile_not_found", "Recipient profile was not found");
+        if (fromRole !== "artist" && fromRole !== "dj") {
+          throw new HttpError(400, "invalid_role", "Battle invites are only available for artists and DJs");
+        }
+        if (toRole !== "artist" && toRole !== "dj") {
+          throw new HttpError(400, "invalid_role", "You can only invite artists or DJs to a battle");
+        }
+      } catch (e) {
+        if (e instanceof HttpError) throw e;
+      }
+
+      // If an opponent is already reserved, don't allow replacing it.
+      if (hostBId && hostBId !== toUid) {
+        throw new HttpError(409, "conflict", "Opponent already invited");
+      }
+
+      // Basic duplicate pending check.
+      const nowIso = new Date().toISOString();
+      try {
+        const existing = await sb
+          .from("battle_invites")
+          .select("id")
+          .eq("status", "pending")
+          .eq("from_uid", uid)
+          .eq("to_uid", toUid)
+          .eq("battle_id", battleId)
+          .gt("expires_at", nowIso)
+          .limit(1);
+
+        if (!existing.error && Array.isArray(existing.data) && existing.data.length > 0) {
+          throw new HttpError(409, "already_pending", "Invite already sent (pending)");
+        }
+      } catch (e) {
+        if (e instanceof HttpError) throw e;
+      }
+
+      const exp = new Date(Date.now() + ttlSeconds * 1000).toISOString();
+
+      // Reserve host_b_id if empty.
+      if (!hostBId) {
+        try {
+          await sb.from("live_battles").update({ host_b_id: toUid, updated_at: nowIso }).eq("battle_id", battleId);
+        } catch (_) {
+          // ignore
+        }
+      }
+
+      const { data: inviteRow, error: invErr } = await sb
+        .from("battle_invites")
+        .insert({
+          battle_id: battleId,
+          from_uid: uid,
+          to_uid: toUid,
+          status: "pending",
+          expires_at: exp,
+        })
+        .select("id,battle_id,from_uid,to_uid,status,created_at,expires_at")
+        .maybeSingle();
+
+      if (invErr) {
+        throw new HttpError(500, "db_error", `Failed to create invite: ${invErr.message ?? invErr}`);
+      }
+
+      // Best-effort: send push.
+      try {
+        await insertUserNotification(sb, {
+          receiverUid: toUid,
+          senderUid: uid,
+          type: "live_battle_invite",
+          title: "Battle challenge",
+          body: "You received a new battle invite.",
+          action: "battle_invite",
+          entityId: battleId,
+          entityType: "battle",
+          data: {
+            invite_id: String((inviteRow as any)?.id ?? "").trim(),
+            channel_id: channelId,
+          },
+        });
+
+        const tokens = await listDeviceTokensForUser(sb, toUid);
+        if (tokens.length) {
+          const { data: fromProfile } = await sb
+            .from("profiles")
+            .select("username,display_name")
+            .eq("id", uid)
+            .maybeSingle();
+
+          const fromUsername = String((fromProfile as any)?.username ?? "").trim();
+          const fromName = String((fromProfile as any)?.display_name ?? "").trim();
+          const fromHandle = fromUsername ? `@${fromUsername}` : (fromName || "Someone");
+          const fromLabel = fromName || fromHandle;
+
+          await sendFcmPushToTokens({
+            tokens,
+            title: "Battle challenge",
+            body: `${fromLabel} invited you to a battle`,
+            channelId: "battle_challenges",
+            sound: "default",
+            ttlSeconds,
+            data: {
+              type: "live_battle_invite",
+              battle_id: battleId,
+              invite_id: String((inviteRow as any)?.id ?? "").trim(),
+              channel_id: channelId,
+              from_uid: uid,
+              from_name: fromName,
+              from_handle: fromHandle,
+              from_username: fromUsername,
+            },
+          });
+        }
+      } catch (e) {
+        console.log('battle invite send push failed', e);
+      }
+
+      return json({ ok: true, invite: { ...(inviteRow as any), channel_id: channelId } });
+    }
+
+    // STEP 7: Respond to invite
+    // POST /api/battle/invite/respond
+    // Auth: Bearer <Firebase ID token>
+    // body: { invite_id: string, action: 'accept'|'decline' }
+    if (req.method === "POST" && normalized === "/battle/invite/respond") {
+      const { uid } = await requireFirebaseUser(req);
+      const body = await readJson(req);
+
+      const inviteId = String(body.invite_id ?? body.inviteId ?? "").trim();
+      const action = String(body.action ?? "").trim().toLowerCase();
+
+      if (!inviteId) {
+        throw new HttpError(400, "bad_request", "invite_id is required");
+      }
+      if (action !== "accept" && action !== "decline") {
+        throw new HttpError(400, "bad_request", "action must be accept or decline");
+      }
+
+      const sb = requireSupabaseAdmin();
+
+      const shouldConsumeJoin = action === "accept";
+      let joinUsageRef: string | null = null;
+      let joinUsageConsumed = false;
+
+      if (shouldConsumeJoin) {
+        const cap = await assertCreatorCapability(sb, uid, "battle_access");
+        const joinLimit = battleJoinWeeklyLimit(cap.planId);
+        joinUsageRef = `battle_join:invite:${inviteId}`;
+
+        const joinUsage = await tryConsumeWeeklyCreatorUsage(sb, {
+          uid,
+          role: cap.role,
+          action: "battle_join",
+          limit: joinLimit,
+          ref: joinUsageRef,
+        });
+        joinUsageConsumed = joinUsage.consumed;
+
+        if (!joinUsage.allowed) {
+          throw new HttpError(
+            429,
+            "limit_reached",
+            `You have reached your battle join limit (${joinLimit}/week). Upgrade to join more battles.`,
+          );
+        }
+      }
+
+      const { data, error } = await sb.rpc("battle_invite_respond", {
+        p_invite_id: inviteId,
+        p_to_uid: uid,
+        p_action: action,
+      });
+
+      if (error) {
+        if (shouldConsumeJoin && joinUsageConsumed && joinUsageRef) {
+          try {
+            await sb
+              .from("creator_usage_events")
+              .delete()
+              .eq("user_id", uid)
+              .eq("action", "battle_join")
+              .eq("ref", joinUsageRef);
+          } catch (_) {
+            // ignore
+          }
+        }
+        const msg = error.message || "";
+        if (msg.includes("invite_not_found")) throw new HttpError(404, "not_found", "Invite not found");
+        if (msg.includes("not_invited_user")) throw new HttpError(403, "forbidden", "Not invited user");
+        if (msg.includes("invite_expired")) throw new HttpError(409, "expired", "Invite expired");
+        if (msg.includes("invite_not_pending")) throw new HttpError(409, "conflict", "Invite already responded");
+        console.log('battle invite respond failed', { uid, inviteId, error: error.message });
+        throw new HttpError(500, "db_error", "Failed to respond to invite");
+      }
+
+      // Best-effort: notify the inviter (from_uid) of accept/decline.
+      try {
+        const sb2 = requireSupabaseAdmin();
+
+        const { data: inv } = await sb2
+          .from('battle_invites')
+          .select('id,from_uid,to_uid,battle_id,status')
+          .eq('id', inviteId)
+          .maybeSingle();
+
+        const fromUid = String((inv as any)?.from_uid ?? '').trim();
+        const battleId = String((inv as any)?.battle_id ?? (data as any)?.battle_id ?? (data as any)?.battleId ?? '').trim();
+        const channelId = String((data as any)?.channel_id ?? (data as any)?.channelId ?? (battleId ? `weafrica_battle_${battleId}` : '')).trim();
+
+        // If declined, clear scheduled metadata so it won't show as Upcoming.
+        if (action === 'decline' && battleId) {
+          try {
+            await sb2.from('live_battles').update({ scheduled_at: null }).eq('battle_id', battleId);
+          } catch (_) {
+            // ignore
+          }
+        }
+
+        if (fromUid) {
+          const accepted = action === 'accept';
+          await insertUserNotification(sb2, {
+            receiverUid: fromUid,
+            senderUid: uid,
+            type: accepted ? 'live_battle_invite_accepted' : 'live_battle_invite_declined',
+            title: accepted ? 'Battle invite accepted' : 'Battle invite declined',
+            body: accepted
+              ? 'Your battle invite was accepted.'
+              : 'Your battle invite was declined.',
+            action: 'battle_invite_response',
+            entityId: battleId,
+            entityType: 'battle',
+            data: {
+              invite_id: inviteId,
+              channel_id: channelId,
+              from_uid: fromUid,
+              to_uid: uid,
+            },
+          });
+
+          const tokens = await listDeviceTokensForUser(sb2, fromUid);
+          if (tokens.length) {
+            const { data: toProfile } = await sb2
+              .from('profiles')
+              .select('username,display_name')
+              .eq('id', uid)
+              .maybeSingle();
+
+            const toUsername = String((toProfile as any)?.username ?? '').trim();
+            const toName = String((toProfile as any)?.display_name ?? '').trim();
+            const toHandle = toUsername ? `@${toUsername}` : (toName || 'Someone');
+            const toLabel = toName || toHandle;
+
+            const titleText = accepted ? 'Battle invite accepted' : 'Battle invite declined';
+            const bodyText = accepted
+              ? `${toLabel} accepted your battle invite`
+              : `${toLabel} declined your battle invite`;
+
+            await sendFcmPushToTokens({
+              tokens,
+              title: titleText,
+              body: bodyText,
+              channelId: "battle_challenges",
+              sound: "default",
+              ttlSeconds: accepted ? 300 : 120,
+              data: {
+                type: accepted ? 'live_battle_invite_accepted' : 'live_battle_invite_declined',
+                invite_id: inviteId,
+                battle_id: battleId,
+                channel_id: channelId,
+                from_uid: fromUid,
+                to_uid: uid,
+                to_name: toName,
+                to_handle: toHandle,
+                to_username: toUsername,
+              },
+            });
+          }
+        }
+      } catch (e) {
+        console.log('battle invite respond push failed', e);
+      }
+
+      if (action === "accept") {
+        try {
+          const battleAny = data as any;
+          await logCreatorJourneyEvent({
+            sb,
+            uid,
+            eventType: "battle_joined",
+            eventKey: String(battleAny?.battle_id ?? battleAny?.battleId ?? inviteId).trim() || inviteId,
+            metadata: {
+              invite_id: inviteId,
+              battle_id: String(battleAny?.battle_id ?? battleAny?.battleId ?? '').trim(),
+              channel_id: String(battleAny?.channel_id ?? battleAny?.channelId ?? '').trim(),
+            },
+          });
+        } catch (_) {
+          // ignore
+        }
+      }
+
+      return json({ ok: true, battle: data, action });
+    }
+
+    // STEP 7: Quick match join (enqueue + attempt match)
+    // POST /api/battle/quick_match/join
+    // Auth: Bearer <Firebase ID token>
+    // body: { role?: 'artist'|'dj', country?: string }
+    if (req.method === "POST" && normalized === "/battle/quick_match/join") {
+      const { uid } = await requireFirebaseUser(req);
+      const body = await readJson(req);
+
+      const role = String(body.role ?? body.user_role ?? body.userRole ?? "artist").trim().toLowerCase();
+      const country = String(body.country ?? body.country_code ?? body.countryCode ?? "").trim();
+
+      const sb = requireSupabaseAdmin();
+
+      const roleHint = role === "artist" || role === "dj" ? (role as CreatorRoleId) : undefined;
+      const cap = await assertCreatorCapability(sb, uid, "battle_access", roleHint);
+      const joinLimit = battleJoinWeeklyLimit(cap.planId);
+      const joinUsageRef = `battle_join:quick_match:${crypto.randomUUID()}`;
+      const joinUsage = await tryConsumeWeeklyCreatorUsage(sb, {
+        uid,
+        role: cap.role,
+        action: "battle_join",
+        limit: joinLimit,
+        ref: joinUsageRef,
+      });
+
+      if (!joinUsage.allowed) {
+        throw new HttpError(
+          429,
+          "limit_reached",
+          `You have reached your battle join limit (${joinLimit}/week). Upgrade to join more battles.`,
+        );
+      }
+
+      const { data, error } = await sb.rpc("battle_quick_match_join", {
+        p_uid: uid,
+        p_role: role,
+        p_country: country || null,
+      });
+
+      if (error) {
+        if (joinUsage.consumed) {
+          try {
+            await sb
+              .from("creator_usage_events")
+              .delete()
+              .eq("user_id", uid)
+              .eq("action", "battle_join")
+              .eq("ref", joinUsageRef);
+          } catch (_) {
+            // ignore
+          }
+        }
+        const msg = error.message || "";
+        if (msg.includes("invalid_role")) throw new HttpError(400, "bad_request", "Invalid role");
+        throw new HttpError(500, "db_error", `Failed to join quick match: ${error.message}`);
+      }
+
+      if (!data) return json({ ok: true, queued: true });
+
+      try {
+        const battleAny = data as any;
+        await logCreatorJourneyEvent({
+          sb,
+          uid,
+          eventType: "battle_joined",
+          eventKey: String(battleAny?.battle_id ?? battleAny?.battleId ?? joinUsageRef).trim() || joinUsageRef,
+          metadata: {
+            battle_id: String(battleAny?.battle_id ?? battleAny?.battleId ?? '').trim(),
+            channel_id: String(battleAny?.channel_id ?? battleAny?.channelId ?? '').trim(),
+            role: role,
+            country: country,
+          },
+        });
+      } catch (_) {
+        // ignore
+      }
+
+      return json({ ok: true, matched: true, battle: data });
+    }
+
+    // STEP 7: Quick match poll (consume match event if present)
+    // GET /api/battle/quick_match/poll
+    // Auth: Bearer <Firebase ID token>
+    if (req.method === "GET" && normalized === "/battle/quick_match/poll") {
+      const { uid } = await requireFirebaseUser(req);
+      const sb = requireSupabaseAdmin();
+      const { data, error } = await sb.rpc("battle_quick_match_poll", { p_uid: uid });
+
+      if (error) {
+        throw new HttpError(500, "db_error", `Failed to poll quick match: ${error.message}`);
+      }
+      if (!data) return json({ ok: true, matched: false });
+      return json({ ok: true, matched: true, battle: data });
+    }
+
+    // STEP 7: Quick match cancel
+    // POST /api/battle/quick_match/cancel
+    // Auth: Bearer <Firebase ID token>
+    if (req.method === "POST" && normalized === "/battle/quick_match/cancel") {
+      const { uid } = await requireFirebaseUser(req);
+      const sb = requireSupabaseAdmin();
+      const { error } = await sb.rpc("battle_quick_match_cancel", { p_uid: uid });
+      if (error) {
+        throw new HttpError(500, "db_error", `Failed to cancel quick match: ${error.message}`);
+      }
+      return json({ ok: true, canceled: true });
+    }
+
+    // STEP 8: Battle Pressure AI (Crowd Intelligence)
+    // POST /api/dj/next
+    // Auth: Firebase recommended; if missing/invalid, falls back to test access.
+    // body (snake_case preferred):
+    // {
+    //   battle_type?: "1v1"|"dj_set",
+    //   current_song_id?: string,
+    //   current_song_bpm: number,
+    //   current_song_energy?: number,
+    //   current_song_genre?: string,
+    //   likes_per_min: number,
+    //   coins_per_min: number,
+    //   viewers_change?: number, // audience growth/drop
+    //   battle_time_remaining?: number, // seconds
+    //   song_pool: [{ id: string, bpm: number, energy: number, genre?: string }]
+    // }
+    if (req.method === "POST" && normalized === "/dj/next") {
+      // Auth: allow Firebase, else require test access (if enabled)
+      const providedBearer = bearerToken(req);
+      let firebaseUid: string | undefined;
+      if (providedBearer) {
+        try {
+          firebaseUid = (await requireFirebaseUser(req)).uid;
+        } catch (_) {
+          requireTestAccess(req);
+        }
+      } else {
+        requireTestAccess(req);
+      }
+
+      const body = await readJson(req);
+
+      const battleId = asNonEmptyString(body.battle_id ?? body.battleId ?? body.battleID ?? "") || undefined;
+
+      const battleType = asNonEmptyString(body.battle_type ?? body.battleType ?? "1v1") || "1v1";
+      const style = normalizeStyle(body.style ?? body.dj_style ?? body.djStyle);
+      const rule = styleRule(style || undefined);
+      const currentSongId = asNonEmptyString(body.current_song_id ?? body.currentSongId ?? "") || undefined;
+      const currentSongBpm = asInt(body.current_song_bpm ?? body.currentSongBpm, 0);
+      const currentSongEnergyRaw = body.current_song_energy ?? body.currentSongEnergy;
+      const currentSongEnergy = currentSongEnergyRaw === undefined ? undefined : asNum(currentSongEnergyRaw, 0.7);
+      const currentSongGenre = asNonEmptyString(body.current_song_genre ?? body.currentSongGenre ?? "") || undefined;
+
+      const likesPerMin = asInt(body.likes_per_min ?? body.likesPerMin, 0);
+      const coinsPerMin = asInt(body.coins_per_min ?? body.coinsPerMin, 0);
+      const viewersChange = asInt(
+        body.viewers_change ?? body.viewersChange ?? body.audience_delta_per_min ?? body.audienceDeltaPerMin ?? 0,
+        0,
+      );
+      const battleTimeRemainingRaw = body.battle_time_remaining ?? body.battleTimeRemaining ?? body.battleTimeRemainingSec;
+      const battleTimeRemaining =
+        battleTimeRemainingRaw === undefined ? undefined : asInt(battleTimeRemainingRaw, 0);
+
+      const poolRaw = body.song_pool ?? body.songPool;
+      const poolList = Array.isArray(poolRaw) ? poolRaw : [];
+      const pool: DjSong[] = poolList
+        .map((row: unknown) => {
+          if (!row || typeof row !== "object" || Array.isArray(row)) return null;
+          const r = row as Record<string, unknown>;
+          const id = asNonEmptyString(r.id ?? r.song_id ?? r.songId);
+          if (!id) return null;
+          const bpm = asInt(r.bpm ?? r.tempo, 0);
+          const energy = asNum(r.energy, 0.7);
+          const genre = asNonEmptyString(r.genre);
+          const out: DjSong = { id, bpm, energy };
+          if (genre) out.genre = genre;
+          return out;
+        })
+        .filter((v): v is DjSong => Boolean(v));
+
+      const filteredPool = filterByStyle(pool, rule);
+
+      if (!currentSongBpm || currentSongBpm <= 0) {
+        throw new HttpError(400, "bad_request", "current_song_bpm is required");
+      }
+      if (pool.length === 0) {
+        throw new HttpError(400, "bad_request", "song_pool is required");
+      }
+
+      const pressureScore = calculatePressure(likesPerMin, coinsPerMin, viewersChange, battleTimeRemaining);
+      const pressureState = pressureDecision(pressureScore);
+
+      // STEP 13.5: DJ battle monetization (coins influence)
+      const crowdBoostThreshold = clampInt(asInt(Deno.env.get("WEAFRICA_AI_CROWD_BOOST_COINS_PER_MIN"), 15), 1, 1000);
+      const crowdBoostDetected = coinsPerMin >= crowdBoostThreshold;
+
+      const styleDec = styleDecision(style || undefined, pressureState);
+
+      // If time is running out and we aren't clearly winning, spike the strategy.
+      let decision: DjDecision = styleDec.overrideDecision ?? djBattleDecision(pressureState);
+      if (battleTimeRemaining !== undefined && battleTimeRemaining <= 20 && (pressureState === "losing" || pressureState === "stable")) {
+        decision = "go_all_out";
+      }
+
+      // If the crowd is spending heavily, push a stronger move.
+      if (crowdBoostDetected && pressureState !== "winning") {
+        decision = decision === "maintain_vibe" ? "increase_energy" : decision;
+        decision = decision === "increase_energy" ? "go_all_out" : decision;
+      }
+
+      const ruleDecision = decision;
+
+      // Optional: Hybrid ML decision (requires policy table populated by offline training).
+      let mlDecision: { decision: DjDecision; confidence: number; bins: Record<string, number> } | null = null;
+      if (enableDjAiMl) {
+        let sb: ReturnType<typeof supabaseAdmin> | null = null;
+        try {
+          sb = requireSupabaseAdmin();
+        } catch (_) {
+          sb = null;
+        }
+
+        if (sb) {
+          const mlStyle = (style || "default").trim().toLowerCase();
+          try {
+            mlDecision = await tryMlDecision(sb, {
+              style: mlStyle,
+              pressureState,
+              bpm: currentSongBpm,
+              likesPerMin,
+              coinsPerMin,
+              viewersChange,
+            });
+
+            if (mlDecision && mlDecision.confidence >= 0.7) {
+              decision = mlDecision.decision;
+            }
+          } catch (_) {
+            // Ignore ML lookup errors and fall back to rules.
+            mlDecision = null;
+          }
+        }
+      }
+
+      const nextSongId = pickNextSongId({
+        decision,
+        currentSongId,
+        currentSongBpm,
+        currentSongEnergy,
+        currentSongGenre,
+        pool: filteredPool,
+        style: rule,
+      });
+
+      const reasons: string[] = [
+        `pressure_score=${pressureScore.toFixed(2)}`,
+        `pressure_state=${pressureState}`,
+        `battle_type=${battleType}`,
+      ];
+      if (style) reasons.push(`style=${style}`);
+      if (rule) reasons.push(`style_bpm_range=${rule.bpmMin}-${rule.bpmMax}`);
+      if (rule) reasons.push(`style_switch_speed=${rule.switchSpeed}`);
+      if (rule) reasons.push(`style_energy_bias=${rule.energyBias}`);
+      reasons.push(`song_pool_used=${filteredPool.length}/${pool.length}`);
+      if (styleDec.note) reasons.push(`style_note=${styleDec.note}`);
+      if (battleTimeRemaining !== undefined) reasons.push(`battle_time_remaining=${battleTimeRemaining}`);
+
+      if (crowdBoostDetected) reasons.push(`crowd_boost_detected=true`);
+
+      reasons.push(`rule_decision=${ruleDecision}`);
+      if (mlDecision) {
+        reasons.push(`ml_decision=${mlDecision.decision}`);
+        reasons.push(`ml_confidence=${mlDecision.confidence.toFixed(3)}`);
+        reasons.push(`ml_used=${mlDecision.confidence >= 0.7 ? "true" : "false"}`);
+      }
+
+      const energyAction = decision === "increase_energy" ? "increase_energy" : decision === "go_all_out" ? "go_all_out" : undefined;
+      const genreAction = decision === "switch_genre_fast" ? "switch_genre_fast" : undefined;
+      const vibeAction = decision === "maintain_vibe" ? "maintain_vibe" : decision === "go_all_out" ? "go_all_out" : undefined;
+
+      // STEP 10: Persist training row (best-effort; never fail the request if logging fails).
+      try {
+        const sb = requireSupabaseAdmin();
+        await sb.from("dj_ai_events").insert({
+          battle_id: battleId ?? null,
+          battle_type: battleType,
+          user_id: firebaseUid ?? null,
+          style: style || null,
+          current_song_id: currentSongId ?? null,
+          current_song_bpm: currentSongBpm,
+          current_song_energy: currentSongEnergy ?? null,
+          current_song_genre: currentSongGenre ?? null,
+          likes_per_min: likesPerMin,
+          coins_per_min: coinsPerMin,
+          viewers_change: viewersChange,
+          battle_time_remaining: battleTimeRemaining ?? null,
+          pressure_score: pressureScore,
+          pressure_state: pressureState,
+          rule_decision: ruleDecision,
+          ml_decision: mlDecision?.decision ?? null,
+          decision,
+          next_song_id: nextSongId,
+          reasons,
+          outcome: null,
+          extra: {
+            ml_confidence: mlDecision?.confidence ?? null,
+            ml_bins: mlDecision?.bins ?? null,
+          },
+        });
+      } catch (_) {
+        // Ignore DB logging failures.
+      }
+
+      return json({
+        ok: true,
+        decision,
+        next_song_id: nextSongId,
+        energy_action: energyAction,
+        genre_action: genreAction,
+        vibe_action: vibeAction,
+        reasons,
+        // Extra debug fields (safe; client can ignore)
+        pressure_score: pressureScore,
+        pressure_state: pressureState,
+        style: style || undefined,
+        crowd_boost_detected: crowdBoostDetected,
+        messages: crowdBoostDetected
+          ? ["Crowd boost detected — DJ AI going harder! (Coins influence unlocked)"]
+          : [],
+      });
+    }
+
+    // STEP 10: Label battle outcome for learning
+    // POST /api/dj/outcome
+    // Auth: Bearer <Firebase ID token>
+    // body: { battle_id: string, outcome: 'win'|'lose'|'draw'|'unknown' }
+    if (req.method === "POST" && normalized === "/dj/outcome") {
+      const { uid } = await requireFirebaseUser(req);
+      const body = await readJson(req);
+
+      const battleId = String(body.battle_id ?? body.battleId ?? "").trim();
+      const outcome = String(body.outcome ?? "unknown").trim().toLowerCase();
+
+      if (!battleId) {
+        throw new HttpError(400, "bad_request", "battle_id is required");
+      }
+
+      const allowed = new Set(["win", "lose", "draw", "unknown"]);
+      if (!allowed.has(outcome)) {
+        throw new HttpError(400, "bad_request", "outcome must be win|lose|draw|unknown");
+      }
+
+      const sb = requireSupabaseAdmin();
+      const { data, error } = await sb
+        .from("dj_ai_events")
+        .update({ outcome })
+        .eq("battle_id", battleId)
+        .eq("user_id", uid)
+        .select("id");
+
+      if (error) {
+        throw new HttpError(500, "db_error", `Failed to set outcome: ${error.message}`);
+      }
+
+      // STEP 13.4: Performance-based rewards (best-effort)
+      // Win battles -> grant free AI credits (once per battle).
+      if (outcome === "win") {
+        try {
+          const rewardCredits = clampInt(asInt(Deno.env.get("WEAFRICA_AI_REWARD_WIN_CREDITS"), 20), 0, 1000);
+          if (rewardCredits > 0) {
+            await sb.rpc("ai_grant_credits_once", {
+              p_user_id: uid,
+              p_action: "battle_prediction",
+              p_credits_amount: rewardCredits,
+              p_reason: "battle_win",
+              p_ref_key: `battle_win:${battleId}`,
+              p_meta: { battle_id: battleId },
+            });
+          }
+        } catch (_) {
+          // Ignore if tables/functions aren't deployed yet.
+        }
+      }
+
+      return json({ ok: true, updated: data?.length ?? 0 });
+    }
+
+    // STEP 13: AI Monetization Engine
+    // GET /api/ai/pricing
+    // Public: safe to read; used for UI hints.
+    if (req.method === "GET" && normalized === "/ai/pricing") {
+      const sb = requireSupabaseAdmin();
+      const { data, error } = await sb
+        .from("ai_pricing")
+        .select("action,coin_cost,daily_free_limit,enabled")
+        .order("action", { ascending: true });
+
+      if (error) {
+        // Fallback to defaults if table isn't deployed.
+        return json({ ok: true, source: "default", pricing: Object.values(DEFAULT_AI_PRICING) });
+      }
+
+      const pricing = (data ?? [])
+        .map((r) => ({
+          action: parseAiAction((r as any).action) ?? null,
+          coin_cost: asInt((r as any).coin_cost, 0),
+          daily_free_limit: asInt((r as any).daily_free_limit, 0),
+          enabled: Boolean((r as any).enabled ?? true),
+        }))
+        .filter((r) => r.action !== null);
+
+      return json({ ok: true, source: "db", pricing });
+    }
+
+    // STEP 13: AI Monetization Engine
+    // GET /api/ai/balance
+    // Auth: Bearer <Firebase ID token>
+    if (req.method === "GET" && normalized === "/ai/balance") {
+      const { uid } = await requireFirebaseUser(req);
+      const sb = requireSupabaseAdmin();
+
+      const sub = await getUserSubscription(sb, uid);
+      const coinBalance = await getWalletCoinBalance(sb, uid);
+      const creditBalance = await getAiCreditBalance(sb, uid);
+      const pricing = await getAiPricing(sb, "beat_generation");
+      const day = utcDayString();
+      const usage = await getAiUsage(sb, uid, "beat_generation", day);
+      const freeRemaining = Math.max(pricing.daily_free_limit - usage.freeUses, 0);
+
+      return json({
+        ok: true,
+        uid,
+        plan_id: sub.planId,
+        is_premium_active: sub.isPremiumActive,
+        coin_balance: coinBalance,
+        ai_credit_balance: creditBalance,
+        beat_generation: {
+          day,
+          free_remaining: freeRemaining,
+          coin_cost: pricing.coin_cost,
+        },
+      });
+    }
+
+    // STEP 11: AI Beat Assistant (v1)
+    // GET /api/beat/presets
+    // Public: safe to read.
+    if (req.method === "GET" && normalized === "/beat/presets") {
+      const presets: BeatPreset[] = [
+        {
+          style: "afrobeats",
+          bpm: 120,
+          mood: "happy",
+          duration: 30,
+          prompt: "Afrobeats instrumental, African rhythm, energetic drums, club vibe",
+        },
+        {
+          style: "amapiano",
+          bpm: 112,
+          mood: "groovy",
+          duration: 30,
+          prompt: "Amapiano groove, deep log drum, smooth chords, slow build",
+        },
+        {
+          style: "dancehall",
+          bpm: 132,
+          mood: "aggressive",
+          duration: 30,
+          prompt: "Dancehall African fusion, aggressive bass, hype drops, punchy drums",
+        },
+      ];
+
+      return json({ ok: true, presets });
+    }
+
+    // STEP 11: AI Beat Assistant (v1)
+    // POST /api/beat/generate
+    // Auth: required in production.
+    // Dev-only: if WEAFRICA_ENABLE_TEST_ROUTES=true, test-token access is allowed.
+    // This v1 endpoint returns a high-quality prompt + Colab snippet.
+    // body: { style: string, bpm: number, mood: string, duration: number, prompt?: string, seed?: number }
+    if (req.method === "POST" && normalized === "/beat/generate") {
+      // Production: require Firebase. Dev: allow test access only when explicitly enabled.
+      let uid: string | null = null;
+      const providedBearer = bearerToken(req);
+      if (providedBearer) {
+        uid = (await requireFirebaseUser(req)).uid;
+      } else {
+        requireTestAccess(req);
+        uid = null;
+      }
+
+      const sb = requireSupabaseAdmin();
+      let monetization: AiGuardResult | null = null;
+      if (uid) {
+        try {
+          monetization = await guardAiAction(sb, uid, "beat_generation", { feature: "beat_assistant" });
+        } catch (e) {
+          if (e instanceof HttpError) {
+            return json(
+              { ok: false, error: e.code, message: e.message, details: (e as any).details ?? null },
+              { status: e.status },
+            );
+          }
+          throw e;
+        }
+      }
+
+      const body = await readJson(req);
+
+      const style = asNonEmptyString(body.style ?? body.dj_style ?? body.djStyle ?? "afrobeats") || "afrobeats";
+      const bpm = clampInt(asInt(body.bpm, 120), 60, 220);
+      const mood = asNonEmptyString(body.mood ?? "") || "";
+      const duration = clampInt(asInt(body.duration ?? body.duration_seconds ?? body.durationSeconds, 30), 5, 180);
+      const promptOverride = asNonEmptyString(body.prompt ?? body.description ?? "") || undefined;
+      const seedRaw = body.seed;
+      const seed = seedRaw === undefined ? undefined : clampInt(asInt(seedRaw, 0), 0, 2 ** 31 - 1);
+
+      const preset: BeatPreset = {
+        style,
+        bpm,
+        mood,
+        duration,
+        ...(promptOverride ? { prompt: promptOverride } : {}),
+      };
+
+      const prompt = buildBeatPrompt(preset);
+      const sampleRate = 32000;
+
+      const colabMarkdown =
+        "```python\n" +
+        "!pip -q install audiocraft\n\n" +
+        "from audiocraft.models import MusicGen\n" +
+        "from audiocraft.data.audio import audio_write\n\n" +
+        "model = MusicGen.get_pretrained(\"small\")\n" +
+        `model.set_generation_params(duration=${duration})\n\n` +
+        "descriptions = [\n" +
+        `    \"${prompt.replaceAll("\\", "\\\\").replaceAll("\"", "\\\"")}\"\n` +
+        "]\n\n" +
+        (seed !== undefined ? `# Optional: seed=${seed}\n` : "") +
+        "wav = model.generate(descriptions)\n\n" +
+        "audio_write(\"weafrica_beat\", wav[0].cpu(), model.sample_rate)\n" +
+        "print(\"Saved weafrica_beat.wav\")\n" +
+        "```";
+
+      return json({
+        ok: true,
+        style,
+        bpm,
+        mood,
+        duration,
+        prompt,
+        sample_rate: sampleRate,
+        colab_markdown: colabMarkdown,
+        monetization,
+      });
+    }
+
+    // STEP 11+ (Production): Beat MP3 generation (async job)
+    // POST /api/beat/audio/start
+    // Auth: Bearer <Firebase ID token>
+    // Monetization: beat_audio_generation
+    if (req.method === "POST" && normalized === "/beat/audio/start") {
+      const { uid } = await requireFirebaseUser(req);
+      const sb = requireSupabaseAdmin();
+
+      let monetization: AiGuardResult;
+      try {
+        monetization = await guardAiAction(sb, uid, "beat_audio_generation", { feature: "beat_assistant_audio" });
+      } catch (e) {
+        if (e instanceof HttpError) {
+          return json(
+            { ok: false, error: e.code, message: e.message, details: (e as any).details ?? null },
+            { status: e.status },
+          );
+        }
+        throw e;
+      }
+
+      const body = await readJson(req);
+      const style = asNonEmptyString(body.style ?? body.dj_style ?? body.djStyle ?? "afrobeats") || "afrobeats";
+      const bpm = clampInt(asInt(body.bpm, 120), 60, 220);
+      const mood = asNonEmptyString(body.mood ?? "") || "";
+      const duration = clampInt(asInt(body.duration ?? body.duration_seconds ?? body.durationSeconds, 20), 5, 60);
+      const promptOverride = asNonEmptyString(body.prompt ?? body.description ?? "") || undefined;
+      const seedRaw = body.seed;
+      const seed = seedRaw === undefined ? undefined : clampInt(asInt(seedRaw, 0), 0, 2 ** 31 - 1);
+
+      const preset: BeatPreset = {
+        style,
+        bpm,
+        mood,
+        duration,
+        ...(promptOverride ? { prompt: promptOverride } : {}),
+      };
+      const prompt = buildBeatPrompt(preset);
+
+      const provider = hasStabilityBeatAudio() ? "stability" : "replicate";
+
+      // Create job row first so we have an ID for storage path.
+      const created = await sb
+        .from("ai_beat_audio_jobs")
+        .insert({
+          user_id: uid,
+          status: "queued",
+          provider,
+          style,
+          bpm,
+          mood,
+          duration_seconds: duration,
+          prompt,
+          seed,
+          storage_bucket: aiBeatsBucket,
+          storage_path: null,
+          output_mime: null,
+          output_bytes: null,
+          monetization,
+        })
+        .select("id,created_at,status")
+        .single();
+
+      if (created.error || !created.data) {
+        throw new HttpError(500, "db_error", `Failed to create audio job: ${created.error?.message ?? "unknown"}`);
+      }
+
+      const jobId = String((created.data as any).id);
+
+      if (provider === "stability") {
+        const started = await stabilityStartAudioGeneration({ prompt, durationSeconds: duration, seed });
+
+        // Case 1: direct audio bytes or direct URL (no polling needed)
+        if (started.kind === "direct" || started.kind === "url") {
+          const dl = started.kind === "direct"
+            ? { bytes: started.bytes, mime: started.mime }
+            : await downloadBytes(started.url);
+
+          const mime = (dl.mime ?? "audio/mpeg").split(";")[0].trim() || "audio/mpeg";
+          const ext = mime === "audio/wav" ? "wav" : "mp3";
+          const objectPath = `${uid}/${jobId}.${ext}`;
+
+          const up = await sb.storage.from(aiBeatsBucket).upload(objectPath, dl.bytes, {
+            contentType: mime,
+            upsert: true,
+          });
+          if (up.error) {
+            await sb
+              .from("ai_beat_audio_jobs")
+              .update({ status: "failed", error: `storage_upload_failed:${up.error.message}` })
+              .eq("id", jobId)
+              .eq("user_id", uid);
+            throw new HttpError(500, "db_error", `Failed to upload audio: ${up.error.message}`);
+          }
+
+          await sb
+            .from("ai_beat_audio_jobs")
+            .update({
+              status: "succeeded",
+              storage_bucket: aiBeatsBucket,
+              storage_path: objectPath,
+              output_mime: mime,
+              output_bytes: dl.bytes.byteLength,
+            })
+            .eq("id", jobId)
+            .eq("user_id", uid);
+
+          return json({
+            ok: true,
+            job_id: jobId,
+            status: "succeeded",
+            prompt,
+            monetization,
+          });
+        }
+
+        // Case 2: async job id (poll via /api/beat/audio/status)
+        const upd = await sb
+          .from("ai_beat_audio_jobs")
+          .update({
+            status: "running",
+            provider_prediction_id: started.id,
+          })
+          .eq("id", jobId)
+          .eq("user_id", uid);
+
+        if (upd.error) {
+          throw new HttpError(500, "db_error", `Failed to update audio job: ${upd.error.message}`);
+        }
+
+        return json({
+          ok: true,
+          job_id: jobId,
+          status: "running",
+          prompt,
+          monetization,
+        });
+      }
+
+      // Replicate fallback.
+      // Start provider prediction.
+      // NOTE: Replicate model inputs vary; we pass both duration and duration_seconds for compatibility.
+      const pred = await replicateCreatePrediction({
+        prompt,
+        duration,
+        duration_seconds: duration,
+        seed,
+      });
+
+      const upd = await sb
+        .from("ai_beat_audio_jobs")
+        .update({
+          status: "running",
+          provider_prediction_id: pred.id,
+        })
+        .eq("id", jobId)
+        .eq("user_id", uid);
+
+      if (upd.error) {
+        throw new HttpError(500, "db_error", `Failed to update audio job: ${upd.error.message}`);
+      }
+
+      return json({
+        ok: true,
+        job_id: jobId,
+        status: "running",
+        prompt,
+        monetization,
+      });
+    }
+
+    // Battle mode 120s beat generation (async job)
+    // POST /api/beat/audio/battle/start
+    // Auth: Bearer <Firebase ID token>
+    // Monetization: beat_audio_battle_120 (free-capped by pricing)
+    if (req.method === "POST" && normalized === "/beat/audio/battle/start") {
+      const { uid } = await requireFirebaseUser(req);
+      const sb = requireSupabaseAdmin();
+
+      let monetization: AiGuardResult;
+      try {
+        monetization = await guardAiAction(sb, uid, "beat_audio_battle_120", { feature: "battle_audio_120" });
+      } catch (e) {
+        if (e instanceof HttpError) {
+          return json(
+            { ok: false, error: e.code, message: e.message, details: (e as any).details ?? null },
+            { status: e.status },
+          );
+        }
+        throw e;
+      }
+
+      const body = await readJson(req);
+      const style = asNonEmptyString(body.style ?? body.dj_style ?? body.djStyle ?? "afrobeats") || "afrobeats";
+      const bpm = clampInt(asInt(body.locked_bpm ?? body.bpm, 120), 60, 220);
+      const key = asNonEmptyString(body.locked_key ?? body.key ?? "A minor") || "A minor";
+      const mood = asNonEmptyString(body.mood ?? "") || "";
+      const sectionTemplate = asNonEmptyString(body.section_template ?? body.sectionTemplate ?? "intro-build-drop-outro") || "intro-build-drop-outro";
+      const battleId = asNonEmptyString(body.battle_id ?? body.battleId ?? "") || null;
+      const fairnessTemplateId = asNonEmptyString(body.fairness_template_id ?? body.fairnessTemplateId ?? "") || null;
+      const promptOverride = asNonEmptyString(body.prompt ?? body.description ?? "") || undefined;
+      const seedRaw = body.seed;
+      const seed = seedRaw === undefined ? undefined : clampInt(asInt(seedRaw, 0), 0, 2 ** 31 - 1);
+      const duration = 120;
+
+      const prompt = buildBattleBeat120Prompt({
+        style,
+        bpm,
+        key,
+        sectionTemplate,
+        mood,
+        promptOverride,
+      });
+
+      const provider = hasStabilityBeatAudio() ? "stability" : "replicate";
+      const fairnessPayload = {
+        locked_bpm: bpm,
+        locked_key: key,
+        section_template: sectionTemplate,
+        fairness_template_id: fairnessTemplateId,
+      };
+
+      const created = await sb
+        .from("ai_beat_audio_jobs")
+        .insert({
+          user_id: uid,
+          status: "queued",
+          provider,
+          style,
+          bpm,
+          mood,
+          duration_seconds: duration,
+          prompt,
+          seed,
+          storage_bucket: aiBeatsBucket,
+          storage_path: null,
+          output_mime: null,
+          output_bytes: null,
+          monetization,
+          battle_id: battleId,
+          mode: "battle_120",
+          fairness_template_id: fairnessTemplateId,
+          fairness_lock: fairnessPayload,
+        })
+        .select("id,created_at,status")
+        .single();
+
+      if (created.error || !created.data) {
+        throw new HttpError(500, "db_error", `Failed to create battle audio job: ${created.error?.message ?? "unknown"}`);
+      }
+
+      const jobId = String((created.data as any).id);
+
+      if (provider === "stability") {
+        const started = await stabilityStartAudioGeneration({ prompt, durationSeconds: duration, seed });
+
+        if (started.kind === "direct" || started.kind === "url") {
+          const dl = started.kind === "direct"
+            ? { bytes: started.bytes, mime: started.mime }
+            : await downloadBytes(started.url);
+
+          const mime = (dl.mime ?? "audio/mpeg").split(";")[0].trim() || "audio/mpeg";
+          const ext = mime === "audio/wav" ? "wav" : "mp3";
+          const objectPath = `${uid}/${jobId}.${ext}`;
+
+          const up = await sb.storage.from(aiBeatsBucket).upload(objectPath, dl.bytes, {
+            contentType: mime,
+            upsert: true,
+          });
+          if (up.error) {
+            await sb
+              .from("ai_beat_audio_jobs")
+              .update({ status: "failed", error: `storage_upload_failed:${up.error.message}` })
+              .eq("id", jobId)
+              .eq("user_id", uid);
+            throw new HttpError(500, "db_error", `Failed to upload audio: ${up.error.message}`);
+          }
+
+          await sb
+            .from("ai_beat_audio_jobs")
+            .update({
+              status: "succeeded",
+              storage_bucket: aiBeatsBucket,
+              storage_path: objectPath,
+              output_mime: mime,
+              output_bytes: dl.bytes.byteLength,
+            })
+            .eq("id", jobId)
+            .eq("user_id", uid);
+
+          return json({
+            ok: true,
+            job_id: jobId,
+            status: "succeeded",
+            prompt,
+            monetization,
+            fairness_lock: fairnessPayload,
+          });
+        }
+
+        const upd = await sb
+          .from("ai_beat_audio_jobs")
+          .update({
+            status: "running",
+            provider_prediction_id: started.id,
+          })
+          .eq("id", jobId)
+          .eq("user_id", uid);
+
+        if (upd.error) {
+          throw new HttpError(500, "db_error", `Failed to update audio job: ${upd.error.message}`);
+        }
+
+        return json({
+          ok: true,
+          job_id: jobId,
+          status: "running",
+          prompt,
+          monetization,
+          fairness_lock: fairnessPayload,
+        });
+      }
+
+      const pred = await replicateCreatePrediction({
+        prompt,
+        duration,
+        duration_seconds: duration,
+        seed,
+      });
+
+      const upd = await sb
+        .from("ai_beat_audio_jobs")
+        .update({
+          status: "running",
+          provider_prediction_id: pred.id,
+        })
+        .eq("id", jobId)
+        .eq("user_id", uid);
+
+      if (upd.error) {
+        throw new HttpError(500, "db_error", `Failed to update audio job: ${upd.error.message}`);
+      }
+
+      return json({
+        ok: true,
+        job_id: jobId,
+        status: "running",
+        prompt,
+        monetization,
+        fairness_lock: fairnessPayload,
+      });
+    }
+
+    // GET /api/beat/audio/battle/status?job_id=<uuid>
+    // Auth: Bearer <Firebase ID token>
+    if (req.method === "GET" && normalized === "/beat/audio/battle/status") {
+      const { uid } = await requireFirebaseUser(req);
+      const q = new URL(req.url).searchParams;
+      const jobId = (q.get("job_id") ?? q.get("id") ?? "").trim();
+      if (!jobId) throw new HttpError(400, "bad_request", "Missing job_id");
+
+      const sb = requireSupabaseAdmin();
+      const rowQ = await sb
+        .from("ai_beat_audio_jobs")
+        .select(
+          "id,user_id,status,provider,provider_prediction_id,storage_bucket,storage_path,output_mime,output_bytes,error,created_at,updated_at,fairness_lock,mode,duration_seconds",
+        )
+        .eq("id", jobId)
+        .eq("user_id", uid)
+        .eq("mode", "battle_120")
+        .maybeSingle();
+
+      if (rowQ.error) throw new HttpError(500, "db_error", rowQ.error.message);
+      if (!rowQ.data) throw new HttpError(404, "not_found", "Battle audio job not found");
+
+      const job = rowQ.data as any;
+
+      await maybeRefreshBeatAudioJob(sb, uid, jobId, job);
+
+      let audioUrl: string | null = null;
+      if (job.status === "succeeded" && job.storage_path) {
+        const signed = await sb.storage.from(String(job.storage_bucket ?? aiBeatsBucket)).createSignedUrl(
+          String(job.storage_path),
+          60 * 60,
+        );
+        if (!signed.error && signed.data?.signedUrl) {
+          audioUrl = signed.data.signedUrl;
+        }
+      }
+
+      return json({
+        ok: true,
+        job: {
+          id: String(job.id),
+          status: String(job.status),
+          output_mime: job.output_mime ?? null,
+          output_bytes: job.output_bytes ?? null,
+          error: job.error ?? null,
+          audio_url: audioUrl,
+          duration_seconds: job.duration_seconds ?? 120,
+          fairness_lock: job.fairness_lock ?? null,
+          created_at: job.created_at,
+          updated_at: job.updated_at,
+        },
+      });
+    }
+
+    // GET /api/beat/audio/status?job_id=<uuid>
+    // Auth: Bearer <Firebase ID token>
+    if (req.method === "GET" && normalized === "/beat/audio/status") {
+      const { uid } = await requireFirebaseUser(req);
+      const q = new URL(req.url).searchParams;
+      const jobId = (q.get("job_id") ?? q.get("id") ?? "").trim();
+      if (!jobId) throw new HttpError(400, "bad_request", "Missing job_id");
+
+      const sb = requireSupabaseAdmin();
+      const rowQ = await sb
+        .from("ai_beat_audio_jobs")
+        .select(
+          "id,user_id,status,provider,provider_prediction_id,storage_bucket,storage_path,output_mime,output_bytes,error,created_at,updated_at",
+        )
+        .eq("id", jobId)
+        .eq("user_id", uid)
+        .maybeSingle();
+
+      if (rowQ.error) throw new HttpError(500, "db_error", rowQ.error.message);
+      if (!rowQ.data) throw new HttpError(404, "not_found", "Audio job not found");
+
+      const job = rowQ.data as any;
+
+      // If still running, poll provider (replicate or stability).
+      await maybeRefreshBeatAudioJob(sb, uid, jobId, job);
+
+      let audioUrl: string | null = null;
+      if (job.status === "succeeded" && job.storage_path) {
+        const signed = await sb.storage.from(String(job.storage_bucket ?? aiBeatsBucket)).createSignedUrl(
+          String(job.storage_path),
+          60 * 60,
+        );
+        if (!signed.error && signed.data?.signedUrl) {
+          audioUrl = signed.data.signedUrl;
+        }
+      }
+
+      return json({
+        ok: true,
+        job: {
+          id: String(job.id),
+          status: String(job.status),
+          output_mime: job.output_mime ?? null,
+          output_bytes: job.output_bytes ?? null,
+          error: job.error ?? null,
+          audio_url: audioUrl,
+          created_at: job.created_at,
+          updated_at: job.updated_at,
+        },
+      });
+    }
+
+    // Consumer AI Creator (mobile-friendly): DJ/Artist generation
+    // POST /api/consumer/dj/ai/generate
+    // POST /api/consumer/artist/ai/generate
+    // Auth: Bearer <Firebase ID token>
+    // Response: { ok, generation: { id, status, created_at } }
+    if (
+      req.method === "POST" &&
+      (normalized === "/consumer/dj/ai/generate" || normalized === "/consumer/artist/ai/generate")
+    ) {
+      const role = normalized.includes("/consumer/dj/") ? "dj" : "artist";
+        const { uid } = await requireFirebaseUser(req);
+      await requireCreatorRole(uid, role);
+
+      const sb = requireSupabaseAdmin();
+
+      let monetization: AiGuardResult;
+      try {
+        monetization = await guardAiAction(sb, uid, "beat_audio_generation", { feature: "ai_creator" });
+      } catch (e) {
+        if (e instanceof HttpError) {
+          return json(
+            { ok: false, error: e.code, message: e.message, details: (e as any).details ?? null },
+            { status: e.status },
+          );
+        }
+        throw e;
+      }
+
+      const body = await readJson(req);
+      const rawPrompt = asNonEmptyString(body.prompt ?? body.description ?? "") || "";
+      if (!rawPrompt.trim()) {
+        throw new HttpError(400, "bad_request", "prompt is required");
+      }
+
+      // Map consumer payload fields onto our existing beat audio pipeline.
+      const style = asNonEmptyString(body.genre ?? body.style ?? body.dj_style ?? body.djStyle ?? "afrobeats") || "afrobeats";
+      const mood = asNonEmptyString(body.mood ?? "") || "";
+      const duration = clampInt(
+        asInt(body.length_seconds ?? body.lengthSeconds ?? body.duration_seconds ?? body.durationSeconds, 20),
+        5,
+        180,
+      );
+      const bpm = clampInt(asInt(body.bpm, 120), 60, 220);
+      const seedRaw = body.seed;
+      const seed = seedRaw === undefined ? undefined : clampInt(asInt(seedRaw, 0), 0, 2 ** 31 - 1);
+
+      const preset: BeatPreset = {
+        style,
+        bpm,
+        mood,
+        duration,
+        prompt: rawPrompt.trim(),
+      };
+
+      const prompt = buildBeatPrompt(preset);
+
+      const provider = hasStabilityBeatAudio() ? "stability" : "replicate";
+
+      const created = await sb
+        .from("ai_beat_audio_jobs")
+        .insert({
+          user_id: uid,
+          status: "queued",
+          provider,
+          style,
+          bpm,
+          mood,
+          duration_seconds: duration,
+          prompt,
+          seed,
+          storage_bucket: aiBeatsBucket,
+          storage_path: null,
+          output_mime: null,
+          output_bytes: null,
+          monetization,
+        })
+        .select("id,created_at,status")
+        .single();
+
+      if (created.error || !created.data) {
+        throw new HttpError(500, "db_error", `Failed to create generation: ${created.error?.message ?? "unknown"}`);
+      }
+
+      const generationId = String((created.data as any).id);
+
+      if (provider === "stability") {
+        const started = await stabilityStartAudioGeneration({ prompt, durationSeconds: duration, seed });
+
+        if (started.kind === "direct" || started.kind === "url") {
+          const dl = started.kind === "direct"
+            ? { bytes: started.bytes, mime: started.mime }
+            : await downloadBytes(started.url);
+
+          const mime = (dl.mime ?? "audio/mpeg").split(";")[0].trim() || "audio/mpeg";
+          const ext = mime === "audio/wav" ? "wav" : "mp3";
+          const objectPath = `${uid}/${generationId}.${ext}`;
+
+          const up = await sb.storage.from(aiBeatsBucket).upload(objectPath, dl.bytes, {
+            contentType: mime,
+            upsert: true,
+          });
+          if (up.error) {
+            await sb
+              .from("ai_beat_audio_jobs")
+              .update({ status: "failed", error: `storage_upload_failed:${up.error.message}` })
+              .eq("id", generationId)
+              .eq("user_id", uid);
+            throw new HttpError(500, "db_error", `Failed to upload audio: ${up.error.message}`);
+          }
+
+          await sb
+            .from("ai_beat_audio_jobs")
+            .update({
+              status: "succeeded",
+              storage_bucket: aiBeatsBucket,
+              storage_path: objectPath,
+              output_mime: mime,
+              output_bytes: dl.bytes.byteLength,
+            })
+            .eq("id", generationId)
+            .eq("user_id", uid);
+
+          return json({
+            ok: true,
+            generation: {
+              id: generationId,
+              status: "succeeded",
+              created_at: (created.data as any).created_at,
+            },
+            monetization,
+          });
+        }
+
+        const upd = await sb
+          .from("ai_beat_audio_jobs")
+          .update({
+            status: "running",
+            provider_prediction_id: started.id,
+          })
+          .eq("id", generationId)
+          .eq("user_id", uid);
+
+        if (upd.error) {
+          throw new HttpError(500, "db_error", `Failed to update generation: ${upd.error.message}`);
+        }
+
+        return json({
+          ok: true,
+          generation: {
+            id: generationId,
+            status: "running",
+            created_at: (created.data as any).created_at,
+          },
+          monetization,
+        });
+      }
+
+      const pred = await replicateCreatePrediction({
+        prompt,
+        duration,
+        duration_seconds: duration,
+        seed,
+      });
+
+      const upd = await sb
+        .from("ai_beat_audio_jobs")
+        .update({
+          status: "running",
+          provider_prediction_id: pred.id,
+        })
+        .eq("id", generationId)
+        .eq("user_id", uid);
+
+      if (upd.error) {
+        throw new HttpError(500, "db_error", `Failed to update generation: ${upd.error.message}`);
+      }
+
+      return json({
+        ok: true,
+        generation: {
+          id: generationId,
+          status: "running",
+          created_at: (created.data as any).created_at,
+        },
+        monetization,
+      });
+    }
+
+    // Consumer AI Creator: list/poll recent generations
+    // GET /api/consumer/dj/ai/generations
+    // GET /api/consumer/artist/ai/generations
+    // Auth: Bearer <Firebase ID token>
+    if (
+      req.method === "GET" &&
+      (normalized === "/consumer/dj/ai/generations" || normalized === "/consumer/artist/ai/generations")
+    ) {
+      const role = normalized.includes("/consumer/dj/") ? "dj" : "artist";
+        const { uid } = await requireFirebaseUser(req);
+      await requireCreatorRole(uid, role);
+
+      const sb = requireSupabaseAdmin();
+      const q = await sb
+        .from("ai_beat_audio_jobs")
+        .select(
+          "id,user_id,status,provider,provider_prediction_id,storage_bucket,storage_path,output_mime,output_bytes,error,prompt,created_at,updated_at",
+        )
+        .eq("user_id", uid)
+        .order("created_at", { ascending: false })
+        .limit(30);
+
+      if (q.error) throw new HttpError(500, "db_error", q.error.message);
+      const rows: any[] = (q.data ?? []) as any[];
+
+      const out: any[] = [];
+      // Keep polling snappy: only refresh provider status for a few recent non-terminal jobs.
+      let refreshed = 0;
+      for (const r of rows) {
+        const id = String(r.id);
+
+        let status = String(r.status ?? "unknown");
+        let resultAudioUrl: string | null = null;
+
+        // If we already uploaded to storage, prefer signed URL.
+        if (status === "succeeded" && r.storage_path) {
+          const signed = await sb.storage
+            .from(String(r.storage_bucket ?? aiBeatsBucket))
+            .createSignedUrl(String(r.storage_path), 60 * 60);
+          if (!signed.error && signed.data?.signedUrl) {
+            resultAudioUrl = signed.data.signedUrl;
+          }
+        }
+
+        // Otherwise, if provider is still running/succeeded but storage upload isn't done,
+        // fetch provider status and return provider URL directly. This avoids slow
+        // download+upload work inside a polling request.
+        if (!resultAudioUrl && r.provider_prediction_id && refreshed < 3 && (status === "queued" || status === "running")) {
+          refreshed += 1;
+
+          const provider = String(r.provider ?? "replicate").trim().toLowerCase();
+          if (provider === "stability") {
+            const st = await stabilityGetAudioStatus(String(r.provider_prediction_id));
+            if (st.status === "failed") {
+              status = "failed";
+              await sb
+                .from("ai_beat_audio_jobs")
+                .update({ status: "failed", error: String(st.error ?? "provider_failed") })
+                .eq("id", id)
+                .eq("user_id", uid);
+              r.error = String(st.error ?? "provider_failed");
+            } else if (st.status === "running") {
+              status = "running";
+              if (String(r.status) !== "running") {
+                await sb
+                  .from("ai_beat_audio_jobs")
+                  .update({ status: "running" })
+                  .eq("id", id)
+                  .eq("user_id", uid);
+              }
+            } else {
+              status = "succeeded";
+              resultAudioUrl = st.outUrl ?? null;
+              if (String(r.status) !== "succeeded") {
+                await sb
+                  .from("ai_beat_audio_jobs")
+                  .update({ status: "succeeded" })
+                  .eq("id", id)
+                  .eq("user_id", uid);
+              }
+            }
+          } else {
+            const pred = await replicateGetPrediction(String(r.provider_prediction_id));
+
+            if (pred.status === "failed" || pred.status === "canceled") {
+              status = "failed";
+              await sb
+                .from("ai_beat_audio_jobs")
+                .update({ status: "failed", error: String(pred.error ?? "provider_failed") })
+                .eq("id", id)
+                .eq("user_id", uid);
+              r.error = String(pred.error ?? "provider_failed");
+            } else if (pred.status === "starting" || pred.status === "processing") {
+              status = "running";
+              // Best-effort: persist running.
+              if (String(r.status) !== "running") {
+                await sb
+                  .from("ai_beat_audio_jobs")
+                  .update({ status: "running" })
+                  .eq("id", id)
+                  .eq("user_id", uid);
+              }
+            } else if (pred.status === "succeeded") {
+              status = "succeeded";
+              const outUrl = firstUrlFromOutput(pred.output);
+              resultAudioUrl = outUrl ?? null;
+              // Best-effort: persist succeeded (even if storage upload happens later).
+              if (String(r.status) !== "succeeded") {
+                await sb
+                  .from("ai_beat_audio_jobs")
+                  .update({ status: "succeeded" })
+                  .eq("id", id)
+                  .eq("user_id", uid);
+              }
+            }
+          }
+        }
+
+        out.push({
+          id,
+          status,
+          created_at: r.created_at,
+          result_audio_url: resultAudioUrl,
+          prompt: r.prompt ?? null,
+          error: r.error ?? null,
+        });
+      }
+
+      return json({ ok: true, generations: out });
+    }
+
+    // STEP 12: Creator AI Dashboard (Insights + Advice)
+    // GET /api/dashboard/dj?window_days=7
+    // Auth: Bearer <Firebase ID token>
+    if (req.method === "GET" && normalized === "/dashboard/dj") {
+      const { uid } = await requireFirebaseUser(req);
+      const q = new URL(req.url).searchParams;
+      const windowDays = clampInt(asInt(q.get("window_days") ?? q.get("days"), 7), 1, 30);
+      const sinceIso = new Date(Date.now() - windowDays * 24 * 3600 * 1000).toISOString();
+
+      const sb = requireSupabaseAdmin();
+      const { data, error } = await sb
+        .from("dj_ai_events")
+        .select(
+          "id,created_at,battle_id,style,likes_per_min,coins_per_min,viewers_change,pressure_state,pressure_score,decision,rule_decision,ml_decision,outcome,next_song_id",
+        )
+        .eq("user_id", uid)
+        .gte("created_at", sinceIso)
+        .order("created_at", { ascending: false })
+        .limit(500);
+
+      if (error) {
+        throw new HttpError(500, "db_error", `Failed to load DJ dashboard: ${error.message}`);
+      }
+
+      const rows = (data ?? []) as Array<Record<string, unknown>>;
+      const n = rows.length;
+
+      let sumLikes = 0;
+      let sumCoins = 0;
+      let sumViewers = 0;
+      let wins = 0;
+      let losses = 0;
+      let draws = 0;
+
+      const styleCounts: Record<string, number> = {};
+      const decisionCounts: Record<string, number> = {};
+
+      const byDecisionOutcome: Record<string, { wins: number; total: number }> = {};
+
+      for (const r of rows) {
+        const likes = asInt(r.likes_per_min, 0);
+        const coins = asInt(r.coins_per_min, 0);
+        const viewers = asInt(r.viewers_change, 0);
+        sumLikes += likes;
+        sumCoins += coins;
+        sumViewers += viewers;
+
+        const style = String(r.style ?? "").trim().toLowerCase();
+        if (style) styleCounts[style] = (styleCounts[style] ?? 0) + 1;
+
+        const decision = String(r.decision ?? "").trim();
+        if (decision) decisionCounts[decision] = (decisionCounts[decision] ?? 0) + 1;
+
+        const outcome = String(r.outcome ?? "").trim().toLowerCase();
+        if (outcome === "win") wins += 1;
+        else if (outcome === "lose") losses += 1;
+        else if (outcome === "draw") draws += 1;
+
+        if (decision) {
+          if (!byDecisionOutcome[decision]) byDecisionOutcome[decision] = { wins: 0, total: 0 };
+          byDecisionOutcome[decision].total += 1;
+          if (outcome === "win") byDecisionOutcome[decision].wins += 1;
+        }
+      }
+
+      function topKey(counts: Record<string, number>): string | null {
+        let best: string | null = null;
+        let bestV = -1;
+        for (const k in counts) {
+          const v = counts[k] ?? 0;
+          if (v > bestV) {
+            bestV = v;
+            best = k;
+          }
+        }
+        return best;
+      }
+
+      const avgLikes = n > 0 ? sumLikes / n : 0;
+      const avgCoins = n > 0 ? sumCoins / n : 0;
+      const avgViewers = n > 0 ? sumViewers / n : 0;
+      const labeled = wins + losses + draws;
+      const winRate = labeled > 0 ? wins / labeled : null;
+
+      const bestStyle = topKey(styleCounts);
+      const topDecision = topKey(decisionCounts);
+
+      // Lightweight “coach” advice (free tier).
+      const advice: string[] = [];
+      if (avgLikes > 50 && avgCoins < 5) {
+        advice.push(
+          "Your audience is liking you fast, but coins are low — try a quick call-to-action for gifts/coins and a hype drop.",
+        );
+      } else if (avgLikes < 10) {
+        advice.push(
+          "Engagement is low — switch vibe faster (genre switch) and increase energy for 1–2 songs.",
+        );
+      } else {
+        advice.push(
+          "Performance looks stable — maintain your style and make small energy increases when the crowd slows.",
+        );
+      }
+
+      if (avgViewers < 0) {
+        advice.push(
+          "Viewers are dropping — shorten long sections and bring the hook earlier (faster switches). ",
+        );
+      }
+
+      // “What works” insight from your own outcomes (if labeled)
+      if (labeled >= 10) {
+        let bestDecision: string | null = null;
+        let bestDecisionRate = -1;
+        for (const d in byDecisionOutcome) {
+          const stat = byDecisionOutcome[d];
+          if (!stat || stat.total < 5) continue;
+          const rate = stat.wins / stat.total;
+          if (rate > bestDecisionRate) {
+            bestDecisionRate = rate;
+            bestDecision = d;
+          }
+        }
+        if (bestDecision) {
+          advice.push(
+            `In your recent battles, “${bestDecision}” has been your best-performing decision. Use it when you feel momentum slipping.`,
+          );
+        }
+      }
+
+      // Premium hook
+      const premium: Record<string, unknown> = {
+        win_probability_locked: true,
+        note: "Upgrade to see ML win probability and deeper predictions.",
+      };
+
+      // Recent history (keep compact)
+      const recent = rows.slice(0, 30).map((r) => ({
+        id: r.id,
+        created_at: r.created_at,
+        battle_id: r.battle_id,
+        style: r.style,
+        pressure_state: r.pressure_state,
+        likes_per_min: r.likes_per_min,
+        coins_per_min: r.coins_per_min,
+        viewers_change: r.viewers_change,
+        decision: r.decision,
+        outcome: r.outcome,
+      }));
+
+      return json({
+        ok: true,
+        window_days: windowDays,
+        summary: {
+          events: n,
+          avg_likes_per_min: Number(avgLikes.toFixed(2)),
+          avg_coins_per_min: Number(avgCoins.toFixed(2)),
+          avg_viewers_change: Number(avgViewers.toFixed(2)),
+          win_rate: winRate === null ? null : Number(winRate.toFixed(3)),
+          wins,
+          losses,
+          draws,
+          best_style: bestStyle,
+          top_decision: topDecision,
+        },
+        advice,
+        recent,
+        premium,
+      });
+    }
+
+    // STEP 12: Creator AI Dashboard (Artist)
+    // GET /api/dashboard/artist?window_days=7
+    // Auth: Bearer <Firebase ID token>
+    if (req.method === "GET" && normalized === "/dashboard/artist") {
+      const { uid } = await requireFirebaseUser(req);
+      const q = new URL(req.url).searchParams;
+      const windowDays = clampInt(asInt(q.get("window_days") ?? q.get("days"), 7), 1, 30);
+      const sinceIso = new Date(Date.now() - windowDays * 24 * 3600 * 1000).toISOString();
+
+      const sb = requireSupabaseAdmin();
+
+      const { data: wallet, error: walletErr } = await sb
+        .from("artist_wallets")
+        .select("artist_id,earned_coins,withdrawable_coins,updated_at")
+        .eq("artist_id", uid)
+        .maybeSingle();
+      if (walletErr) {
+        throw new HttpError(500, "db_error", `Failed to load artist wallet: ${walletErr.message}`);
+      }
+
+      const { data: gifts, error: giftsErr } = await sb
+        .from("live_gift_events")
+        .select("id,live_id,channel_id,gift_id,coin_cost,created_at")
+        .eq("to_host_id", uid)
+        .gte("created_at", sinceIso)
+        .order("created_at", { ascending: false })
+        .limit(500);
+      if (giftsErr) {
+        throw new HttpError(500, "db_error", `Failed to load gift events: ${giftsErr.message}`);
+      }
+
+      const giftRows = (gifts ?? []) as Array<Record<string, unknown>>;
+      let totalCoins = 0;
+      const liveCoins: Record<string, number> = {};
+      const giftCounts: Record<string, number> = {};
+      for (const g of giftRows) {
+        const c = asInt(g.coin_cost, 0);
+        totalCoins += c;
+        const liveId =
+          String(g.live_id ?? "").trim() || String(g.channel_id ?? "").trim() || "unknown";
+        liveCoins[liveId] = (liveCoins[liveId] ?? 0) + c;
+        const giftId = String(g.gift_id ?? "").trim() || "unknown";
+        giftCounts[giftId] = (giftCounts[giftId] ?? 0) + 1;
+      }
+
+      function topEntry(
+        counts: Record<string, number>,
+      ): { key: string; value: number } | null {
+        let bestK = "";
+        let bestV = -1;
+        for (const k in counts) {
+          const v = counts[k] ?? 0;
+          if (v > bestV) {
+            bestV = v;
+            bestK = k;
+          }
+        }
+        return bestV >= 0 ? { key: bestK, value: bestV } : null;
+      }
+
+      const topLive = topEntry(liveCoins);
+      const topGift = topEntry(giftCounts);
+
+      const advice: string[] = [];
+      if (totalCoins < 50) {
+        advice.push(
+          "Your coin earnings are low in the last week — go live more often and remind viewers about gifts during your peak moments.",
+        );
+      } else if (totalCoins < 300) {
+        advice.push(
+          "Good momentum — try a stronger intro and a clear ‘send a gift’ call-to-action after the first minute.",
+        );
+      } else {
+        advice.push(
+          "Strong earnings — keep your current format and schedule consistent, and experiment with a new theme night to grow faster.",
+        );
+      }
+
+      if (topLive && topLive.key !== "unknown") {
+        advice.push(`Your best-performing live this week was “${topLive.key}”. Reuse that vibe/format.`);
+      }
+
+      const premium: Record<string, unknown> = {
+        next_upload_prediction_locked: true,
+        note: "Upgrade to see AI predictions for uploads and deeper audience insights.",
+      };
+
+      return json({
+        ok: true,
+        window_days: windowDays,
+        summary: {
+          earned_coins: wallet ? (wallet as any).earned_coins : 0,
+          withdrawable_coins: wallet ? (wallet as any).withdrawable_coins : 0,
+          gifts_count: giftRows.length,
+          gifts_coins: totalCoins,
+          top_live_id: topLive?.key ?? null,
+          top_live_coins: topLive?.value ?? null,
+          top_gift_id: topGift?.key ?? null,
+          top_gift_count: topGift?.value ?? null,
+        },
+        advice,
+        recent_gifts: giftRows.slice(0, 30).map((g) => ({
+          id: g.id,
+          created_at: g.created_at,
+          live_id: g.live_id ?? null,
+          channel_id: g.channel_id ?? null,
+          gift_id: g.gift_id,
+          coin_cost: g.coin_cost,
+        })),
+        premium,
+      });
+    }
+
+    // STEP 1.5: Wallet (viewer side source of truth)
+    // GET /api/wallet/me
+    // Auth: Bearer <Firebase ID token>
+    if (req.method === "GET" && normalized === "/wallet/me") {
+      const { uid } = await requireFirebaseUser(req);
+      const sb = requireSupabaseAdmin();
+
+      const { data: existing, error: selectErr } = await sb
+        .from("wallets")
+        .select("user_id, coin_balance, updated_at")
+        .eq("user_id", uid)
+        .maybeSingle();
+
+      if (selectErr) {
+        throw new HttpError(500, "db_error", `Failed to load wallet: ${selectErr.message}`);
+      }
+
+      if (existing) {
+        return json({
+          ok: true,
+          user_id: existing.user_id,
+          coin_balance: existing.coin_balance,
+          updated_at: existing.updated_at,
+        });
+      }
+
+      const now = new Date().toISOString();
+      const { error: upsertErr } = await sb
+        .from("wallets")
+        .upsert(
+          { user_id: uid, coin_balance: 0, updated_at: now },
+          { onConflict: "user_id", ignoreDuplicates: true },
+        );
+
+      if (upsertErr) {
+        throw new HttpError(500, "db_error", `Failed to create wallet: ${upsertErr.message}`);
+      }
+
+      const { data: created, error: createdErr } = await sb
+        .from("wallets")
+        .select("user_id, coin_balance, updated_at")
+        .eq("user_id", uid)
+        .maybeSingle();
+
+      if (createdErr) {
+        throw new HttpError(500, "db_error", `Failed to read wallet after create: ${createdErr.message}`);
+      }
+
+      return json({
+        ok: true,
+        user_id: uid,
+        coin_balance: created?.coin_balance ?? 0,
+        updated_at: created?.updated_at ?? now,
+      });
+    }
+
+    // STEP 1.6: Artist Wallet (earnings)
+    // GET /api/artist_wallet/me
+    // Auth: Bearer <Firebase ID token>
+    if (req.method === "GET" && normalized === "/artist_wallet/me") {
+      const { uid } = await requireFirebaseUser(req);
+      const sb = requireSupabaseAdmin();
+
+      const { data: existing, error: selectErr } = await sb
+        .from("artist_wallets")
+        .select("artist_id, earned_coins, withdrawable_coins, updated_at")
+        .eq("artist_id", uid)
+        .maybeSingle();
+
+      if (selectErr) {
+        throw new HttpError(500, "db_error", `Failed to load artist wallet: ${selectErr.message}`);
+      }
+
+      if (existing) {
+        return json({
+          ok: true,
+          artist_id: existing.artist_id,
+          earned_coins: existing.earned_coins,
+          withdrawable_coins: existing.withdrawable_coins,
+          updated_at: existing.updated_at,
+        });
+      }
+
+      const now = new Date().toISOString();
+      const { error: upsertErr } = await sb
+        .from("artist_wallets")
+        .upsert(
+          { artist_id: uid, earned_coins: 0, withdrawable_coins: 0, updated_at: now },
+          { onConflict: "artist_id", ignoreDuplicates: true },
+        );
+
+      if (upsertErr) {
+        throw new HttpError(500, "db_error", `Failed to create artist wallet: ${upsertErr.message}`);
+      }
+
+      const { data: created, error: createdErr } = await sb
+        .from("artist_wallets")
+        .select("artist_id, earned_coins, withdrawable_coins, updated_at")
+        .eq("artist_id", uid)
+        .maybeSingle();
+
+      if (createdErr) {
+        throw new HttpError(500, "db_error", `Failed to read artist wallet after create: ${createdErr.message}`);
+      }
+
+      return json({
+        ok: true,
+        artist_id: uid,
+        earned_coins: created?.earned_coins ?? 0,
+        withdrawable_coins: created?.withdrawable_coins ?? 0,
+        updated_at: created?.updated_at ?? now,
+      });
+    }
+
+    // STEP 1.7: Creator wallet summary (coins + multi-currency cash)
+    // GET /api/wallet/summary/me
+    // Auth: Bearer <Firebase ID token>
+    if (req.method === "GET" && normalized === "/wallet/summary/me") {
+      const { uid } = await requireFirebaseUser(req);
+      const sb = requireSupabaseAdmin();
+
+      const now = new Date().toISOString();
+
+      const { data: existing, error: walletErr } = await sb
+        .from("wallets")
+        .select("user_id, coin_balance, cash_balance, total_earned, updated_at")
+        .eq("user_id", uid)
+        .maybeSingle();
+
+      if (walletErr) {
+        throw new HttpError(500, "db_error", `Failed to load wallet: ${walletErr.message}`);
+      }
+
+      if (!existing) {
+        const { error: upsertErr } = await sb
+          .from("wallets")
+          .upsert(
+            { user_id: uid, coin_balance: 0, cash_balance: 0, total_earned: 0, updated_at: now },
+            { onConflict: "user_id", ignoreDuplicates: true },
+          );
+
+        if (upsertErr) {
+          throw new HttpError(500, "db_error", `Failed to create wallet: ${upsertErr.message}`);
+        }
+      }
+
+      const { data: wallet, error: wallet2Err } = await sb
+        .from("wallets")
+        .select("user_id, coin_balance, cash_balance, total_earned, updated_at")
+        .eq("user_id", uid)
+        .maybeSingle();
+
+      if (wallet2Err) {
+        throw new HttpError(500, "db_error", `Failed to read wallet after create: ${wallet2Err.message}`);
+      }
+
+      const balances: Record<string, number> = { MWK: 0, USD: 0, ZAR: 0 };
+
+      try {
+        const { data: rows, error: balErr } = await sb
+          .from("wallet_cash_balances")
+          .select("currency,balance,updated_at")
+          .eq("user_id", uid)
+          .in("currency", ["MWK", "USD", "ZAR"])
+          .limit(10);
+
+        if (!balErr && Array.isArray(rows)) {
+          for (const r of rows as any[]) {
+            const c = String(r?.currency ?? "").trim().toUpperCase();
+            if (c === "MWK" || c === "USD" || c === "ZAR") {
+              balances[c] = asNum(r?.balance, 0);
+            }
+          }
+        }
+      } catch (_) {
+        // wallet_cash_balances may not exist in older environments.
+      }
+
+      // Back-compat: if MWK row is missing, fall back to wallets.cash_balance.
+      if (!Number.isFinite(balances.MWK) || balances.MWK === 0) {
+        balances.MWK = asNum((wallet as any)?.cash_balance, 0);
+      }
+
+      return json({
+        ok: true,
+        user_id: uid,
+        coin_balance: asNum((wallet as any)?.coin_balance, 0),
+        total_earned: asNum((wallet as any)?.total_earned, 0),
+        cash_balances: balances,
+        updated_at: (wallet as any)?.updated_at ?? now,
+      });
+    }
+
+    // STEP 1.8: Wallet transactions (creator)
+    // GET /api/wallet/transactions/me?limit=50
+    // Auth: Bearer <Firebase ID token>
+    if (req.method === "GET" && normalized === "/wallet/transactions/me") {
+      const { uid } = await requireFirebaseUser(req);
+      const sb = requireSupabaseAdmin();
+
+      const limitRaw = Number(url.searchParams.get("limit") ?? 50);
+      const limit = Number.isFinite(limitRaw) ? Math.max(1, Math.min(200, Math.floor(limitRaw))) : 50;
+
+      const { data, error } = await sb
+        .from("wallet_transactions")
+        .select("id,type,amount,balance_type,description,metadata,created_at")
+        .eq("user_id", uid)
+        .order("created_at", { ascending: false })
+        .limit(limit);
+
+      if (error) {
+        throw new HttpError(500, "db_error", `Failed to load wallet transactions: ${error.message}`);
+      }
+
+      const rows = Array.isArray(data) ? (data as any[]) : [];
+      const out = rows.map((r) => {
+        const meta = r?.metadata;
+        let currency: string | null = null;
+        if (meta && typeof meta === "object" && !Array.isArray(meta)) {
+          const c = String((meta as any).currency ?? "").trim().toUpperCase();
+          currency = c ? c : null;
+        }
+
+        return {
+          id: String(r?.id ?? "").trim(),
+          type: String(r?.type ?? "").trim(),
+          amount: asNum(r?.amount, 0),
+          balance_type: String(r?.balance_type ?? r?.balanceType ?? "").trim(),
+          description: String(r?.description ?? "").trim(),
+          currency,
+          created_at: r?.created_at ?? null,
+        };
+      });
+
+      return json({ ok: true, transactions: out, limit });
+    }
+
+    // STEP 1.9: Withdrawals (creator)
+    // GET /api/withdrawals/me?limit=50
+    // Auth: Bearer <Firebase ID token>
+    if (req.method === "GET" && normalized === "/withdrawals/me") {
+      const { uid } = await requireFirebaseUser(req);
+      const sb = requireSupabaseAdmin();
+
+      const limitRaw = Number(url.searchParams.get("limit") ?? 50);
+      const limit = Number.isFinite(limitRaw) ? Math.max(1, Math.min(200, Math.floor(limitRaw))) : 50;
+
+      const { data, error } = await sb
+        .from("withdrawal_requests")
+        .select("id,amount,status,payment_method,account_details,admin_notes,created_at,updated_at")
+        .eq("user_id", uid)
+        .order("created_at", { ascending: false })
+        .limit(limit);
+
+      if (error) {
+        throw new HttpError(500, "db_error", `Failed to load withdrawals: ${error.message}`);
+      }
+
+      const rows = Array.isArray(data) ? (data as any[]) : [];
+      const out = rows.map((r) => {
+        const details = r?.account_details;
+        let currency: string | null = null;
+        let methodLabel: string | null = null;
+        if (details && typeof details === "object" && !Array.isArray(details)) {
+          const c = String((details as any).currency ?? "").trim().toUpperCase();
+          currency = c ? c : null;
+
+          const m = String((details as any).method ?? "").trim();
+          methodLabel = m ? m : null;
+        }
+
+        const paymentMethod = String(r?.payment_method ?? "").trim();
+        return {
+          id: String(r?.id ?? "").trim(),
+          amount: asNum(r?.amount, 0),
+          status: String(r?.status ?? "pending").trim(),
+          payment_method: paymentMethod,
+          method_label: methodLabel ?? (paymentMethod || null),
+          currency,
+          admin_notes: String(r?.admin_notes ?? "").trim() || null,
+          created_at: r?.created_at ?? null,
+          updated_at: r?.updated_at ?? null,
+        };
+      });
+
+      return json({ ok: true, withdrawals: out, limit });
+    }
+
+    // STEP 1.10: Request withdrawal (creator)
+    // POST /api/withdrawals/request
+    // Auth: Bearer <Firebase ID token>
+    // Body: { amount: number, currency: 'MWK'|'USD'|'ZAR', payment_method: string, account_details?: object }
+    if (req.method === "POST" && normalized === "/withdrawals/request") {
+      const { uid, email } = await requireFirebaseUser(req);
+      const sb = requireSupabaseAdmin();
+      await assertCreatorCapability(sb, uid, "withdrawals");
+      const body = await readJson(req);
+
+      const amount = asNum(body.amount ?? body.cash_amount ?? body.cashAmount, NaN);
+      if (!Number.isFinite(amount) || amount <= 0) {
+        throw new HttpError(400, "bad_request", "Invalid amount");
+      }
+
+      const currencyRaw = String(body.currency ?? body.cash_currency ?? body.cashCurrency ?? "MWK")
+        .trim()
+        .toUpperCase();
+      const currency = currencyRaw || "MWK";
+      if (currency !== "MWK" && currency !== "USD" && currency !== "ZAR") {
+        throw new HttpError(400, "bad_request", "Unsupported currency (expected MWK, USD, or ZAR)");
+      }
+
+      const paymentMethod = String(body.payment_method ?? body.paymentMethod ?? body.method ?? "").trim();
+      if (!paymentMethod) {
+        throw new HttpError(400, "bad_request", "Missing payment_method");
+      }
+
+      const rawDetails = body.account_details ?? body.accountDetails;
+      let accountDetails: Record<string, unknown> = {};
+      if (rawDetails && typeof rawDetails === "object" && !Array.isArray(rawDetails)) {
+        accountDetails = { ...(rawDetails as Record<string, unknown>) };
+      }
+      // Always include currency in account_details so DB/RPC can be currency-aware.
+      accountDetails.currency = currency;
+
+      // Best-effort: auto-fill payout/contact info from dj_profile if present.
+      try {
+        const { data: dj, error: djErr } = await sb
+          .from("dj_profile")
+          .select("bank_account,mobile_money_phone,email,phone")
+          .eq("dj_uid", uid)
+          .maybeSingle();
+
+        if (!djErr && dj) {
+          const bank = String((dj as any).bank_account ?? "").trim();
+          const mm = String((dj as any).mobile_money_phone ?? "").trim();
+          const contactEmail = String((dj as any).email ?? "").trim() || (email ?? "").trim();
+          const contactPhone = String((dj as any).phone ?? "").trim();
+
+          if (contactEmail && !accountDetails.email) accountDetails.email = contactEmail;
+          if (contactPhone && !accountDetails.phone) accountDetails.phone = contactPhone;
+
+          const pm = paymentMethod.trim().toLowerCase();
+          const wantsBank = pm === "bank";
+          const wantsMobile = pm === "mobile_money";
+
+          if (wantsBank && bank && !accountDetails.bank_account) accountDetails.bank_account = bank;
+          if (wantsMobile && mm && !accountDetails.mobile_money_phone) accountDetails.mobile_money_phone = mm;
+        }
+      } catch (_) {
+        // ignore
+      }
+
+      // Basic server-side validation: ensure account details exist for known methods.
+      {
+        const pm = paymentMethod.trim().toLowerCase();
+        const wantsBank = pm === "bank";
+        const wantsMobile = pm === "mobile_money";
+        if (wantsBank) {
+          const bank = String((accountDetails as any).bank_account ?? (accountDetails as any).bankAccount ?? "").trim();
+          if (!bank) {
+            throw new HttpError(400, "bad_request", "Missing bank_account for bank withdrawal");
+          }
+        }
+        if (wantsMobile) {
+          const mm = String(
+            (accountDetails as any).mobile_money_phone ?? (accountDetails as any).mobileMoneyPhone ?? (accountDetails as any).phone ?? "",
+          ).trim();
+          if (!mm) {
+            throw new HttpError(400, "bad_request", "Missing mobile_money_phone for mobile money withdrawal");
+          }
+        }
+      }
+
+      const rpc = await sb.rpc("request_withdrawal", {
+        p_user_id: uid,
+        p_amount: amount,
+        p_payment_method: paymentMethod,
+        p_account_details: accountDetails,
+      });
+
+      if (rpc.error) {
+        const msg = String(rpc.error.message ?? "").toLowerCase();
+        if (msg.includes("insufficient") || msg.includes("minimum") || msg.includes("amount")) {
+          throw new HttpError(400, "bad_request", rpc.error.message ?? "Withdrawal request rejected");
+        }
+        throw new HttpError(500, "db_error", `request_withdrawal failed: ${rpc.error.message}`);
+      }
+
+      const row = Array.isArray(rpc.data) ? (rpc.data[0] as any) : (rpc.data as any);
+      const requestId = String(row?.request_id ?? row?.requestId ?? "").trim();
+      const newBalance = asNum(row?.new_cash_balance ?? row?.newCashBalance, 0);
+
+      // Push confirmation (best-effort).
+      try {
+        const tokens = await listDeviceTokensForUser(sb, uid);
+        if (tokens.length) {
+          const title = "Withdrawal requested";
+          const bodyText = `We received your withdrawal request of ${amount.toFixed(2)} ${currency}.`;
+          await sendFcmPushToTokens({
+            tokens,
+            title,
+            body: bodyText,
+            data: {
+              type: "withdrawal_requested",
+              request_id: requestId,
+              currency,
+              amount: amount.toFixed(2),
+              title,
+              body: bodyText,
+            },
+          });
+        }
+      } catch (e) {
+        console.log("withdrawal push failed", e);
+      }
+
+      return json({
+        ok: true,
+        request_id: requestId || null,
+        new_balance: newBalance,
+        currency,
+      });
+    }
+
+    // STEP 1.11: DJ profile (contact + payout + bio)
+    // GET /api/dj/profile/me
+    // POST /api/dj/profile/me
+    // Auth: Bearer <Firebase ID token>
+    if (req.method === "GET" && normalized === "/dj/profile/me") {
+      const { uid, email } = await requireFirebaseUser(req);
+      const sb = requireSupabaseAdmin();
+
+      const { data: existing, error: selectErr } = await sb
+        .from("dj_profile")
+        .select("*")
+        .eq("dj_uid", uid)
+        .maybeSingle();
+
+      if (selectErr) {
+        throw new HttpError(500, "db_error", `Failed to load dj_profile: ${selectErr.message}`);
+      }
+
+      if (existing) {
+        return json({ ok: true, profile: existing });
+      }
+
+      const now = new Date().toISOString();
+      const attempts: Array<Record<string, unknown>> = [
+        {
+          dj_uid: uid,
+          email: email?.trim() || null,
+          created_at: now,
+          updated_at: now,
+        },
+        {
+          dj_uid: uid,
+          created_at: now,
+          updated_at: now,
+        },
+        { dj_uid: uid },
+      ];
+
+      let lastErr: any = null;
+      for (const a of attempts) {
+        const up = await sb
+          .from("dj_profile")
+          .upsert(a, { onConflict: "dj_uid", ignoreDuplicates: true });
+        if (!up.error) {
+          lastErr = null;
+          break;
+        }
+        lastErr = up.error;
+      }
+
+      if (lastErr) {
+        throw new HttpError(500, "db_error", `Failed to create dj_profile: ${lastErr.message ?? lastErr}`);
+      }
+
+      const { data: created, error: createdErr } = await sb
+        .from("dj_profile")
+        .select("*")
+        .eq("dj_uid", uid)
+        .maybeSingle();
+
+      if (createdErr) {
+        throw new HttpError(500, "db_error", `Failed to read dj_profile after create: ${createdErr.message}`);
+      }
+
+      return json({ ok: true, profile: created ?? { dj_uid: uid } });
+    }
+
+    if (req.method === "POST" && normalized === "/dj/profile/me") {
+      const { uid } = await requireFirebaseUser(req);
+      const sb = requireSupabaseAdmin();
+      const body = await readJson(req);
+      const now = new Date().toISOString();
+
+      function cleanStr(v: unknown, max = 500): string | null {
+        const s = String(v ?? "").trim();
+        if (!s) return null;
+        return s.length > max ? s.slice(0, max) : s;
+      }
+
+      const row: Record<string, unknown> = {
+        dj_uid: uid,
+        updated_at: now,
+        stage_name: cleanStr(body.stage_name ?? body.stageName, 80),
+        country: cleanStr(body.country, 40),
+        bio: cleanStr(body.bio, 1000),
+        profile_photo: cleanStr(body.profile_photo ?? body.profilePhoto ?? body.photo_url ?? body.photoUrl, 1000),
+        email: cleanStr(body.email ?? body.contact_email ?? body.contactEmail, 120),
+        phone: cleanStr(body.phone ?? body.contact_phone ?? body.contactPhone, 60),
+        bank_account: cleanStr(body.bank_account ?? body.bankAccount, 200),
+        mobile_money_phone: cleanStr(body.mobile_money_phone ?? body.mobileMoneyPhone, 60),
+      };
+
+      // Retry upsert while omitting missing columns (tolerate partially migrated DBs).
+      const omit = new Set<string>();
+      let lastErr: any = null;
+      for (let attempt = 0; attempt < 10; attempt++) {
+        const filtered: Record<string, unknown> = {};
+        for (const [k, v] of Object.entries(row)) {
+          if (omit.has(k)) continue;
+          filtered[k] = v;
+        }
+
+        const up = await sb
+          .from("dj_profile")
+          .upsert(filtered, { onConflict: "dj_uid" })
+          .select("*")
+          .maybeSingle();
+
+        if (!up.error) {
+          return json({ ok: true, profile: up.data ?? null });
+        }
+
+        lastErr = up.error;
+        const missing = tryParseMissingColumnForTable(up.error, "dj_profile");
+        if (missing) {
+          omit.add(missing);
+          continue;
+        }
+
+        break;
+      }
+
+      throw new HttpError(500, "db_error", `Failed to update dj_profile: ${lastErr?.message ?? lastErr}`);
+    }
+
+    // STEP 1.5: Send Gift (atomic: deduct coins + log event)
+    // POST /api/live/send_gift
+    // Auth: Bearer <Firebase ID token>
+    // body: { live_id: string, channel_id: string, to_host_id: string, gift_id: string, sender_name?: string }
+    if (req.method === "GET" && normalized === "/live/gifts") {
+      const sb = requireSupabaseAdmin();
+      const { data, error } = await sb
+        .from("live_gifts")
+        .select("id,name,coin_cost,icon_name,sort_order,enabled")
+        .eq("enabled", true)
+        .order("sort_order", { ascending: true })
+        .order("coin_cost", { ascending: true });
+
+      if (error) {
+        const msg = error.message ?? String(error);
+        const looksMissing = msg.includes("PGRST205") || msg.includes("live_gifts");
+        if (looksMissing) {
+          throw new HttpError(
+            503,
+            "not_configured",
+            "Gift catalog not configured. Apply migrations (live_gifts table) and refresh schema cache.",
+          );
+        }
+        throw new HttpError(500, "db_error", `Failed to load gifts catalog: ${msg}`);
+      }
+
+      const gifts = (data ?? []).map((row: Record<string, unknown>) => ({
+        ...row,
+        access_tier: giftAccessTierForGift(
+          String(row.id ?? ""),
+          Number(row.coin_cost ?? 0),
+        ),
+      }));
+
+      return json({ ok: true, gifts });
+    }
+
+    if (req.method === "POST" && normalized === "/live/send_gift") {
+      const sb = requireSupabaseAdmin();
+      const body = await readJson(req);
+
+      // Production path: require a real Firebase ID token.
+      // Local/dev path: allow test-token access only when WEAFRICA_ENABLE_TEST_ROUTES=true.
+      const providedBearer = bearerToken(req);
+      const firebaseProjectId = firebaseProjectIdFromEnv();
+      const expectedIss = firebaseProjectId ? `https://securetoken.google.com/${firebaseProjectId}` : "";
+      const bearerPayload = providedBearer ? tryDecodeJwtPayload(providedBearer) : null;
+      const looksLikeFirebaseIdToken = Boolean(expectedIss && bearerPayload?.iss === expectedIss);
+
+      let uid: string;
+      if (providedBearer && looksLikeFirebaseIdToken) {
+        uid = (await requireFirebaseUser(req)).uid;
+      } else {
+        requireTestAccess(req);
+        uid = String(
+          body.from_user_id ??
+            body.fromUserId ??
+            body.uid ??
+            body.user_id ??
+            body.userId ??
+            body.firebase_uid ??
+            body.firebaseUid ??
+            "",
+        ).trim();
+        if (!uid) {
+          throw new HttpError(400, "bad_request", "uid is required (dev/test mode)");
+        }
+      }
+
+      const liveId = String(body.live_id ?? body.liveId ?? "").trim();
+      const channelId = String(body.channel_id ?? body.channelId ?? body.channel ?? "").trim();
+      const toHostId = String(body.to_host_id ?? body.toHostId ?? body.host_id ?? body.hostId ?? "").trim();
+      const giftId = String(body.gift_id ?? body.giftId ?? "").trim().toLowerCase();
+      const senderNameRaw = String(body.sender_name ?? body.senderName ?? "");
+
+      const isBattleChannel = !!channelId && channelId.startsWith("weafrica_battle_");
+      if (!isBattleChannel) {
+        const allowedPrefixes = ["live_", "weafrica_live_"];
+        const isAllowed = !!channelId && allowedPrefixes.some((p) => channelId.startsWith(p));
+        if (!isAllowed) {
+          throw new HttpError(
+            400,
+            "bad_request",
+            "channel_id is required and must start with live_ (or weafrica_live_ for legacy clients)",
+          );
+        }
+      }
+      if (!toHostId) {
+        throw new HttpError(400, "bad_request", "to_host_id is required");
+      }
+
+      // Anti-spam: rate-limit gifts per user/channel (prevents flooding the screen).
+      // Applies to both battles and normal lives.
+      const lastGift = await sb
+        .from("live_gift_events")
+        .select("created_at")
+        .eq("from_user_id", uid)
+        .eq("channel_id", channelId)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (lastGift.error) {
+        throw new HttpError(500, "db_error", `Failed to check gift rate limit: ${lastGift.error.message}`);
+      }
+
+      if (lastGift.data?.created_at) {
+        const lastAt = Date.parse(String((lastGift.data as any).created_at));
+        if (Number.isFinite(lastAt) && Date.now() - lastAt < 3000) {
+          throw new HttpError(429, "rate_limited", "Slow down");
+        }
+      }
+
+      const gift = await getGiftCatalogRow(sb, giftId);
+      if (!gift) {
+        throw new HttpError(400, "invalid_gift", `Unknown gift_id: ${giftId}`);
+      }
+
+      const subscriptionContext = await resolveSubscriptionEntitlementContext(sb, uid);
+      assertConsumerGiftAccess(subscriptionContext, giftAccessTierForGift(gift.id, gift.coin_cost));
+
+      const senderName = senderNameRaw.trim().slice(0, 48);
+      const coinCost = gift.coin_cost;
+
+      // Battle gifts go into the battle pot (no immediate artist credit).
+      // Live gifts (non-battle) keep existing behavior.
+      let data: unknown;
+      let error: { message?: string } | null = null;
+      let battleIdForEvent: string | null = null;
+
+      if (isBattleChannel) {
+        // channel_id used to be UNIQUE, but newer schemas allow duplicates.
+        // Prefer the most recent live battle for this channel.
+        let battleRow = await sb
+          .from("live_battles")
+          .select("battle_id, status, ends_at, started_at, created_at")
+          .eq("channel_id", channelId)
+          .eq("status", "live")
+          .order("started_at", { ascending: false })
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        if (!battleRow.data && !battleRow.error) {
+          // Fall back to the newest row (covers waiting state or legacy rows without started_at).
+          battleRow = await sb
+            .from("live_battles")
+            .select("battle_id, status, ends_at, started_at, created_at")
+            .eq("channel_id", channelId)
+            .order("created_at", { ascending: false })
+            .limit(1)
+            .maybeSingle();
+        }
+
+        if (battleRow.error || !battleRow.data) {
+          throw new HttpError(404, "not_found", "Battle not found for channel_id");
+        }
+
+        if (battleRow.data.status !== "live") {
+          throw new HttpError(409, "battle_locked", "Battle is not live");
+        }
+
+        battleIdForEvent = String((battleRow.data as any).battle_id ?? "").trim() || null;
+
+        if (battleRow.data.ends_at) {
+          const endsAt = Date.parse(String(battleRow.data.ends_at));
+          if (Number.isFinite(endsAt) && Date.now() >= endsAt) {
+            await sb.rpc("battle_finalize_due", { p_battle_id: battleRow.data.battle_id });
+            throw new HttpError(409, "battle_locked", "Battle ended");
+          }
+        }
+
+        const rpc = await sb.rpc("battle_send_gift", {
+          p_battle_id: battleRow.data.battle_id,
+          p_live_id: liveId,
+          p_channel_id: channelId,
+          p_from_user_id: uid,
+          p_to_host_id: toHostId,
+          p_gift_id: giftId,
+          p_coin_cost: coinCost,
+          p_sender_name: senderName,
+        });
+        data = rpc.data;
+        error = rpc.error as any;
+      } else {
+        const rpc = await sb.rpc("send_gift", {
+          p_live_id: liveId,
+          p_channel_id: channelId,
+          p_from_user_id: uid,
+          p_to_host_id: toHostId,
+          p_gift_id: giftId,
+          p_coin_cost: coinCost,
+          p_sender_name: senderName,
+        });
+        data = rpc.data;
+        error = rpc.error as any;
+      }
+
+      if (error) {
+        const msg = (error.message ?? "").toLowerCase();
+        if (msg.includes("insufficient_balance")) {
+          throw new HttpError(400, "insufficient_balance", "Insufficient coin balance");
+        }
+        if (msg.includes("battle_locked") || msg.includes("battle_time_elapsed")) {
+          throw new HttpError(409, "battle_locked", "Battle is locked");
+        }
+        if (msg.includes("invalid_coin_cost")) {
+          throw new HttpError(400, "bad_request", "Invalid gift coin cost");
+        }
+        throw new HttpError(500, "db_error", `send_gift failed: ${error.message}`);
+      }
+
+      const row = Array.isArray(data) ? (data[0] as JsonObject | undefined) : (data as JsonObject | undefined);
+      const newBalance = Number(row?.new_balance ?? row?.newBalance ?? NaN);
+      const eventId = String(row?.event_id ?? row?.eventId ?? "").trim();
+
+      if (!Number.isFinite(newBalance) || !eventId) {
+        throw new HttpError(502, "bad_gateway", "send_gift returned invalid payload");
+      }
+
+      // Fanout (best-effort): emit a lightweight realtime event via live_messages.
+      // This is NOT financial truth (truth is live_gift_events + wallet ledger).
+      // If this fails, the gift is still processed correctly.
+      if (looksLikeUuid(liveId)) {
+        const giftEvent = {
+          type: "gift",
+          event_id: eventId,
+          gift_id: giftId,
+          coin_cost: coinCost,
+          from_user_id: uid,
+          sender_name: senderName,
+          to_host_id: toHostId,
+          channel_id: channelId,
+          battle_id: battleIdForEvent,
+        };
+
+        try {
+          await sb.from("live_messages").insert({
+            live_id: liveId,
+            user_id: uid,
+            username: senderName || "User",
+            kind: "gift",
+            message: JSON.stringify(giftEvent),
+            dedupe_key: eventId,
+          });
+        } catch {
+          // ignore
+        }
+      }
+
+      return json({
+        ok: true,
+        new_balance: newBalance,
+        event_id: eventId,
+        coin_cost: coinCost,
+        gift_id: giftId,
+      });
+    }
+
+    // LIVE: Paid song request (atomic wallet spend + chat message)
+    // POST /api/live/song_request
+    // Auth: Bearer <Firebase ID token>
+    // body: { live_id: string(uuid), channel_id?: string, song: string, coin_cost: number, user_name?: string }
+    if (req.method === "POST" && normalized === "/live/song_request") {
+      const { uid } = await requireFirebaseUser(req);
+      const sb = requireSupabaseAdmin();
+      const body = await readJson(req);
+
+      const liveId = String(body.live_id ?? body.liveId ?? "").trim();
+      const channelId = String(body.channel_id ?? body.channelId ?? body.channel ?? "").trim();
+      const song = String(body.song ?? body.track ?? body.title ?? "").trim().slice(0, 120);
+      const coinCostRaw = body.coin_cost ?? body.coinCost ?? body.coins ?? body.cost;
+      const userName = String(body.user_name ?? body.userName ?? "").trim().slice(0, 48);
+
+      if (!looksLikeUuid(liveId)) {
+        throw new HttpError(400, "bad_request", "live_id is required and must be a UUID");
+      }
+      const coinCost = Number(coinCostRaw);
+      if (!Number.isFinite(coinCost) || coinCost <= 0) {
+        throw new HttpError(400, "bad_request", "coin_cost is required and must be > 0");
+      }
+      if (!song) {
+        throw new HttpError(400, "bad_request", "song is required");
+      }
+
+      const subscriptionContext = await resolveSubscriptionEntitlementContext(sb, uid);
+      assertConsumerSongRequestAccess(subscriptionContext);
+
+      // Anti-spam: rate-limit paid requests per user/live.
+      // (Keep it consistent with gift rate limiting.)
+      const lastMsg = await sb
+        .from("live_messages")
+        .select("created_at")
+        .eq("user_id", uid)
+        .eq("live_id", liveId)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (lastMsg.error) {
+        throw new HttpError(500, "db_error", `Failed to check request rate limit: ${lastMsg.error.message}`);
+      }
+
+      if (lastMsg.data?.created_at) {
+        const lastAt = Date.parse(String((lastMsg.data as any).created_at));
+        if (Number.isFinite(lastAt) && Date.now() - lastAt < 3000) {
+          throw new HttpError(429, "rate_limited", "Slow down");
+        }
+      }
+
+      const rpc = await sb.rpc("live_request_song", {
+        p_live_id: liveId,
+        p_channel_id: channelId,
+        p_user_id: uid,
+        p_username: userName,
+        p_song: song,
+        p_coin_cost: Math.floor(coinCost),
+      });
+
+      if (rpc.error) {
+        const msg = String(rpc.error.message ?? "").toLowerCase();
+        if (msg.includes("insufficient_balance")) {
+          throw new HttpError(400, "insufficient_balance", "Insufficient coin balance");
+        }
+        if (msg.includes("invalid_coin_cost")) {
+          throw new HttpError(400, "bad_request", "Invalid coin cost");
+        }
+        throw new HttpError(500, "db_error", `live_request_song failed: ${rpc.error.message}`);
+      }
+
+      const row = Array.isArray(rpc.data)
+        ? (rpc.data[0] as JsonObject | undefined)
+        : (rpc.data as JsonObject | undefined);
+      const newBalance = Number(row?.new_balance ?? row?.newBalance ?? NaN);
+      const messageId = String(row?.message_id ?? row?.messageId ?? "").trim();
+
+      if (!Number.isFinite(newBalance) || !messageId) {
+        throw new HttpError(502, "bad_gateway", "song_request returned invalid payload");
+      }
+
+      return json({
+        ok: true,
+        new_balance: newBalance,
+        message_id: messageId,
+        coin_cost: Math.floor(coinCost),
+      });
+    }
+
+    // LIVE: Chat send (rate-limited)
+    // POST /api/live/chat/send
+    // Auth: Bearer <Firebase ID token>
+    // body: { live_id: string(uuid), message: string, username?: string }
+    if (req.method === "POST" && normalized === "/live/chat/send") {
+      const { uid } = await requireFirebaseUser(req);
+      const sb = requireSupabaseAdmin();
+      const body = await readJson(req);
+
+      const liveId = String(body.live_id ?? body.liveId ?? "").trim();
+      const messageRaw = String(body.message ?? body.text ?? "");
+      const usernameRaw = String(body.username ?? body.user_name ?? body.userName ?? "");
+
+      if (!looksLikeUuid(liveId)) {
+        throw new HttpError(400, "bad_request", "live_id is required and must be a UUID");
+      }
+
+      const message = messageRaw.trim().slice(0, 400);
+      if (!message) {
+        throw new HttpError(400, "bad_request", "message is required");
+      }
+
+      const username = usernameRaw.trim().slice(0, 48) || "User";
+
+      // Rate limit: 1 message per 2 seconds per user per live.
+      const lastMsg = await sb
+        .from("live_messages")
+        .select("created_at")
+        .eq("user_id", uid)
+        .eq("live_id", liveId)
+        .eq("kind", "message")
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (lastMsg.error) {
+        throw new HttpError(500, "db_error", `Failed to check chat rate limit: ${lastMsg.error.message}`);
+      }
+
+      if (lastMsg.data?.created_at) {
+        const lastAt = Date.parse(String((lastMsg.data as any).created_at));
+        if (Number.isFinite(lastAt) && Date.now() - lastAt < 2000) {
+          throw new HttpError(429, "rate_limited", "Slow down");
+        }
+      }
+
+      const ins = await sb
+        .from("live_messages")
+        .insert({
+          live_id: liveId,
+          user_id: uid,
+          username,
+          kind: "message",
+          message,
+        })
+        .select("id")
+        .maybeSingle();
+
+      if (ins.error) {
+        throw new HttpError(500, "db_error", `Failed to insert chat message: ${ins.error.message}`);
+      }
+
+      return json({ ok: true, message_id: String((ins.data as any)?.id ?? "").trim() || null });
+    }
+
+    // Push Notifications
+    // POST /api/push/register
+    // Auth: Bearer <Firebase ID token>
+    // Body: { token|fcm_token: string, platform: 'android'|'ios'|'web'|..., topics?: string[], country_code?: string, device_model?: string, app_version?: string, locale?: string }
+    if (req.method === "POST" && normalized === "/push/register") {
+      const { uid } = await requireFirebaseUser(req);
+      const sb = requireSupabaseAdmin();
+      const body = await readJson(req);
+
+      const token = String(body.token ?? body.fcm_token ?? body.fcmToken ?? "").trim();
+      const platform = String(body.platform ?? "android").trim().toLowerCase();
+      const deviceId = String(body.device_id ?? body.deviceId ?? "").trim();
+      const countryCode = String(body.country_code ?? body.countryCode ?? "").trim().toLowerCase();
+      const requestedTopics = asStringArray(body.topics);
+      const defaultTopics = ["all", `user_${uid}`];
+      const topics = Array.from(new Set([...defaultTopics, ...requestedTopics]));
+      const deviceModel = String(body.device_model ?? body.deviceModel ?? "").trim();
+      const appVersion = String(body.app_version ?? body.appVersion ?? "").trim();
+      const locale = String(body.locale ?? "").trim();
+      const now = new Date().toISOString();
+
+      if (!token) {
+        throw new HttpError(400, "bad_request", "Missing token (expected token or fcm_token)");
+      }
+
+      const table = "notification_device_tokens";
+
+      // Best-effort upsert across common schema variants.
+      // If the DB schema is incompatible (e.g. user_id is UUID tied to auth.users),
+      // we still return 200 so app boot doesn't degrade.
+      const attempts: Array<{ row: Record<string, unknown>; onConflict?: string }> = [
+        // Repo schema (canonical): token (PK) + user_uid + topics(jsonb)
+        {
+          row: {
+            token,
+            user_uid: uid,
+            platform,
+            device_id: deviceId || null,
+            country_code: countryCode || null,
+            topics: topics.length ? topics : [],
+            updated_at: now,
+            last_seen_at: now,
+            created_at: now,
+          },
+          onConflict: "token",
+        },
+        {
+          row: {
+            user_id: uid,
+            fcm_token: token,
+            platform,
+            is_active: true,
+            country_code: countryCode || null,
+            topics: topics.length ? topics : null,
+            device_model: deviceModel || null,
+            app_version: appVersion || null,
+            locale: locale || null,
+            last_updated: now,
+            created_at: now,
+          },
+          onConflict: "fcm_token",
+        },
+        {
+          row: {
+            uid,
+            fcm_token: token,
+            platform,
+            is_active: true,
+            country_code: countryCode || null,
+            topics: topics.length ? topics : null,
+            device_model: deviceModel || null,
+            app_version: appVersion || null,
+            locale: locale || null,
+            last_updated: now,
+            created_at: now,
+          },
+          onConflict: "fcm_token",
+        },
+        {
+          row: {
+            user_uid: uid,
+            fcm_token: token,
+            platform,
+            is_active: true,
+            country_code: countryCode || null,
+            topics: topics.length ? topics : null,
+            device_model: deviceModel || null,
+            app_version: appVersion || null,
+            locale: locale || null,
+            last_updated: now,
+            created_at: now,
+          },
+          onConflict: "fcm_token",
+        },
+        // Minimal fallback if optional columns don't exist.
+        {
+          row: {
+            user_id: uid,
+            fcm_token: token,
+            platform,
+          },
+          onConflict: "fcm_token",
+        },
+        {
+          row: {
+            user_id: uid,
+            token,
+            platform,
+          },
+          onConflict: "token",
+        },
+      ];
+
+      let lastErr: unknown = null;
+      for (const a of attempts) {
+        const { error } = await sb
+          .from(table)
+          .upsert(a.row, a.onConflict ? { onConflict: a.onConflict } : undefined);
+
+        if (!error) {
+          // Best-effort: start the journey timeline as soon as a push-capable device exists.
+          try {
+            await ensureCreatorJourneyBootstrap(sb, uid);
+          } catch (_) {
+            // ignore
+          }
+          return json(
+            {
+              ok: true,
+              success: true,
+              message: "Device token registered",
+              data: { token },
+            },
+            { headers: corsHeaders },
+          );
+        }
+
+        // If the schema is very different (missing columns, wrong types), keep trying.
+        lastErr = error;
+      }
+
+      const errMessage = lastErr && typeof lastErr === "object" && "message" in lastErr
+        ? String((lastErr as Record<string, unknown>).message)
+        : "Failed to register device token";
+
+      return json(
+        {
+          ok: false,
+          success: false,
+          error: "supabase_error",
+          message: errMessage,
+        },
+        { headers: corsHeaders },
+      );
+    }
+
+    // Notifications Center (per-user)
+    // GET /api/notifications
+    // Auth: Bearer <Firebase ID token>
+    // Query: ?limit=40&offset=0
+    if (req.method === "GET" && normalized === "/notifications") {
+      const { uid } = await requireFirebaseUser(req);
+      const sb = requireSupabaseAdmin();
+
+      const url = new URL(req.url);
+      const limit = Math.max(1, Math.min(200, Number(url.searchParams.get("limit") ?? 40) || 40));
+      const offset = Math.max(0, Math.min(10_000, Number(url.searchParams.get("offset") ?? 0) || 0));
+
+      const table = "notifications";
+
+      async function tryList(whereColumn: string): Promise<Array<Record<string, unknown>>> {
+        const res = await sb
+          .from(table)
+          .select("*")
+          .eq(whereColumn, uid)
+          .order("created_at", { ascending: false })
+          .range(offset, offset + limit - 1);
+        if (res.error) throw new Error(res.error.message);
+        return Array.isArray(res.data) ? (res.data as Array<Record<string, unknown>>) : [];
+      }
+
+      const attempts: string[] = ["user_uid", "user_id", "uid", "firebase_uid"];
+      let rows: Array<Record<string, unknown>> = [];
+      let lastErr: unknown = null;
+      for (const col of attempts) {
+        try {
+          rows = await tryList(col);
+          lastErr = null;
+          break;
+        } catch (e) {
+          lastErr = e;
+        }
+      }
+
+      // Normalize response to a stable wire format.
+      function s(v: unknown): string {
+        return String(v ?? "").trim();
+      }
+
+      function toBool(v: unknown): boolean {
+        if (v === true) return true;
+        if (v === false) return false;
+        if (v === null || v === undefined) return false;
+        return String(v).trim().toLowerCase() === "true";
+      }
+
+      function parseIso(v: unknown): string | null {
+        const raw = s(v);
+        if (!raw) return null;
+        const t = Date.parse(raw);
+        return Number.isFinite(t) ? new Date(t).toISOString() : null;
+      }
+
+      const items = rows.map((r) => {
+        const type = s((r as any).type ?? (r as any).notification_type ?? (r as any).notificationType ?? (r as any).kind ?? "general");
+        const title = s((r as any).title ?? (r as any).subject ?? (r as any).heading ?? type ?? "Notification");
+        const body = s((r as any).body ?? (r as any).message ?? (r as any).text ?? "");
+        const data = (r as any).data ?? (r as any).payload ?? (r as any).meta ?? {};
+        const createdAt = parseIso((r as any).created_at ?? (r as any).createdAt) ?? new Date().toISOString();
+        const read = toBool((r as any).read ?? (r as any).is_read ?? (r as any).isRead ?? false);
+        const readAt = parseIso((r as any).read_at ?? (r as any).readAt);
+        const senderUid = s((r as any).sender_uid ?? (r as any).from_uid ?? (r as any).sender_id);
+        const senderRole = s((r as any).sender_role ?? (r as any).from_role);
+        const action = s((r as any).action);
+        const entityId = s((r as any).entity_id ?? (r as any).target_id);
+        const entityType = s((r as any).entity_type ?? (r as any).target_type);
+
+        return {
+          id: s((r as any).id),
+          title,
+          body,
+          type,
+          sender_uid: senderUid,
+          sender_role: senderRole,
+          action,
+          entity_id: entityId,
+          entity_type: entityType,
+          data: (data && typeof data === "object") ? data : {},
+          created_at: createdAt,
+          read,
+          read_at: readAt,
+        };
+      });
+
+      return json(
+        {
+          ok: true,
+          items,
+          limit,
+          offset,
+          warning: lastErr ? "notifications_schema_mismatch" : null,
+        },
+        { headers: corsHeaders },
+      );
+    }
+
+    // GET /api/notifications/unread_count
+    // Auth: Bearer <Firebase ID token>
+    if (req.method === "GET" && normalized === "/notifications/unread_count") {
+      const { uid } = await requireFirebaseUser(req);
+      const sb = requireSupabaseAdmin();
+
+      const table = "notifications";
+
+      function toBool(v: unknown): boolean {
+        if (v === true) return true;
+        if (v === false) return false;
+        if (v === null || v === undefined) return false;
+        return String(v).trim().toLowerCase() === "true";
+      }
+
+      async function tryCount(whereColumn: string): Promise<number> {
+        const res = await sb
+          .from(table)
+          .select("*")
+          .eq(whereColumn, uid)
+          .order("created_at", { ascending: false })
+          .limit(500);
+        if (res.error) throw new Error(res.error.message);
+        const rows = Array.isArray(res.data) ? (res.data as Array<Record<string, unknown>>) : [];
+
+        let c = 0;
+        for (const r of rows) {
+          const read = toBool((r as any).read ?? (r as any).is_read ?? (r as any).isRead ?? false);
+          if (!read) c++;
+        }
+        return c;
+      }
+
+      const attempts: string[] = ["user_uid", "user_id", "uid", "firebase_uid"];
+      let count = 0;
+      let lastErr: unknown = null;
+      for (const col of attempts) {
+        try {
+          count = await tryCount(col);
+          lastErr = null;
+          break;
+        } catch (e) {
+          lastErr = e;
+        }
+      }
+
+      return json(
+        { ok: true, unread_count: count, warning: lastErr ? "notifications_schema_mismatch" : null },
+        { headers: corsHeaders },
+      );
+    }
+
+    // POST /api/notifications/mark_read
+    // Auth: Bearer <Firebase ID token>
+    // Body: { id: string }
+    if (req.method === "POST" && normalized === "/notifications/mark_read") {
+      const { uid } = await requireFirebaseUser(req);
+      const sb = requireSupabaseAdmin();
+      const body = await readJson(req);
+
+      const id = String((body as any)?.id ?? (body as any)?.notification_id ?? "").trim();
+      if (!id) throw new HttpError(400, "bad_request", "Missing id");
+
+      const now = new Date().toISOString();
+
+      // Best-effort across schema variants.
+      const updates: Array<Record<string, unknown>> = [
+        { read: true, read_at: now },
+        { is_read: true, read: true, read_at: now },
+        { read: true },
+        { is_read: true },
+      ];
+
+      const table = "notifications";
+
+      // First, enforce ownership if a uid column exists.
+      const ownerCols: string[] = ["user_uid", "user_id", "uid", "firebase_uid"];
+      let updated = false;
+      let lastErr: unknown = null;
+
+      for (const ownerCol of ownerCols) {
+        for (const patch of updates) {
+          const res = await sb
+            .from(table)
+            .update(patch)
+            .eq("id", id)
+            .eq(ownerCol, uid);
+          if (!res.error) {
+            updated = true;
+            lastErr = null;
+            break;
+          }
+          lastErr = res.error;
+        }
+        if (updated) break;
+      }
+
+      // Fallback: update by id only (some schemas may not store owner uid).
+      if (!updated) {
+        for (const patch of updates) {
+          const res = await sb
+            .from(table)
+            .update(patch)
+            .eq("id", id);
+          if (!res.error) {
+            updated = true;
+            lastErr = null;
+            break;
+          }
+          lastErr = res.error;
+        }
+      }
+
+      if (!updated) {
+        const msg = lastErr && typeof lastErr === "object" && "message" in (lastErr as any)
+          ? String((lastErr as any).message)
+          : "Failed to mark read";
+        throw new HttpError(500, "db_error", msg);
+      }
+
+      return json({ ok: true, updated: true }, { headers: corsHeaders });
+    }
+
+    // POST /api/notifications/mark_all_read
+    // Auth: Bearer <Firebase ID token>
+    if (req.method === "POST" && normalized === "/notifications/mark_all_read") {
+      const { uid } = await requireFirebaseUser(req);
+      const sb = requireSupabaseAdmin();
+      const now = new Date().toISOString();
+
+      const table = "notifications";
+      const patches: Array<Record<string, unknown>> = [
+        { read: true, read_at: now },
+        { is_read: true, read: true, read_at: now },
+        { read: true },
+        { is_read: true },
+      ];
+
+      const ownerCols: string[] = ["user_uid", "user_id", "uid", "firebase_uid"];
+      let updated = false;
+      let lastErr: unknown = null;
+
+      for (const ownerCol of ownerCols) {
+        for (const patch of patches) {
+          const res = await sb
+            .from(table)
+            .update(patch)
+            .eq(ownerCol, uid);
+          if (!res.error) {
+            updated = true;
+            lastErr = null;
+            break;
+          }
+          lastErr = res.error;
+        }
+        if (updated) break;
+      }
+
+      if (!updated) {
+        const msg = lastErr && typeof lastErr === "object" && "message" in (lastErr as any)
+          ? String((lastErr as any).message)
+          : "Failed to mark all read";
+        throw new HttpError(500, "db_error", msg);
+      }
+
+      return json({ ok: true, updated: true }, { headers: corsHeaders });
+    }
+
+    // Creator Inbox (DJ/Artist)
+    // GET /api/inbox/messages
+    // Auth: Bearer <Firebase ID token>
+    // Query: ?role=dj|artist&limit=120
+    if (req.method === "GET" && normalized === "/inbox/messages") {
+      const { uid } = await requireFirebaseUser(req);
+      const sb = requireSupabaseAdmin();
+      const url = new URL(req.url);
+      const role = String(url.searchParams.get("role") ?? "").trim().toLowerCase();
+      const limit = Math.max(1, Math.min(300, Number(url.searchParams.get("limit") ?? 120) || 120));
+
+      const table = "messages";
+      const isDj = role === "dj";
+
+      let q = sb.from(table).select("*");
+
+      if (isDj) {
+        q = q.eq("dj_uid", uid);
+      } else {
+        // Support both artist_uid and artist_id targeting.
+        let artistId: string | null = null;
+        try {
+          const a = await sb
+            .from("artists")
+            .select("id")
+            .or(`user_id.eq.${uid},firebase_uid.eq.${uid}`)
+            .limit(1)
+            .maybeSingle();
+          artistId = a.error ? null : (a.data as any)?.id?.toString?.() ?? null;
+        } catch (_) {
+          artistId = null;
+        }
+
+        if (artistId && artistId.trim().length > 0) {
+          q = q.or(`artist_uid.eq.${uid},artist_id.eq.${artistId}`);
+        } else {
+          q = q.eq("artist_uid", uid);
+        }
+      }
+
+      const res = await q
+        .order("created_at", { ascending: false })
+        .limit(limit);
+
+      if (res.error) {
+        throw new HttpError(500, "db_error", `Failed to load inbox: ${res.error.message}`);
+      }
+
+      return json({ ok: true, items: Array.isArray(res.data) ? res.data : [] }, { headers: corsHeaders });
+    }
+
+    // POST /api/inbox/messages/mark_read
+    // Auth: Bearer <Firebase ID token>
+    // Body: { id: string, role: 'dj'|'artist' }
+    if (req.method === "POST" && normalized === "/inbox/messages/mark_read") {
+      const { uid } = await requireFirebaseUser(req);
+      const sb = requireSupabaseAdmin();
+      const body = await readJson(req);
+
+      const id = String((body as any)?.id ?? "").trim();
+      const role = String((body as any)?.role ?? "").trim().toLowerCase();
+      if (!id) throw new HttpError(400, "bad_request", "Missing id");
+
+      const isDj = role === "dj";
+      const col = isDj ? "dj_uid" : "artist_uid";
+
+      const res = await sb
+        .from("messages")
+        .update({ read: true, is_read: true, read_at: new Date().toISOString() })
+        .eq("id", id)
+        .eq(col, uid);
+
+      if (res.error) {
+        // Fallback if columns differ.
+        const fallback = await sb
+          .from("messages")
+          .update({ is_read: true })
+          .eq("id", id)
+          .eq(col, uid);
+
+        if (!fallback.error) {
+          return json({ ok: true, updated: true }, { headers: corsHeaders });
+        }
+
+        // Artist tables sometimes key by artist_id only.
+        if (!isDj) {
+          try {
+            const a = await sb
+              .from("artists")
+              .select("id")
+              .or(`user_id.eq.${uid},firebase_uid.eq.${uid}`)
+              .limit(1)
+              .maybeSingle();
+            const artistId = a.error ? null : (a.data as any)?.id?.toString?.() ?? null;
+
+            if (artistId && artistId.trim().length > 0) {
+              const fallback2 = await sb
+                .from("messages")
+                .update({ read: true, is_read: true, read_at: new Date().toISOString() })
+                .eq("id", id)
+                .eq("artist_id", artistId);
+              if (!fallback2.error) {
+                return json({ ok: true, updated: true }, { headers: corsHeaders });
+              }
+            }
+          } catch (_) {
+            // ignore
+          }
+        }
+
+        throw new HttpError(500, "db_error", `Failed to mark read: ${fallback.error.message}`);
+      }
+
+      return json({ ok: true, updated: true }, { headers: corsHeaders });
+    }
+
+    // POST /api/inbox/messages/reply
+    // Auth: Bearer <Firebase ID token>
+    // Body: { role: 'dj'|'artist', message: string, thread_id?: string, recipient_uid?: string, recipient_name?: string }
+    if (req.method === "POST" && normalized === "/inbox/messages/reply") {
+      const { uid } = await requireFirebaseUser(req);
+      const sb = requireSupabaseAdmin();
+      const body = await readJson(req);
+
+      const role = String((body as any)?.role ?? "").trim().toLowerCase();
+      const message = String((body as any)?.message ?? (body as any)?.text ?? "").trim().slice(0, 2000);
+      if (!message) throw new HttpError(400, "bad_request", "Missing message");
+
+      const now = new Date().toISOString();
+      const row: Record<string, unknown> = {
+        message,
+        content: message,
+        sender_id: uid,
+        sender_name: String((body as any)?.sender_name ?? (body as any)?.senderName ?? "").trim() || null,
+        read: false,
+        is_read: false,
+        created_at: now,
+      };
+
+      if (role === "dj") {
+        row.dj_uid = uid;
+      } else {
+        row.artist_uid = uid;
+        // Populate artist_id when resolvable (keeps compatibility with older schemas).
+        try {
+          const a = await sb
+            .from("artists")
+            .select("id")
+            .or(`user_id.eq.${uid},firebase_uid.eq.${uid}`)
+            .limit(1)
+            .maybeSingle();
+          const artistId = a.error ? null : (a.data as any)?.id?.toString?.() ?? null;
+          if (artistId && artistId.trim().length > 0) {
+            row.artist_id = artistId;
+          }
+        } catch (_) {
+          // ignore
+        }
+      }
+
+      const threadId = String((body as any)?.thread_id ?? (body as any)?.threadId ?? "").trim();
+      if (threadId) row.thread_id = threadId;
+
+      const recipientUid = String((body as any)?.recipient_uid ?? (body as any)?.recipientUid ?? "").trim();
+      if (recipientUid) row.recipient_uid = recipientUid;
+
+      const recipientName = String((body as any)?.recipient_name ?? (body as any)?.recipientName ?? "").trim();
+      if (recipientName) row.recipient_name = recipientName;
+
+      const ins = await sb.from("messages").insert(row).select("id").maybeSingle();
+      if (ins.error) {
+        throw new HttpError(500, "db_error", `Failed to send reply: ${ins.error.message}`);
+      }
+
+      return json({ ok: true, id: String((ins.data as any)?.id ?? "") || null }, { headers: corsHeaders });
+    }
+
+    // Creator Journey
+    // POST /api/journey/event
+    // Auth: Bearer <Firebase ID token>
+    // Body: { event_type: string, event_key?: string, occurred_at?: string, metadata?: object }
+    if (req.method === "POST" && normalized === "/journey/event") {
+      const { uid } = await requireFirebaseUser(req);
+      const sb = requireSupabaseAdmin();
+      const body = await readJson(req);
+
+      const eventType = String(body.event_type ?? body.type ?? body.event ?? "").trim();
+      const eventKey = String(body.event_key ?? body.key ?? body.ref ?? "").trim();
+      const occurredAt = String(body.occurred_at ?? body.occurredAt ?? "").trim();
+      const metadata = (body.metadata && typeof body.metadata === "object") ? (body.metadata as Record<string, unknown>) : {};
+
+      if (!eventType) {
+        throw new HttpError(400, "bad_request", "Missing event_type");
+      }
+
+      await logCreatorJourneyEvent({
+        sb,
+        uid,
+        eventType,
+        eventKey: eventKey || undefined,
+        occurredAt: occurredAt || undefined,
+        metadata,
+      });
+
+      return json({ ok: true }, { headers: corsHeaders });
+    }
+
+    // POST /api/journey/dispatch
+    // Auth: x-debug-token: <WEAFRICA_JOURNEY_CRON_TOKEN>
+    // Body: { max?: number }
+    if (req.method === "POST" && normalized === "/journey/dispatch") {
+      const cronToken = (Deno.env.get("WEAFRICA_JOURNEY_CRON_TOKEN") ?? "").trim();
+      if (!cronToken) {
+        throw new HttpError(404, "not_found", "Not found");
+      }
+
+      const provided = String(req.headers.get("x-debug-token") ?? req.headers.get("x-journey-token") ?? "").trim();
+      const auth = String(req.headers.get("authorization") ?? "").trim();
+      const bearer = auth.toLowerCase().startsWith("bearer ") ? auth.slice(7).trim() : "";
+
+      if (provided !== cronToken && bearer !== cronToken) {
+        throw new HttpError(403, "forbidden", "Forbidden");
+      }
+
+      const sb = requireSupabaseAdmin();
+      const body = await readJson(req).catch(() => ({} as Record<string, unknown>));
+      const max = Math.max(1, Math.min(200, Number((body as any).max ?? 50) || 50));
+
+      const claimed = await sb.rpc("creator_journey_claim_due_pushes", {
+        p_max: max,
+        p_lock_minutes: 15,
+      });
+
+      if (claimed.error) {
+        throw new HttpError(500, "db_error", `Failed to claim due pushes: ${claimed.error.message}`);
+      }
+
+      const rows: Array<any> = Array.isArray(claimed.data) ? claimed.data : [];
+      let sent = 0;
+      let skipped = 0;
+      let failed = 0;
+
+      for (const r of rows) {
+        const queueId = String(r?.id ?? "").trim();
+        const userUid = String(r?.user_uid ?? r?.userUid ?? "").trim();
+        const templateKey = String(r?.template_key ?? r?.templateKey ?? "").trim();
+        const nowIso = new Date().toISOString();
+
+        if (!queueId || !userUid || !templateKey) {
+          skipped++;
+          continue;
+        }
+
+        try {
+          // Load state (best-effort)
+          const stateRes = await sb
+            .from("creator_journey_state")
+            .select("*")
+            .eq("user_uid", userUid)
+            .maybeSingle();
+          const state = (stateRes?.data ?? null) as Record<string, unknown> | null;
+
+          const lastPushIso = safeIso(state?.last_push_sent_at ?? (state as any)?.lastPushSentAt);
+          if (lastPushIso) {
+            const lastAt = new Date(lastPushIso);
+            if (Number.isFinite(lastAt.getTime()) && Date.now() - lastAt.getTime() < 30 * 60_000) {
+              // Too soon; postpone to avoid spam.
+              await sb
+                .from("creator_journey_push_queue")
+                .update({
+                  send_at: isoAfterMinutes(30, new Date()),
+                  status: "pending",
+                  locked_at: null,
+                  locked_by: null,
+                  updated_at: nowIso,
+                })
+                .eq("id", queueId);
+              skipped++;
+              continue;
+            }
+          }
+
+          // Refresh subscription snapshot to suppress trial nudges for paid users.
+          const sub = await fetchUserSubscriptionSnapshot(sb, userUid);
+          if (sub.status && sub.status.toLowerCase() === "active" && templateKey.toLowerCase().startsWith("trial_")) {
+            await sb
+              .from("creator_journey_push_queue")
+              .update({ status: "canceled", fail_reason: "subscription_active", updated_at: nowIso })
+              .eq("id", queueId);
+            skipped++;
+            continue;
+          }
+
+          const tokens = await listDeviceTokensForUser(sb, userUid);
+          if (!tokens.length) {
+            await sb
+              .from("creator_journey_push_queue")
+              .update({ status: "canceled", fail_reason: "no_device_tokens", updated_at: nowIso })
+              .eq("id", queueId);
+            skipped++;
+            continue;
+          }
+
+          const tpl = buildJourneyTemplate(templateKey, {
+            ...(state ?? {}),
+            plan_id: sub.planId ?? state?.plan_id,
+            ...((r?.payload && typeof r.payload === "object") ? r.payload as Record<string, unknown> : {}),
+          });
+
+          await sendFcmPushToTokens({
+            tokens,
+            title: tpl.title,
+            body: tpl.body,
+            data: {
+              ...(tpl.data ?? {}),
+              type: String(tpl.data?.type ?? "journey").trim(),
+              template_key: templateKey,
+            },
+          });
+
+          await sb
+            .from("creator_journey_push_queue")
+            .update({ status: "sent", sent_at: nowIso, updated_at: nowIso })
+            .eq("id", queueId);
+
+          await sb
+            .from("creator_journey_state")
+            .update({
+              last_push_sent_at: nowIso,
+              plan_id: sub.planId ?? undefined,
+              subscription_status: sub.status ?? undefined,
+              updated_at: nowIso,
+            })
+            .eq("user_uid", userUid);
+
+          sent++;
+        } catch (e) {
+          try {
+            await sb
+              .from("creator_journey_push_queue")
+              .update({ status: "failed", fail_reason: String(e ?? "failed"), updated_at: new Date().toISOString() })
+              .eq("id", queueId);
+          } catch (_) {
+            // ignore
+          }
+          failed++;
+        }
+      }
+
+      return json({ ok: true, claimed: rows.length, sent, skipped, failed }, { headers: corsHeaders });
+    }
+
+    // Live notifications (consumer)
+    // POST /api/live/notify/subscribe
+    // Auth: Bearer <Firebase ID token>
+    // Body: {}
+    if (req.method === "POST" && normalized === "/live/notify/subscribe") {
+      const { uid } = await requireFirebaseUser(req);
+      const sb = requireSupabaseAdmin();
+      const now = new Date().toISOString();
+
+      // One row per user.
+      const { error } = await sb
+        .from('live_notifications')
+        .upsert(
+          {
+            user_uid: uid,
+            created_at: now,
+          },
+          { onConflict: 'user_uid' },
+        );
+
+      if (error) {
+        throw new HttpError(500, 'db_error', `Failed to subscribe: ${error.message ?? error}`);
+      }
+
+      return json({ ok: true, subscribed: true }, { headers: corsHeaders });
+    }
+
+    // Live sessions (creator presence)
+    // GET /api/live/categories
+    // Auth: optional
+    // Returns: { ok: true, categories: Array<{ id: string, label: string }> }
+    if (req.method === "GET" && normalized === "/live/categories") {
+      const categories = [
+        { id: 'music', label: 'Music' },
+        { id: 'gaming', label: 'Gaming' },
+        { id: 'podcast', label: 'Podcast' },
+        { id: 'talk_shows', label: 'Talk Shows' },
+        { id: 'freestyle', label: 'Freestyle' },
+      ];
+
+      return json({ ok: true, categories }, { headers: corsHeaders });
+    }
+
+    // GET /api/live/setup/options
+    // Auth: optional
+    // Returns: option lists used by the Go Live setup UI.
+    if (req.method === "GET" && normalized === "/live/setup/options") {
+      const privacy = [
+        { id: 'public', label: 'Public', description: 'Anyone can discover and watch.' },
+        { id: 'followers', label: 'Followers only', description: 'Only your followers can watch.' },
+        { id: 'private', label: 'Private', description: 'Only people with a link can join.' },
+      ];
+
+      const monetization = [
+        { id: 'gifts', label: 'Gifts', enabled: true },
+      ];
+
+      return json({ ok: true, privacy, monetization }, { headers: corsHeaders });
+    }
+
+    // POST /api/live/sessions/start
+    // Auth: Bearer <Firebase ID token>
+    // Body: { channel_id: string, host_name?: string, title?: string }
+    if (req.method === "POST" && normalized === "/live/sessions/start") {
+      const { uid } = await requireFirebaseUser(req);
+      const sb = requireSupabaseAdmin();
+      const body = await readJson(req);
+      const now = new Date().toISOString();
+
+      const channelId = String(body.channel_id ?? body.channelId ?? body.channel ?? '').trim();
+      if (!channelId) {
+        throw new HttpError(400, 'bad_request', 'Missing channel_id');
+      }
+
+      // Deterministic channel ownership:
+      // Prevent creators from starting lives on arbitrary channel IDs.
+      // This removes the pre-start race window for token issuance.
+      const allowedLiveChannels = new Set([`live_${uid}`, `weafrica_live_${uid}`]);
+      if (!allowedLiveChannels.has(channelId)) {
+        throw new HttpError(403, 'forbidden', 'Invalid live channel for this host');
+      }
+
+      const explicitCategoryRaw = String(body.category ?? body.genre ?? '').trim().slice(0, 40);
+      const explicitCategory = explicitCategoryRaw.toLowerCase();
+      const inferredCategory = channelId.startsWith('weafrica_battle_') ? 'battle' : 'artist';
+      const category = (explicitCategory === 'artist' || explicitCategory === 'battle')
+        ? explicitCategory
+        : inferredCategory;
+
+      // Test access: allow internal/dev environments to start lives without
+      // premium gating (mirrors other endpoints that allow test access).
+      // Production deployments should keep test routes disabled.
+      let hasTestAccess = false;
+      try {
+        requireTestAccess(req);
+        hasTestAccess = true;
+      } catch (_) {
+        hasTestAccess = false;
+      }
+
+      if (!hasTestAccess) {
+        await assertCreatorCapability(
+          sb,
+          uid,
+          category === 'battle' ? 'battle_access' : 'live_host',
+        );
+      }
+
+      const topicRaw = String(
+        body.topic ?? body.content_category ?? body.contentCategory ?? body.live_category ?? body.liveCategory ?? '',
+      ).trim().slice(0, 60);
+      const topic = topicRaw || null;
+
+      const accessModeRaw = String(body.access_mode ?? body.accessMode ?? body.privacy ?? '').trim().toLowerCase().slice(0, 20);
+      const accessMode = accessModeRaw === 'subscribers'
+        ? 'followers'
+        : (accessModeRaw === 'public' || accessModeRaw === 'followers' || accessModeRaw === 'private')
+          ? accessModeRaw
+          : null;
+
+      const normalizedChannelId = channelId.toLowerCase();
+      const isBattleSession = category === 'battle' || normalizedChannelId.startsWith('weafrica_battle_');
+
+      const liveTypeRaw = String(body.live_type ?? body.liveType ?? '').trim().toLowerCase().slice(0, 20);
+      const liveType = isBattleSession
+        ? 'battle'
+        : (liveTypeRaw === 'premium' || liveTypeRaw === 'event')
+          ? liveTypeRaw
+          : 'normal';
+
+      const modeRaw = String(body.mode ?? body.session_mode ?? body.sessionMode ?? '').trim().toUpperCase().slice(0, 32);
+      const mode = isBattleSession
+        ? 'BATTLE_1v1'
+        : (modeRaw === 'SOLO' || modeRaw === 'FOLLOWERS' || modeRaw === 'PRIVATE')
+          ? modeRaw
+          : 'SOLO';
+      const requestedThumb = String(body.thumbnail_url ?? body.thumbnailUrl ?? body.image_url ?? body.imageUrl ?? '').trim() || null;
+
+      // Resolve host name.
+      let hostName = String(body.host_name ?? body.hostName ?? '').trim();
+      let thumbnailUrl: string | null = requestedThumb;
+      if (!hostName) {
+        try {
+          let p: any = null;
+
+          // Preferred repo schema: profiles.id == Firebase UID (TEXT).
+          try {
+            const q1 = await sb
+              .from('profiles')
+              .select('display_name,username,full_name,avatar_url,photo_url,image_url')
+              .eq('id', uid)
+              .maybeSingle();
+            if (!q1.error && q1.data) p = q1.data;
+          } catch (_) {
+            // ignore
+          }
+
+          // Tolerant fallback: profiles.firebase_uid == Firebase UID.
+          if (!p) {
+            try {
+              const q2 = await sb
+                .from('profiles')
+                .select('display_name,username,full_name,avatar_url,photo_url,image_url')
+                .eq('firebase_uid', uid)
+                .maybeSingle();
+              if (!q2.error && q2.data) p = q2.data;
+            } catch (_) {
+              // ignore
+            }
+          }
+
+          hostName = String(p?.display_name ?? p?.full_name ?? p?.username ?? '').trim();
+
+          if (!thumbnailUrl) {
+            thumbnailUrl = String(p?.avatar_url ?? p?.photo_url ?? p?.image_url ?? '').trim() || null;
+          }
+        } catch (_) {
+          // ignore
+        }
+      }
+
+      const title = String(body.title ?? '').trim() || null;
+
+      // Prevent multiple concurrent lives per host.
+      // This is the authoritative server-side guard (client also checks).
+      // If an existing live looks stale (no heartbeat for ~90s), we auto-end it
+      // so creators aren't permanently locked out after crashes.
+      try {
+        const { data: existingLive, error: existingErr } = await sb
+          .from('live_sessions')
+          .select('id,channel_id,title,last_heartbeat_at,started_at,updated_at')
+          .eq('host_id', uid)
+          .eq('is_live', true)
+          .order('last_heartbeat_at', { ascending: false })
+          .order('started_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        if (!existingErr && existingLive) {
+          const existingChannel = String((existingLive as any).channel_id ?? '').trim();
+          if (existingChannel && existingChannel !== channelId) {
+            const hbRaw = String(
+              (existingLive as any).last_heartbeat_at ??
+                (existingLive as any).updated_at ??
+                (existingLive as any).started_at ??
+                ''
+            ).trim();
+            const hbMs = hbRaw ? Date.parse(hbRaw) : NaN;
+            const isStale = Number.isFinite(hbMs) ? (Date.now() - hbMs) > 90_000 : false;
+
+            if (isStale) {
+              await sb
+                .from('live_sessions')
+                .update({
+                  is_live: false,
+                  ended_at: now,
+                  last_heartbeat_at: now,
+                  updated_at: now,
+                })
+                .eq('id', String((existingLive as any).id ?? '').trim());
+            } else {
+              const existingTitle = String((existingLive as any).title ?? '').trim();
+              const label = existingTitle ? `"${existingTitle}"` : 'your current live';
+              throw new HttpError(409, 'already_live', `You are already live with ${label}. End that stream first.`);
+            }
+          }
+        }
+      } catch (e) {
+        if (e instanceof HttpError) throw e;
+        // Best-effort only: avoid blocking live start on schema drift.
+      }
+
+      // Only send push if this channel was not already live.
+      let alreadyLive = false;
+      let existingViewerCount: number | null = null;
+      try {
+        const { data } = await sb
+          .from('live_sessions')
+          .select('is_live,viewer_count')
+          .eq('channel_id', channelId)
+          .maybeSingle();
+        alreadyLive = Boolean((data as any)?.is_live);
+        const v = (data as any)?.viewer_count;
+        existingViewerCount = typeof v === 'number' && Number.isFinite(v) ? v : null;
+      } catch (_) {
+        // ignore
+      }
+
+      const upsertRow = {
+        channel_id: channelId,
+        host_id: uid,
+        artist_id: uid,
+        host_name: hostName || null,
+        thumbnail_url: thumbnailUrl,
+        category,
+        topic,
+        access_mode: accessMode,
+        live_type: liveType,
+        mode,
+        viewer_count: alreadyLive ? existingViewerCount : 0,
+        title,
+        is_live: true,
+        started_at: now,
+        last_heartbeat_at: now,
+        ended_at: null,
+        updated_at: now,
+      };
+
+      // Some environments may run older schemas (missing topic/access_mode columns).
+      // Try full upsert first; if it fails due to missing columns, retry without them.
+      let upsertErr: any = null;
+      try {
+        const res = await sb.from('live_sessions').upsert(upsertRow, { onConflict: 'channel_id' });
+        upsertErr = res.error;
+      } catch (e) {
+        upsertErr = e;
+      }
+
+      if (upsertErr) {
+        const msg = String((upsertErr as any)?.message ?? upsertErr ?? '').toLowerCase();
+        const looksLikeMissingColumn = msg.includes('column') && msg.includes('does not exist');
+        if (looksLikeMissingColumn) {
+          const fallbackRow: Record<string, any> = { ...upsertRow };
+          delete fallbackRow.topic;
+          delete fallbackRow.access_mode;
+          delete fallbackRow.live_type;
+          delete fallbackRow.mode;
+
+          const { error: retryErr } = await sb
+            .from('live_sessions')
+            .upsert(fallbackRow, { onConflict: 'channel_id' });
+
+          if (retryErr) {
+            throw new HttpError(500, 'db_error', `Failed to mark live: ${retryErr.message ?? retryErr}`);
+          }
+        } else {
+          throw new HttpError(500, 'db_error', `Failed to mark live: ${(upsertErr as any)?.message ?? upsertErr}`);
+        }
+      }
+
+      // Broadcast push notifications to subscribers (best-effort).
+      if (!alreadyLive) {
+        try {
+          const { data: subs, error: subsErr } = await sb
+            .from('live_notifications')
+            .select('user_uid')
+            .order('created_at', { ascending: false })
+            .limit(5000);
+
+          if (!subsErr && Array.isArray(subs) && subs.length) {
+            const uids = subs
+              .map((r: any) => String(r?.user_uid ?? '').trim())
+              .filter(Boolean);
+
+            const tokens = await listDeviceTokensForUsersBulk(sb, uids);
+            const display = hostName || 'An artist';
+            const titleText = 'LIVE NOW';
+            const bodyText = `${display} just started a live session. Tap to join.`;
+
+            for (let i = 0; i < tokens.length; i += 500) {
+              await sendFcmPushToTokens({
+                tokens: tokens.slice(i, i + 500),
+                title: titleText,
+                body: bodyText,
+                data: {
+                  type: 'live_now',
+                  channel_id: channelId,
+                  host_id: uid,
+                  host_name: display,
+                  title: titleText,
+                  body: bodyText,
+                },
+              });
+            }
+          }
+        } catch (e) {
+          console.log('live push broadcast failed', e);
+        }
+      }
+
+      return json({ ok: true, live: true, already_live: alreadyLive }, { headers: corsHeaders });
+    }
+
+    // POST /api/live/sessions/heartbeat
+    // Auth: Bearer <Firebase ID token>
+    // Body: { channel_id: string }
+    if (req.method === "POST" && normalized === "/live/sessions/heartbeat") {
+      const { uid } = await requireFirebaseUser(req);
+      const sb = requireSupabaseAdmin();
+      const body = await readJson(req);
+      const now = new Date().toISOString();
+
+      const channelId = String(body.channel_id ?? body.channelId ?? body.channel ?? '').trim();
+      if (!channelId) {
+        throw new HttpError(400, 'bad_request', 'Missing channel_id');
+      }
+
+      const allowedLiveChannels = new Set([`live_${uid}`, `weafrica_live_${uid}`]);
+      if (!allowedLiveChannels.has(channelId)) {
+        throw new HttpError(403, 'forbidden', 'Invalid live channel for this host');
+      }
+
+      const { error } = await sb
+        .from('live_sessions')
+        .update({
+          last_heartbeat_at: now,
+          updated_at: now,
+        })
+        .eq('channel_id', channelId)
+        .eq('host_id', uid)
+        .eq('is_live', true);
+
+      if (error) {
+        throw new HttpError(500, 'db_error', `Failed to heartbeat: ${error.message ?? error}`);
+      }
+
+      return json({ ok: true, heartbeat: true }, { headers: corsHeaders });
+    }
+
+    // POST /api/live/sessions/end
+    // Auth: Bearer <Firebase ID token>
+    // Body: { channel_id: string }
+    if (req.method === "POST" && normalized === "/live/sessions/end") {
+      const { uid } = await requireFirebaseUser(req);
+      const sb = requireSupabaseAdmin();
+      const body = await readJson(req);
+      const now = new Date().toISOString();
+
+      const channelId = String(body.channel_id ?? body.channelId ?? body.channel ?? '').trim();
+      if (!channelId) {
+        throw new HttpError(400, 'bad_request', 'Missing channel_id');
+      }
+
+      const allowedLiveChannels = new Set([`live_${uid}`, `weafrica_live_${uid}`]);
+      if (!allowedLiveChannels.has(channelId)) {
+        throw new HttpError(403, 'forbidden', 'Invalid live channel for this host');
+      }
+
+      const { error } = await sb
+        .from('live_sessions')
+        .update({
+          is_live: false,
+          ended_at: now,
+          last_heartbeat_at: now,
+          updated_at: now,
+        })
+        .eq('channel_id', channelId)
+        .eq('host_id', uid);
+
+      if (error) {
+        throw new HttpError(500, 'db_error', `Failed to end live: ${error.message ?? error}`);
+      }
+
+      return json({ ok: true, live: false }, { headers: corsHeaders });
+    }
+
+    // --------------------
+    // Live Analytics (consumer + admin)
+    // --------------------
+
+    // Consumer heartbeat (watch-time estimate)
+    // POST /api/analytics/live/heartbeat
+    // Auth: Bearer <Firebase ID token>
+    // Body: { live_id: string, channel_id: string, meta?: object }
+    if (req.method === "POST" && normalized === "/analytics/live/heartbeat") {
+      const { uid } = await requireFirebaseUser(req);
+      const sb = requireSupabaseAdmin();
+      const body = await readJson(req);
+
+      const liveId = String(body.live_id ?? body.liveId ?? "").trim();
+      const channelId = String(body.channel_id ?? body.channelId ?? "").trim();
+
+      if (!liveId) throw new HttpError(400, "bad_request", "Missing live_id");
+      if (!channelId) throw new HttpError(400, "bad_request", "Missing channel_id");
+
+      // Minute bucket (idempotent upsert).
+      const now = new Date();
+      now.setSeconds(0, 0);
+      const bucket = now.toISOString();
+
+      const meta = (body.meta && typeof body.meta === "object" && !Array.isArray(body.meta))
+        ? (body.meta as JsonObject)
+        : ({} as JsonObject);
+
+      const { error } = await sb
+        .from("live_watch_heartbeats")
+        .upsert(
+          {
+            live_id: liveId,
+            channel_id: channelId,
+            user_id: uid,
+            bucket,
+            updated_at: new Date().toISOString(),
+            meta,
+          },
+          { onConflict: "live_id,user_id,bucket" },
+        );
+
+      if (error) {
+        throw new HttpError(500, "db_error", `Failed to record heartbeat: ${error.message}`);
+      }
+
+      return json({ ok: true }, { headers: corsHeaders });
+    }
+
+    // Admin overview (dashboard)
+    // GET /api/analytics/admin/overview?days=7
+    // Auth: Bearer <Firebase ID token>
+    if (req.method === "GET" && normalized === "/analytics/admin/overview") {
+      await requireAdminPermission(req);
+
+      const sb = requireSupabaseAdmin();
+      const daysRaw = Number(url.searchParams.get("days") ?? 7);
+      const days = Number.isFinite(daysRaw) ? Math.max(1, Math.min(90, Math.floor(daysRaw))) : 7;
+
+      const { data, error } = await sb.rpc("get_live_analytics_overview", { p_days: days });
+      if (error) {
+        throw new HttpError(500, "db_error", `Failed to load analytics: ${error.message}`);
+      }
+
+      const rows = Array.isArray(data) ? (data as any[]) : [];
+      const totals = rows.reduce(
+        (acc, r) => {
+          acc.sessions += 1;
+          acc.viewer_count += Number(r?.viewer_count ?? 0) || 0;
+          acc.chat_messages += Number(r?.chat_messages ?? 0) || 0;
+          acc.gifts_count += Number(r?.gifts_count ?? 0) || 0;
+          acc.coins_spent += Number(r?.coins_spent ?? 0) || 0;
+          acc.watch_minutes_estimate += Number(r?.watch_minutes_estimate ?? 0) || 0;
+          return acc;
+        },
+        {
+          sessions: 0,
+          viewer_count: 0,
+          chat_messages: 0,
+          gifts_count: 0,
+          coins_spent: 0,
+          watch_minutes_estimate: 0,
+        },
+      );
+
+      return json(
+        {
+          ok: true,
+          window_days: days,
+          totals,
+          sessions: rows,
+        },
+        { headers: corsHeaders },
+      );
+    }
+
+    // Followers gate funnel metrics (admin dashboard)
+    // GET /api/analytics/live/followers-funnel?days=7&host_id=<uid>&channel_id=<id>
+    // Auth: Bearer <Firebase ID token>
+    if (req.method === "GET" && normalized === "/analytics/live/followers-funnel") {
+      await requireAdminPermission(req);
+
+      const sb = requireSupabaseAdmin();
+      const daysRaw = Number(url.searchParams.get("days") ?? 7);
+      const days = Number.isFinite(daysRaw) ? Math.max(1, Math.min(90, Math.floor(daysRaw))) : 7;
+      const hostId = String(url.searchParams.get("host_id") ?? url.searchParams.get("hostId") ?? "").trim();
+      const channelId = String(url.searchParams.get("channel_id") ?? url.searchParams.get("channelId") ?? "").trim();
+
+      const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+
+      const canonicalEventTypes = [
+        "FOLLOWERS_ONLY_BLOCK",
+        "FOLLOWERS_ONLY_ALLOW",
+        "FOLLOWERS_ONLY_FOLLOW_CLICK",
+        "FOLLOWERS_ONLY_FOLLOW_SUCCESS",
+        "FOLLOWERS_ONLY_RETRY_SUCCESS",
+      ];
+
+      // Accept historical lowercase aliases to keep metrics stable across rollout versions.
+      const eventTypeAliases: Record<string, string> = {
+        FOLLOWERS_ONLY_BLOCK: "FOLLOWERS_ONLY_BLOCK",
+        FOLLOWERS_ONLY_ALLOW: "FOLLOWERS_ONLY_ALLOW",
+        FOLLOWERS_ONLY_FOLLOW_CLICK: "FOLLOWERS_ONLY_FOLLOW_CLICK",
+        FOLLOWERS_ONLY_FOLLOW_SUCCESS: "FOLLOWERS_ONLY_FOLLOW_SUCCESS",
+        FOLLOWERS_ONLY_RETRY_SUCCESS: "FOLLOWERS_ONLY_RETRY_SUCCESS",
+        live_followers_gate_blocked: "FOLLOWERS_ONLY_BLOCK",
+        live_followers_follow_join_tap: "FOLLOWERS_ONLY_FOLLOW_CLICK",
+        live_followers_follow_join_success: "FOLLOWERS_ONLY_FOLLOW_SUCCESS",
+        live_followers_retry_join_success: "FOLLOWERS_ONLY_RETRY_SUCCESS",
+      };
+
+      const requestedTypes = Object.keys(eventTypeAliases);
+      let query = sb
+        .from("creator_journey_events")
+        .select("event_type,user_uid,event_key,occurred_at,metadata")
+        .in("event_type", requestedTypes)
+        .gte("occurred_at", since);
+
+      if (channelId) {
+        query = query.eq("event_key", channelId);
+      }
+      if (hostId) {
+        query = query.contains("metadata", { host_id: hostId });
+      }
+
+      const { data, error } = await query;
+      if (error) {
+        throw new HttpError(500, "db_error", `Failed to load followers funnel analytics: ${error.message}`);
+      }
+
+      const counts: Record<string, number> = Object.fromEntries(canonicalEventTypes.map((k) => [k, 0]));
+      const blockedUsers = new Set<string>();
+      const allowedUsers = new Set<string>();
+      const followSuccessUsers = new Set<string>();
+      const retrySuccessUsers = new Set<string>();
+
+      for (const row of (data ?? []) as Array<Record<string, unknown>>) {
+        const rawType = String(row.event_type ?? "").trim();
+        const normalizedType = eventTypeAliases[rawType];
+        if (!normalizedType) continue;
+        counts[normalizedType] = (counts[normalizedType] ?? 0) + 1;
+
+        const userUid = String(row.user_uid ?? "").trim();
+        if (!userUid) continue;
+        if (normalizedType === "FOLLOWERS_ONLY_BLOCK") blockedUsers.add(userUid);
+        if (normalizedType === "FOLLOWERS_ONLY_ALLOW") allowedUsers.add(userUid);
+        if (normalizedType === "FOLLOWERS_ONLY_FOLLOW_SUCCESS") followSuccessUsers.add(userUid);
+        if (normalizedType === "FOLLOWERS_ONLY_RETRY_SUCCESS") retrySuccessUsers.add(userUid);
+      }
+
+      const blocks = counts.FOLLOWERS_ONLY_BLOCK ?? 0;
+      const allows = counts.FOLLOWERS_ONLY_ALLOW ?? 0;
+      const followClicks = counts.FOLLOWERS_ONLY_FOLLOW_CLICK ?? 0;
+      const followSuccess = counts.FOLLOWERS_ONLY_FOLLOW_SUCCESS ?? 0;
+      const retrySuccess = counts.FOLLOWERS_ONLY_RETRY_SUCCESS ?? 0;
+
+      const pct = (num: number, den: number) => den > 0 ? Number(((num / den) * 100).toFixed(2)) : 0;
+
+      return json(
+        {
+          ok: true,
+          window_days: days,
+          since,
+          filters: {
+            host_id: hostId || null,
+            channel_id: channelId || null,
+          },
+          totals: {
+            blocked: blocks,
+            allowed: allows,
+            follow_click: followClicks,
+            follow_success: followSuccess,
+            retry_success: retrySuccess,
+          },
+          unique_users: {
+            blocked: blockedUsers.size,
+            allowed: allowedUsers.size,
+            follow_success: followSuccessUsers.size,
+            retry_success: retrySuccessUsers.size,
+          },
+          rates: {
+            allow_over_block_pct: pct(allows, blocks),
+            follow_click_over_block_pct: pct(followClicks, blocks),
+            follow_success_over_click_pct: pct(followSuccess, followClicks),
+            retry_success_over_follow_success_pct: pct(retrySuccess, followSuccess),
+            retry_success_over_block_pct: pct(retrySuccess, blocks),
+          },
+        },
+        { headers: corsHeaders },
+      );
+    }
+
+    // Followers gate funnel metrics grouped by host (admin dashboard leaderboard)
+    // GET /api/analytics/live/followers-funnel/by-host?days=7&channel_id=<id>&limit=20
+    // Auth: Bearer <Firebase ID token>
+    if (req.method === "GET" && normalized === "/analytics/live/followers-funnel/by-host") {
+      await requireAdminPermission(req);
+
+      const sb = requireSupabaseAdmin();
+      const daysRaw = Number(url.searchParams.get("days") ?? 7);
+      const days = Number.isFinite(daysRaw) ? Math.max(1, Math.min(90, Math.floor(daysRaw))) : 7;
+      const channelId = String(url.searchParams.get("channel_id") ?? url.searchParams.get("channelId") ?? "").trim();
+      const limitRaw = Number(url.searchParams.get("limit") ?? 20);
+      const limit = Number.isFinite(limitRaw) ? Math.max(1, Math.min(100, Math.floor(limitRaw))) : 20;
+
+      const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+
+      const eventTypeAliases: Record<string, string> = {
+        FOLLOWERS_ONLY_BLOCK: "FOLLOWERS_ONLY_BLOCK",
+        FOLLOWERS_ONLY_ALLOW: "FOLLOWERS_ONLY_ALLOW",
+        FOLLOWERS_ONLY_FOLLOW_CLICK: "FOLLOWERS_ONLY_FOLLOW_CLICK",
+        FOLLOWERS_ONLY_FOLLOW_SUCCESS: "FOLLOWERS_ONLY_FOLLOW_SUCCESS",
+        FOLLOWERS_ONLY_RETRY_SUCCESS: "FOLLOWERS_ONLY_RETRY_SUCCESS",
+        live_followers_gate_blocked: "FOLLOWERS_ONLY_BLOCK",
+        live_followers_follow_join_tap: "FOLLOWERS_ONLY_FOLLOW_CLICK",
+        live_followers_follow_join_success: "FOLLOWERS_ONLY_FOLLOW_SUCCESS",
+        live_followers_retry_join_success: "FOLLOWERS_ONLY_RETRY_SUCCESS",
+      };
+
+      const requestedTypes = Object.keys(eventTypeAliases);
+      let query = sb
+        .from("creator_journey_events")
+        .select("event_type,user_uid,event_key,metadata")
+        .in("event_type", requestedTypes)
+        .gte("occurred_at", since);
+
+      if (channelId) {
+        query = query.eq("event_key", channelId);
+      }
+
+      const { data, error } = await query;
+      if (error) {
+        throw new HttpError(500, "db_error", `Failed to load followers funnel by host: ${error.message}`);
+      }
+
+      type HostBucket = {
+        host_id: string;
+        counts: Record<string, number>;
+        blocked_users: Set<string>;
+        allowed_users: Set<string>;
+        follow_success_users: Set<string>;
+        retry_success_users: Set<string>;
+      };
+
+      const buckets = new Map<string, HostBucket>();
+
+      const ensureBucket = (hostId: string): HostBucket => {
+        const key = hostId.trim();
+        const existing = buckets.get(key);
+        if (existing) return existing;
+        const created: HostBucket = {
+          host_id: key,
+          counts: {
+            FOLLOWERS_ONLY_BLOCK: 0,
+            FOLLOWERS_ONLY_ALLOW: 0,
+            FOLLOWERS_ONLY_FOLLOW_CLICK: 0,
+            FOLLOWERS_ONLY_FOLLOW_SUCCESS: 0,
+            FOLLOWERS_ONLY_RETRY_SUCCESS: 0,
+          },
+          blocked_users: new Set<string>(),
+          allowed_users: new Set<string>(),
+          follow_success_users: new Set<string>(),
+          retry_success_users: new Set<string>(),
+        };
+        buckets.set(key, created);
+        return created;
+      };
+
+      for (const row of (data ?? []) as Array<Record<string, unknown>>) {
+        const rawType = String(row.event_type ?? "").trim();
+        const normalizedType = eventTypeAliases[rawType];
+        if (!normalizedType) continue;
+
+        const metadata = (row.metadata && typeof row.metadata === "object")
+          ? (row.metadata as Record<string, unknown>)
+          : {};
+        const hostId = String(metadata.host_id ?? "").trim();
+        if (!hostId) continue;
+
+        const bucket = ensureBucket(hostId);
+        bucket.counts[normalizedType] = (bucket.counts[normalizedType] ?? 0) + 1;
+
+        const userUid = String(row.user_uid ?? "").trim();
+        if (!userUid) continue;
+        if (normalizedType === "FOLLOWERS_ONLY_BLOCK") bucket.blocked_users.add(userUid);
+        if (normalizedType === "FOLLOWERS_ONLY_ALLOW") bucket.allowed_users.add(userUid);
+        if (normalizedType === "FOLLOWERS_ONLY_FOLLOW_SUCCESS") bucket.follow_success_users.add(userUid);
+        if (normalizedType === "FOLLOWERS_ONLY_RETRY_SUCCESS") bucket.retry_success_users.add(userUid);
+      }
+
+      const pct = (num: number, den: number) => den > 0 ? Number(((num / den) * 100).toFixed(2)) : 0;
+
+      const rows = Array.from(buckets.values()).map((bucket) => {
+        const blocked = bucket.counts.FOLLOWERS_ONLY_BLOCK ?? 0;
+        const allowed = bucket.counts.FOLLOWERS_ONLY_ALLOW ?? 0;
+        const followClick = bucket.counts.FOLLOWERS_ONLY_FOLLOW_CLICK ?? 0;
+        const followSuccess = bucket.counts.FOLLOWERS_ONLY_FOLLOW_SUCCESS ?? 0;
+        const retrySuccess = bucket.counts.FOLLOWERS_ONLY_RETRY_SUCCESS ?? 0;
+        return {
+          host_id: bucket.host_id,
+          totals: {
+            blocked,
+            allowed,
+            follow_click: followClick,
+            follow_success: followSuccess,
+            retry_success: retrySuccess,
+          },
+          unique_users: {
+            blocked: bucket.blocked_users.size,
+            allowed: bucket.allowed_users.size,
+            follow_success: bucket.follow_success_users.size,
+            retry_success: bucket.retry_success_users.size,
+          },
+          rates: {
+            allow_over_block_pct: pct(allowed, blocked),
+            follow_click_over_block_pct: pct(followClick, blocked),
+            follow_success_over_click_pct: pct(followSuccess, followClick),
+            retry_success_over_follow_success_pct: pct(retrySuccess, followSuccess),
+            retry_success_over_block_pct: pct(retrySuccess, blocked),
+          },
+        };
+      });
+
+      rows.sort((a, b) => {
+        const deltaRate = (b.rates.retry_success_over_block_pct ?? 0) - (a.rates.retry_success_over_block_pct ?? 0);
+        if (deltaRate !== 0) return deltaRate;
+        return (b.totals.blocked ?? 0) - (a.totals.blocked ?? 0);
+      });
+
+      return json(
+        {
+          ok: true,
+          window_days: days,
+          since,
+          filters: {
+            channel_id: channelId || null,
+            limit,
+          },
+          hosts: rows.slice(0, limit),
+        },
+        { headers: corsHeaders },
+      );
+    }
+
+    if (req.method === "GET" && normalized === "/subscriptions/plans") {
+      const audience = parseAudience(url.searchParams.get("audience"));
+
+      const dbPlans = await readPlansFromDb(audience);
+      if (dbPlans !== null) {
+        return json({ ok: true, source: "db", plans: dbPlans }, { headers: corsHeaders });
+      }
+
+      const envPlans = readPlansFromEnv();
+      if (envPlans) {
+        return json({ ok: true, source: "env", plans: filterPlansForAudience(envPlans, audience) }, { headers: corsHeaders });
+      }
+
+      return json(
+        { ok: true, source: "fallback", plans: filterPlansForAudience(defaultPlans(audience), audience) },
+        { headers: corsHeaders },
+      );
+    }
+
+    // Promotions
+    // Primary (used by the app): /api/subscriptions/promotions
+    // Aliases: /api/promotions, /api/promo, /api/promotion
+    if (
+      req.method === "GET" &&
+      (normalized === "/subscriptions/promotions" ||
+        normalized === "/promotions" ||
+        normalized === "/promo" ||
+        normalized === "/promotion")
+    ) {
+      const requestedPlanId = normalizePlanId(url.searchParams.get("plan_id") ?? "");
+      const promotionCatalog = (await readPromotionsFromDb()) ?? readPromotionsFromEnv() ?? [];
+      const promotions = promotionCatalog.filter((promotion) => {
+        if (!requestedPlanId) return true;
+
+        const targets = [
+          ...(promotion.target_plan ? [promotion.target_plan] : []),
+          ...(promotion.target_plans ?? []),
+        ].map((value) => normalizePlanId(value)).filter(Boolean);
+
+        return targets.length === 0 || targets.includes("all") || targets.includes(requestedPlanId);
+      });
+      return json({ ok: true, promotions }, { headers: corsHeaders });
+    }
+
+    if (req.method === "GET" && normalized === "/subscriptions/me") {
+      const { uid, email } = await requireFirebaseUser(req);
+      const sb = requireSupabaseAdmin();
+
+      // Dev/test allowlist: force certain test accounts onto launch-role plans.
+      // Guarded by WEAFRICA_ENABLE_TEST_ROUTES=true.
+      const emailLower = String(email ?? "").trim().toLowerCase();
+      const forcedPlanId = enableTestRoutes
+        ? (emailLower === "artist1@weafrica.test"
+          ? "artist_pro"
+          : emailLower === "dj1@weafrica.test"
+          ? "dj_pro"
+          : "")
+        : "";
+
+      if (forcedPlanId) {
+        const fallbackEntitlements = defaultEntitlementsForPlanId(forcedPlanId);
+        return json(
+          {
+            ok: true,
+            build_tag: BUILD_TAG,
+            plan_id: forcedPlanId,
+            status: "active",
+            current_period_end: null,
+            entitlements: {
+              plan_id: forcedPlanId,
+              ads_enabled: fallbackEntitlements.ads_enabled,
+              ...(fallbackEntitlements.perks ? { perks: fallbackEntitlements.perks } : {}),
+              ...(fallbackEntitlements.features ? { features: fallbackEntitlements.features } : {}),
+            },
+            source: "test_allowlist",
+            metadata: { email: emailLower },
+            updated_at: new Date().toISOString(),
+          },
+          { headers: corsHeaders },
+        );
+      }
+
+      const { row: subRow, warning } = await readLatestUserSubscriptionRow(sb, uid);
+
+      // If the table doesn't exist or columns don't line up, degrade gracefully.
+      // This endpoint is used during app boot; returning a free entitlement keeps the app usable.
+      if (warning) {
+        const fallbackPlanId = await resolveCreatorFallbackPlanId(sb, uid, "free");
+        const fallbackEntitlements = defaultEntitlementsForPlanId(fallbackPlanId);
+        return json(
+          {
+            ok: true,
+            build_tag: BUILD_TAG,
+            plan_id: fallbackPlanId,
+            status: "inactive",
+            current_period_end: null,
+            entitlements: {
+              plan_id: fallbackPlanId,
+              ads_enabled: fallbackEntitlements.ads_enabled,
+              ...(fallbackEntitlements.perks ? { perks: fallbackEntitlements.perks } : {}),
+              ...(fallbackEntitlements.features ? { features: fallbackEntitlements.features } : {}),
+            },
+            source: "fallback",
+            metadata: null,
+            updated_at: null,
+            warning,
+          },
+          { headers: corsHeaders },
+        );
+      }
+
+      const now = new Date();
+
+      const sub = subRow as any;
+  const rawPlanId = normalizePlanId(sub?.plan_id ?? sub?.planId ?? sub?.plan ?? "free") || "free";
+  const planId = await resolveCreatorFallbackPlanId(sb, uid, rawPlanId);
+      const rawStatus = String(sub?.status ?? sub?.state ?? "inactive").trim() || "inactive";
+
+      const endRaw =
+        sub?.current_period_end ??
+        sub?.currentPeriodEnd ??
+        sub?.end_date ??
+        sub?.endDate ??
+        sub?.ends_at ??
+        sub?.endsAt ??
+        null;
+      const end = endRaw ? new Date(String(endRaw)) : null;
+      const statusIsActive = rawStatus === "active" || rawStatus === "trialing";
+      const timeIsActive = end ? end.getTime() > now.getTime() : statusIsActive;
+      const effectiveStatus = statusIsActive && timeIsActive ? rawStatus : "inactive";
+
+      // Pull plan features (optional) to drive feature gating.
+      let planFeatures: Record<string, unknown> | undefined;
+      let planPerks: Record<string, unknown> | undefined;
+      if (planId) {
+        const entitlementsRow = await readPlanEntitlementsByPlanId(sb, planId);
+        planFeatures = entitlementsRow?.features;
+        planPerks = entitlementsRow?.perks;
+      }
+
+      const fallbackEntitlements = defaultEntitlementsForPlanId(planId);
+      const mergedFeatures = mergeRecordsDeep(fallbackEntitlements.features, planFeatures);
+      const mergedPerks = mergeRecordsDeep(fallbackEntitlements.perks, planPerks);
+
+      const isFree = isFreeLikePlanId(planId);
+
+      return json(
+        {
+          ok: true,
+          build_tag: BUILD_TAG,
+          plan_id: planId,
+          status: isFree ? "inactive" : effectiveStatus,
+          current_period_end: end ? end.toISOString() : null,
+          entitlements: {
+            plan_id: planId,
+            ads_enabled: fallbackEntitlements.ads_enabled,
+            perks: mergedPerks ?? {
+              ads: {
+                interstitial_every_songs: isFree ? 2 : 0,
+                enabled: isFree,
+              },
+            },
+            features: mergedFeatures ?? undefined,
+          },
+          source: sub?.source ?? null,
+          metadata: (sub?.metadata ?? sub?.meta) ?? null,
+          updated_at: sub?.updated_at ?? sub?.updatedAt ?? null,
+        },
+        { headers: corsHeaders },
+      );
+    }
+
+    // --------------------
+    // Test helpers
+    // --------------------
+
+    // Simulate a successful payment by activating a plan for the authenticated user.
+    // Guarded by WEAFRICA_ENABLE_TEST_ROUTES=true and optional x-weafrica-test-token.
+    if (req.method === "POST" && normalized === "/subscriptions/test/activate") {
+      requireTestAccess(req);
+      const { uid } = await requireFirebaseUser(req);
+      const sb = requireSupabaseAdmin();
+      const body = await readJson(req);
+
+      const planId = normalizePlanId(body.plan_id ?? "");
+      const months = Math.min(Math.max(Number(body.months ?? 1), 1), 24);
+
+      if (!planId) throw new HttpError(400, "bad_request", "Missing plan_id");
+
+      // Rough month sizing; good enough for sandbox.
+      const start = new Date();
+      const end = new Date(start.getTime() + months * 30 * 24 * 60 * 60 * 1000);
+
+      const { error } = await sb
+        .from("user_subscriptions")
+        .upsert(
+          {
+            uid,
+            plan_id: planId,
+            status: "active",
+            current_period_start: start.toISOString(),
+            current_period_end: end.toISOString(),
+            source: "test",
+            metadata: { months },
+          },
+          { onConflict: "uid" },
+        );
+
+      if (error) throw new HttpError(500, "supabase_error", error.message);
+
+      return json({ ok: true, uid, plan_id: planId, status: "active", current_period_end: end.toISOString() }, { headers: corsHeaders });
+    }
+
+    // --------------------
+    // Payments (PayChangu)
+    // --------------------
+
+    // --------------------
+    // Coins (Consumer topups)
+    // --------------------
+
+    // Public: list active coin packages.
+    if (req.method === "GET" && normalized === "/coins/packages") {
+      const packages = await listCoinPackages();
+
+      if (packages === null) {
+        return json({ ok: false, error: "supabase_error", message: "Unable to load coin packages" }, { status: 500, headers: corsHeaders });
+      }
+
+      return json({ ok: true, packages }, { headers: corsHeaders });
+    }
+
+    // Authenticated: start a PayChangu checkout for a coin topup package.
+    if ((req.method === "POST" || req.method === "GET") && normalized === "/coins/paychangu/start") {
+      const { uid, email } = await requireFirebaseUser(req);
+      const body = req.method === "GET"
+        ? {
+          package_id: url.searchParams.get("package_id") ?? "",
+          country_code: url.searchParams.get("country_code") ?? "",
+          user_id: url.searchParams.get("user_id") ?? "",
+        }
+        : await readJson(req);
+
+      const packageId = String(body.package_id ?? "").trim();
+      const countryCode = String(body.country_code ?? "MW").trim().toUpperCase();
+      const userId = String(body.user_id ?? "").trim();
+
+      if (!packageId) {
+        throw new HttpError(400, "bad_request", "Missing package_id");
+      }
+      if (userId && userId !== uid) {
+        throw new HttpError(403, "forbidden", "user_id does not match authenticated user");
+      }
+
+      if (!paychanguSecretKey) {
+        throw new HttpError(501, "not_configured", "Missing PAYCHANGU_SECRET_KEY (set it on the Edge Function)");
+      }
+
+      const sb = requireSupabaseAdmin();
+
+      // Server-authoritative package lookup.
+      const pkg = await getCoinPackageById(sb, packageId);
+      if (!pkg) throw new HttpError(404, "not_found", "Unknown/inactive package_id");
+
+      const title = pkg.title;
+      const price = Number(pkg.price ?? 0);
+      const currency = String(pkg.currency ?? "MWK").trim() || "MWK";
+      const coins = Math.max(Number(pkg.coins ?? 0), 0);
+      const bonus = Math.max(Number(pkg.bonus_coins ?? 0), 0);
+
+      const amount = Math.max(price, 0);
+      if (amount <= 0) throw new HttpError(400, "bad_request", "Package price must be > 0");
+
+      const { callbackUrl, returnUrl } = deriveCallbackUrl(url);
+      const txRef = crypto.randomUUID();
+
+      const nameSeed = (email ?? "").split("@")[0];
+      const { first, last } = splitName(nameSeed);
+
+      const payload = {
+        amount,
+        currency,
+        email: email ?? undefined,
+        first_name: first,
+        last_name: last,
+        callback_url: callbackUrl,
+        return_url: returnUrl,
+        tx_ref: txRef,
+        customization: {
+          title: "WeAfrica Coins",
+          description: `${title} (${coins + bonus} coins)`,
+        },
+        meta: {
+          uid,
+          package_id: packageId,
+          country_code: countryCode,
+        },
+      };
+
+      const payRes = await fetch(`${paychanguApiBase}/payment`, {
+        method: "POST",
+        headers: {
+          "Accept": "application/json",
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${paychanguSecretKey}`,
+        },
+        body: JSON.stringify(payload),
+      });
+
+      const payText = await payRes.text();
+      let payDecoded: unknown;
+      try {
+        payDecoded = JSON.parse(payText);
+      } catch {
+        throw new HttpError(502, "bad_gateway", `PayChangu returned non-JSON (HTTP ${payRes.status})`);
+      }
+
+      if (!payDecoded || typeof payDecoded !== "object" || Array.isArray(payDecoded)) {
+        throw new HttpError(502, "bad_gateway", "PayChangu returned invalid payload");
+      }
+
+      const payObj = payDecoded as JsonObject;
+      if (payRes.status < 200 || payRes.status >= 300) {
+        throw new HttpError(502, "bad_gateway", `PayChangu initiate failed (HTTP ${payRes.status}): ${JSON.stringify(payObj)}`);
+      }
+
+      const topData = (payObj.data && typeof payObj.data === "object" && !Array.isArray(payObj.data))
+        ? (payObj.data as JsonObject)
+        : ({} as JsonObject);
+
+      const checkout = String(topData.checkout_url ?? "").trim();
+      if (!checkout) {
+        throw new HttpError(502, "bad_gateway", `PayChangu initiate missing checkout_url: ${JSON.stringify(payObj)}`);
+      }
+
+      // Persist as pending for webhook reconciliation.
+      const { error: insErr } = await sb
+        .from("payments")
+        .insert({
+          user_id: uid,
+          provider: "paychangu",
+          purpose: "coin_topup",
+          amount,
+          currency,
+          tx_ref: txRef,
+          status: "pending",
+          checkout_url: checkout,
+          metadata: {
+            package_id: packageId,
+            coins,
+            bonus_coins: bonus,
+            country_code: countryCode,
+          },
+        });
+      if (insErr) throw new HttpError(500, "supabase_error", insErr.message);
+
+      return json(
+        {
+          ok: true,
+          checkout_url: checkout,
+          provider_reference: txRef,
+          tx_ref: txRef,
+          package_id: packageId,
+          user_id: uid,
+        },
+        { headers: corsHeaders },
+      );
+    }
+
+    // Authenticated: explicitly verify and finalize a coin topup by tx_ref.
+    // This is used by mobile clients after checkout returns, and acts as a
+    // resilient fallback when webhooks are delayed or temporarily unavailable.
+    if ((req.method === "POST" || req.method === "GET") && normalized === "/coins/paychangu/verify") {
+      const { uid } = await requireFirebaseUser(req);
+      const body = req.method === "GET"
+        ? {
+          tx_ref: url.searchParams.get("tx_ref") ?? "",
+          provider_reference: url.searchParams.get("provider_reference") ?? "",
+        }
+        : await readJson(req);
+
+      const txRef = String(body.tx_ref ?? body.provider_reference ?? "").trim();
+      if (!txRef) {
+        throw new HttpError(400, "bad_request", "Missing tx_ref");
+      }
+
+      const sb = requireSupabaseAdmin();
+
+      const { data: payment, error: payErr } = await sb
+        .from("payments")
+        .select("id,user_id,purpose,amount,currency,status,verified_at")
+        .eq("provider", "paychangu")
+        .eq("purpose", "coin_topup")
+        .eq("tx_ref", txRef)
+        .maybeSingle();
+
+      if (payErr) {
+        throw new HttpError(500, "supabase_error", payErr.message);
+      }
+      if (!payment) {
+        throw new HttpError(404, "not_found", "Payment not found");
+      }
+
+      const paymentUid = String((payment as any).user_id ?? "").trim();
+      if (!paymentUid || paymentUid !== uid) {
+        throw new HttpError(403, "forbidden", "Payment does not belong to authenticated user");
+      }
+
+      if ((payment as any).verified_at) {
+        const priorStatus = String((payment as any).status ?? "").trim().toLowerCase();
+        return json(
+          {
+            ok: true,
+            tx_ref: txRef,
+            idempotent: true,
+            success: priorStatus === "success",
+            status: priorStatus || "pending",
+          },
+          { headers: corsHeaders },
+        );
+      }
+
+      const verified = await paychanguVerify(txRef);
+      const vData = (verified.data && typeof verified.data === "object" && !Array.isArray(verified.data))
+        ? (verified.data as JsonObject)
+        : ({} as JsonObject);
+
+      const vStatus = String(vData.status ?? "").trim();
+      const vCurrency = String(vData.currency ?? "MWK").trim() || "MWK";
+      const vAmount = parsePriceMwk(vData.amount ?? 0);
+      const vReference = String(vData.reference ?? "").trim() || null;
+
+      const expectedAmount = Number((payment as any).amount ?? 0);
+      const expectedCurrency = String((payment as any).currency ?? "MWK").trim() || "MWK";
+
+      const success = isTruthySuccess(vStatus);
+      const amountOk = vAmount >= expectedAmount;
+      const currencyOk = vCurrency.toUpperCase() === expectedCurrency.toUpperCase();
+      const okToCredit = Boolean(success && amountOk && currencyOk);
+
+      const { data: applied, error: applyErr } = await sb
+        .rpc("apply_coin_topup_paychangu", {
+          p_tx_ref: txRef,
+          p_success: okToCredit,
+          p_verified_amount: vAmount,
+          p_verified_currency: vCurrency,
+          p_provider_reference: vReference,
+          p_provider_status: vStatus,
+          p_raw: verified,
+        })
+        .maybeSingle();
+
+      if (applyErr) {
+        throw new HttpError(500, "supabase_error", applyErr.message);
+      }
+
+      return json(
+        {
+          ok: true,
+          tx_ref: txRef,
+          success: okToCredit,
+          status: okToCredit ? "success" : "failed",
+          result: applied ?? null,
+        },
+        { headers: corsHeaders },
+      );
+    }
+
+    // Authenticated: generic verify/finalize for PayChangu payments tied to the
+    // `payments` ledger (coin topups, battle tickets, event tickets).
+    if ((req.method === "POST" || req.method === "GET") && normalized === "/payments/paychangu/verify") {
+      const { uid } = await requireFirebaseUser(req);
+      const body = req.method === "GET"
+        ? {
+          tx_ref: url.searchParams.get("tx_ref") ?? "",
+          provider_reference: url.searchParams.get("provider_reference") ?? "",
+        }
+        : await readJson(req);
+
+      const txRef = String(body.tx_ref ?? body.provider_reference ?? "").trim();
+      if (!txRef) {
+        throw new HttpError(400, "bad_request", "Missing tx_ref");
+      }
+
+      const sb = requireSupabaseAdmin();
+      const { data: genericPay, error: genericErr } = await sb
+        .from("payments")
+        .select("id,user_id,purpose,amount,currency,status,verified_at,metadata")
+        .eq("provider", "paychangu")
+        .eq("tx_ref", txRef)
+        .maybeSingle();
+
+      if (genericErr) {
+        throw new HttpError(500, "supabase_error", genericErr.message);
+      }
+      if (!genericPay) {
+        throw new HttpError(404, "not_found", "Payment not found");
+      }
+
+      const paymentUid = String((genericPay as any).user_id ?? "").trim();
+      if (!paymentUid || paymentUid !== uid) {
+        throw new HttpError(403, "forbidden", "Payment does not belong to authenticated user");
+      }
+
+      const purpose = String((genericPay as any).purpose ?? "").trim();
+      if ((genericPay as any).verified_at) {
+        const priorStatus = String((genericPay as any).status ?? "").trim().toLowerCase();
+        return json(
+          {
+            ok: true,
+            idempotent: true,
+            tx_ref: txRef,
+            purpose,
+            success: priorStatus === "success",
+            status: priorStatus || "pending",
+          },
+          { headers: corsHeaders },
+        );
+      }
+
+      const verified = await paychanguVerify(txRef);
+      const vData = (verified.data && typeof verified.data === "object" && !Array.isArray(verified.data))
+        ? (verified.data as JsonObject)
+        : ({} as JsonObject);
+
+      const vStatus = String(vData.status ?? "").trim();
+      const vCurrency = String(vData.currency ?? "MWK").trim() || "MWK";
+      const vAmount = parsePriceMwk(vData.amount ?? 0);
+      const vReference = String(vData.reference ?? "").trim() || null;
+
+      const expectedAmount = Number((genericPay as any).amount ?? 0);
+      const expectedCurrency = String((genericPay as any).currency ?? "MWK").trim() || "MWK";
+
+      const success = isTruthySuccess(vStatus);
+      const amountOk = vAmount >= expectedAmount;
+      const currencyOk = vCurrency.toUpperCase() === expectedCurrency.toUpperCase();
+
+      if (purpose === "coin_topup") {
+        const okToCredit = Boolean(success && amountOk && currencyOk);
+
+        const { data: applied, error: applyErr } = await sb
+          .rpc("apply_coin_topup_paychangu", {
+            p_tx_ref: txRef,
+            p_success: okToCredit,
+            p_verified_amount: vAmount,
+            p_verified_currency: vCurrency,
+            p_provider_reference: vReference,
+            p_provider_status: vStatus,
+            p_raw: verified,
+          })
+          .maybeSingle();
+
+        if (applyErr) {
+          throw new HttpError(500, "supabase_error", applyErr.message);
+        }
+
+        return json({ ok: true, processed: true, success: okToCredit, tx_ref: txRef, purpose, result: applied ?? null }, { headers: corsHeaders });
+      }
+
+      if (purpose === "battle_ticket") {
+        const okToAdmit = Boolean(success && amountOk && currencyOk);
+
+        const { data: applied, error: applyErr } = await sb
+          .rpc("apply_battle_ticket_purchase_paychangu", {
+            p_tx_ref: txRef,
+            p_success: okToAdmit,
+            p_verified_amount: vAmount,
+            p_verified_currency: vCurrency,
+            p_provider_reference: vReference,
+            p_provider_status: vStatus,
+            p_raw: verified,
+          })
+          .maybeSingle();
+
+        if (applyErr) {
+          throw new HttpError(500, "supabase_error", applyErr.message);
+        }
+
+        return json({ ok: true, processed: true, success: okToAdmit, tx_ref: txRef, purpose, result: applied ?? null }, { headers: corsHeaders });
+      }
+
+      if (purpose === "event_ticket") {
+        const okToIssue = Boolean(success && amountOk && currencyOk);
+        const meta = ((genericPay as any).metadata && typeof (genericPay as any).metadata === "object")
+          ? ((genericPay as any).metadata as Record<string, unknown>)
+          : ({} as Record<string, unknown>);
+
+        const eventId = String((meta as any).event_id ?? (meta as any).eventId ?? "").trim();
+        const ticketId = String((meta as any).ticket_id ?? (meta as any).ticketId ?? (meta as any).ticket_type_id ?? "").trim();
+        const orderId = String((meta as any).order_id ?? (meta as any).orderId ?? "").trim();
+        const qtyRaw = Number((meta as any).qty ?? (meta as any).quantity ?? 1);
+        const qty = Number.isFinite(qtyRaw) ? Math.min(Math.max(Math.floor(qtyRaw), 1), 20) : 1;
+
+        {
+          const { error: payUpdErr } = await sb
+            .from("payments")
+            .update({
+              status: okToIssue ? "success" : "failed",
+              provider_reference: vReference,
+              provider_status: vStatus,
+              verified_at: new Date().toISOString(),
+            })
+            .eq("id", (genericPay as any).id);
+          if (payUpdErr) {
+            throw new HttpError(500, "supabase_error", payUpdErr.message);
+          }
+        }
+
+        if (orderId) {
+          const statusUpdateVariants: Array<Record<string, unknown>> = [
+            { status: okToIssue ? "paid" : "failed" },
+            { payment_status: okToIssue ? "Paid" : "Failed" },
+            { payment_status: okToIssue ? "paid" : "failed" },
+          ];
+
+          for (const patch of statusUpdateVariants) {
+            const q = await sb.from("ticket_orders").update(patch).eq("id", orderId);
+            if (!q.error) break;
+            const msg = String((q.error as any)?.message ?? q.error ?? "").toLowerCase();
+            if (!msg.includes("schema cache") || !msg.includes("could not find")) {
+              break;
+            }
+          }
+        }
+
+        if (!okToIssue) {
+          return json({ ok: true, processed: true, success: false, tx_ref: txRef, purpose }, { headers: corsHeaders });
+        }
+
+        if (!uid || !eventId) {
+          return json(
+            { ok: true, processed: true, success: true, issued: false, reason: "missing_metadata", tx_ref: txRef, purpose },
+            { headers: corsHeaders },
+          );
+        }
+
+        const qrCodes: string[] = [];
+        for (let i = 0; i < qty; i++) {
+          const qr = crypto.randomUUID();
+
+          const insertVariants: Array<Record<string, unknown>> = [
+            {
+              order_id: orderId || null,
+              user_id: uid,
+              event_id: eventId,
+              ticket_id: ticketId || null,
+              qr_code: qr,
+              status: "Valid",
+            },
+            {
+              order_id: orderId || null,
+              user_id: uid,
+              event_id: eventId,
+              ticket_type_id: ticketId || null,
+              qr_payload: qr,
+              status: "valid",
+            },
+            {
+              order_id: orderId || null,
+              user_id: uid,
+              ticket_id: ticketId || null,
+              qr_code: qr,
+              status: "Valid",
+            },
+          ];
+
+          let inserted = false;
+          let lastErr: unknown = null;
+          for (const payload of insertVariants) {
+            const q = await sb.from("user_tickets").insert(payload).select("id").maybeSingle();
+            if (!q.error) {
+              inserted = true;
+              break;
+            }
+            lastErr = q.error;
+            const msg = String((q.error as any)?.message ?? q.error ?? "").toLowerCase();
+            if (!msg.includes("schema cache") || !msg.includes("could not find")) {
+              break;
+            }
+          }
+
+          if (!inserted) {
+            const msg = String((lastErr as any)?.message ?? lastErr ?? "");
+            throw new HttpError(500, "supabase_error", msg || "Failed to issue event ticket");
+          }
+
+          qrCodes.push(qr);
+        }
+
+        return json(
+          {
+            ok: true,
+            processed: true,
+            success: true,
+            issued: true,
+            tx_ref: txRef,
+            purpose,
+            event_id: eventId,
+            ticket_id: ticketId || null,
+            qty,
+            qr_codes: qrCodes,
+          },
+          { headers: corsHeaders },
+        );
+      }
+
+      return json({ ok: true, ignored: true, reason: "unsupported_purpose", tx_ref: txRef, purpose }, { headers: corsHeaders });
+    }
+
+    if ((req.method === "POST" || req.method === "GET") && normalized === "/paychangu/start") {
+      const { uid, email } = await requireFirebaseUser(req);
+      const body = req.method === "GET"
+        ? {
+          plan_id: url.searchParams.get("plan_id") ?? "",
+          months: url.searchParams.get("months") ?? url.searchParams.get("interval_count") ?? "",
+          interval_count: url.searchParams.get("interval_count") ?? "",
+          country_code: url.searchParams.get("country_code") ?? "",
+          user_id: url.searchParams.get("user_id") ?? "",
+        }
+        : await readJson(req);
+
+      const planId = normalizePlanId(body.plan_id ?? "");
+      const months = Math.min(Math.max(Number(body.months ?? 1), 1), 24);
+      const countryCode = String(body.country_code ?? "MW").trim().toUpperCase();
+      const userId = String(body.user_id ?? "").trim();
+
+      if (!planId) {
+        throw new HttpError(400, "bad_request", "Missing plan_id");
+      }
+      if (userId && userId !== uid) {
+        throw new HttpError(403, "forbidden", "user_id does not match authenticated user");
+      }
+
+      if (!paychanguSecretKey) {
+        throw new HttpError(501, "not_configured", "Missing PAYCHANGU_SECRET_KEY (set it on the Edge Function)");
+      }
+
+      const sb = requireSupabaseAdmin();
+
+      // Compute amount from a server-authoritative plan catalog.
+      // Primary: DB (subscription_plans). Fallback: env (WEAFRICA_PLANS_JSON). Final: hardcoded defaults.
+      // This keeps checkout working even if migrations haven't been applied yet.
+      type PaymentPlanRow = {
+        plan_id?: unknown;
+        name?: unknown;
+        price_mwk?: unknown;
+        currency?: unknown;
+        active?: unknown;
+        is_active?: unknown;
+      };
+
+      const dbLookup = async (): Promise<PaymentPlanRow | null> => {
+        try {
+          const q1 = await sb
+            .from("subscription_plans")
+            .select("plan_id,name,price_mwk,currency,active")
+            .eq("plan_id", planId)
+            .maybeSingle();
+
+          if (!q1.error) {
+            return (q1.data as PaymentPlanRow | null) ?? null;
+          }
+
+          const msg = String(q1.error.message ?? "").toLowerCase();
+
+          // Drift: some schemas use `is_active` instead of `active`.
+          if (msg.includes("active") && !msg.includes("inactive")) {
+            const q2 = await sb
+              .from("subscription_plans")
+              .select("plan_id,name,price_mwk,currency,is_active")
+              .eq("plan_id", planId)
+              .maybeSingle();
+            if (!q2.error) {
+              return (q2.data as PaymentPlanRow | null) ?? null;
+            }
+            // If the table exists but we still can't query it, fall back.
+            return null;
+          }
+
+          // Common when migrations haven't been applied: relation/table missing.
+          if (msg.includes("subscription_plans") || msg.includes("relation") || msg.includes("pgrst")) {
+            return null;
+          }
+
+          // Unknown DB error: fall back rather than hard-failing checkout.
+          return null;
+        } catch {
+          return null;
+        }
+      };
+
+      const envOrDefaultLookup = (): Plan | null => {
+        const needle = planId.trim();
+        if (!needle) return null;
+
+        const fromEnv = readPlansFromEnv();
+        if (fromEnv) {
+          const hit = fromEnv.find((p) => String(p.plan_id ?? "").trim() === needle);
+          if (hit && (hit.active !== false)) return hit;
+        }
+
+        const combined = [...defaultPlans("consumer"), ...defaultPlans("creator")];
+        const hit = combined.find((p) => String(p.plan_id ?? "").trim() === needle);
+        if (hit && (hit.active !== false)) return hit;
+
+        return null;
+      };
+
+      const planRow = await dbLookup();
+      const dbInactive = planRow && (((planRow as any).active === false) || ((planRow as any).is_active === false));
+
+      // If DB explicitly marks this plan inactive, do NOT allow fallback catalogs to override that.
+      if (planRow && dbInactive) {
+        throw new HttpError(404, "not_found", "Unknown/inactive plan_id");
+      }
+
+      const fallbackPlan = planRow ? null : envOrDefaultLookup();
+
+      if (!planRow && !fallbackPlan) {
+        throw new HttpError(404, "not_found", "Unknown/inactive plan_id");
+      }
+
+      const planName = (
+        String(planRow?.name ?? fallbackPlan?.name ?? planId).trim() || planId
+      );
+
+      const unitPrice = parsePriceMwk(planRow?.price_mwk ?? fallbackPlan?.price_mwk ?? 0);
+      const amount = Math.max(unitPrice * months, 0);
+
+      const currency = (
+        String(planRow?.currency ?? fallbackPlan?.currency ?? "MWK").trim() || "MWK"
+      );
+
+      if (amount <= 0) {
+        throw new HttpError(400, "bad_request", "Cannot start payment for a free/zero-priced plan");
+      }
+
+      const { callbackUrl, returnUrl } = deriveCallbackUrl(url);
+      const txRef = crypto.randomUUID();
+
+      // Best-effort customer name for receipts.
+      const nameSeed = (email ?? "").split("@")[0];
+      const { first, last } = splitName(nameSeed);
+
+      const payload = {
+        amount,
+        currency,
+        email: email ?? undefined,
+        first_name: first,
+        last_name: last,
+        callback_url: callbackUrl,
+        return_url: returnUrl,
+        tx_ref: txRef,
+        customization: {
+          title: "WeAfrica Music Subscription",
+          description: `${planName} (${months} month${months === 1 ? "" : "s"})`,
+        },
+        meta: {
+          uid,
+          plan_id: planId,
+          months,
+          country_code: countryCode,
+        },
+      };
+
+      const payRes = await fetch(`${paychanguApiBase}/payment`, {
+        method: "POST",
+        headers: {
+          "Accept": "application/json",
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${paychanguSecretKey}`,
+        },
+        body: JSON.stringify(payload),
+      });
+
+      const payText = await payRes.text();
+      let payDecoded: unknown;
+      try {
+        payDecoded = JSON.parse(payText);
+      } catch {
+        throw new HttpError(502, "bad_gateway", `PayChangu returned non-JSON (HTTP ${payRes.status})`);
+      }
+
+      if (!payDecoded || typeof payDecoded !== "object" || Array.isArray(payDecoded)) {
+        throw new HttpError(502, "bad_gateway", "PayChangu returned invalid payload");
+      }
+
+      const payObj = payDecoded as JsonObject;
+      if (payRes.status < 200 || payRes.status >= 300) {
+        throw new HttpError(502, "bad_gateway", `PayChangu initiate failed (HTTP ${payRes.status}): ${JSON.stringify(payObj)}`);
+      }
+
+      // Standard Checkout response shape:
+      // { status: 'success', data: { checkout_url: 'https://checkout.paychangu.com/..', data: { tx_ref, ... } } }
+      const topData = (payObj.data && typeof payObj.data === "object" && !Array.isArray(payObj.data))
+        ? (payObj.data as JsonObject)
+        : ({} as JsonObject);
+
+      const checkout = String(topData.checkout_url ?? "").trim();
+      if (!checkout) {
+        throw new HttpError(502, "bad_gateway", `PayChangu initiate missing checkout_url: ${JSON.stringify(payObj)}`);
+      }
+
+      const nested = (topData.data && typeof topData.data === "object" && !Array.isArray(topData.data))
+        ? (topData.data as JsonObject)
+        : ({} as JsonObject);
+      const mode = String(nested.mode ?? "").trim() || null;
+
+      // Persist as pending for webhook reconciliation.
+      try {
+        await upsertPaychanguPaymentTolerant(sb, {
+          tx_ref: txRef,
+          // Legacy drift: some deployments use `reference` instead of `tx_ref`.
+          reference: txRef,
+          uid,
+          // Compatibility: some deployments use `user_id` instead of `uid`.
+          user_id: uid,
+          plan_id: planId,
+          months,
+          amount,
+          currency,
+          status: "pending",
+          mode,
+          checkout_url: checkout,
+          // Ensure we still have months somewhere even on legacy tables.
+          raw: { ...payObj, weafrica: { months, plan_id: planId, uid } },
+        });
+      } catch (e) {
+        const msg = String((e as any)?.message ?? e ?? "");
+        throw new HttpError(500, "supabase_error", msg);
+      }
+
+      return json(
+        {
+          ok: true,
+          checkout_url: checkout,
+          provider_reference: txRef,
+          plan_id: planId,
+          months,
+          country_code: countryCode,
+          user_id: uid,
+        },
+        { headers: corsHeaders },
+      );
+    }
+
+    // Authenticated: explicitly verify and finalize a subscription checkout.
+    // This is used by clients after returning from checkout to reduce reliance
+    // on webhook delivery timing.
+    if ((req.method === "POST" || req.method === "GET") && normalized === "/paychangu/verify") {
+      const { uid } = await requireFirebaseUser(req);
+      const body = req.method === "GET"
+        ? {
+          tx_ref: url.searchParams.get("tx_ref") ?? "",
+          provider_reference: url.searchParams.get("provider_reference") ?? "",
+          plan_id: url.searchParams.get("plan_id") ?? "",
+        }
+        : await readJson(req);
+
+      const txRef = String(body.tx_ref ?? body.provider_reference ?? "").trim();
+      const expectedPlanId = String(body.plan_id ?? "").trim();
+      if (!txRef) {
+        throw new HttpError(400, "bad_request", "Missing tx_ref");
+      }
+
+      const sb = requireSupabaseAdmin();
+
+      // Tolerate schema drift across deployments.
+      let payRow: any = null;
+      {
+        const selects = [
+          "tx_ref,uid,plan_id,months,amount,currency,status,processed_at,raw",
+          "tx_ref,uid,plan_id,amount,currency,status,processed_at,raw",
+          "tx_ref,user_id,plan_id,months,amount,currency,status,processed_at,raw",
+          "tx_ref,user_id,plan_id,amount,currency,status,processed_at,raw",
+        ];
+
+        let lastErr: unknown = null;
+        for (const sel of selects) {
+          const q = await sb.from("paychangu_payments").select(sel).eq("tx_ref", txRef).maybeSingle();
+          if (!q.error) {
+            payRow = q.data;
+            break;
+          }
+          lastErr = q.error;
+
+          const msg = String((q.error as any)?.message ?? q.error ?? "").toLowerCase();
+          if (!msg.includes("schema cache") || !msg.includes("could not find the")) {
+            throw new HttpError(500, "supabase_error", (q.error as any)?.message ?? String(q.error));
+          }
+        }
+
+        if (!payRow && lastErr) {
+          throw new HttpError(500, "supabase_error", (lastErr as any)?.message ?? String(lastErr));
+        }
+
+        if (payRow && !payRow.uid && payRow.user_id) {
+          payRow.uid = payRow.user_id;
+        }
+      }
+
+      if (!payRow) {
+        throw new HttpError(404, "not_found", "Payment not found");
+      }
+
+      const payUid = String(payRow.uid ?? "").trim();
+      if (!payUid || payUid !== uid) {
+        throw new HttpError(403, "forbidden", "Payment does not belong to authenticated user");
+      }
+
+      const planId = String(payRow.plan_id ?? "").trim();
+      if (expectedPlanId && planId && expectedPlanId !== planId) {
+        throw new HttpError(400, "bad_request", "plan_id does not match this payment");
+      }
+
+      if (payRow.processed_at) {
+        const priorStatus = String(payRow.status ?? "").trim().toLowerCase();
+        return json(
+          {
+            ok: true,
+            tx_ref: txRef,
+            idempotent: true,
+            success: priorStatus === "success",
+            status: priorStatus || "pending",
+            plan_id: planId || null,
+          },
+          { headers: corsHeaders },
+        );
+      }
+
+      const verified = await paychanguVerify(txRef);
+      const vData = (verified.data && typeof verified.data === "object" && !Array.isArray(verified.data))
+        ? (verified.data as JsonObject)
+        : ({} as JsonObject);
+
+      const vStatus = String(vData.status ?? "").trim();
+      const vCurrency = String(vData.currency ?? "MWK").trim() || "MWK";
+      const vAmount = parsePriceMwk(vData.amount ?? 0);
+      const vReference = String(vData.reference ?? "").trim() || null;
+      const vChargeId = String(vData.charge_id ?? "").trim() || null;
+
+      const success = isTruthySuccess(vStatus);
+      const expectedAmount = parsePriceMwk(payRow.amount ?? 0);
+      const expectedCurrency = String(payRow.currency ?? "MWK").trim() || "MWK";
+      const amountOk = vAmount >= expectedAmount;
+      const currencyOk = vCurrency.toUpperCase() === expectedCurrency.toUpperCase();
+
+      if (!success || !amountOk || !currencyOk) {
+        const { error: updErr } = await sb
+          .from("paychangu_payments")
+          .update({
+            status: "failed",
+            reference: vReference,
+            charge_id: vChargeId,
+            raw: {
+              verify: verified,
+              reason: "manual_verify_mismatch",
+            },
+            processed_at: new Date().toISOString(),
+          })
+          .eq("tx_ref", txRef);
+        if (updErr) throw new HttpError(500, "supabase_error", updErr.message);
+
+        return json(
+          {
+            ok: true,
+            tx_ref: txRef,
+            processed: true,
+            success: false,
+            status: "failed",
+            plan_id: planId || null,
+          },
+          { headers: corsHeaders },
+        );
+      }
+
+      const inferredMonths = (() => {
+        const direct = Number(payRow.months ?? NaN);
+        if (Number.isFinite(direct) && direct > 0) return direct;
+        const raw = payRow.raw;
+        if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+          const r = raw as Record<string, any>;
+          const fromMeta = Number(r?.meta?.months ?? r?.weafrica?.months ?? NaN);
+          if (Number.isFinite(fromMeta) && fromMeta > 0) return fromMeta;
+        }
+        return 1;
+      })();
+      const months = Math.min(Math.max(inferredMonths, 1), 24);
+
+      const now = new Date();
+      const { data: subRow, error: subErr } = await sb
+        .from("user_subscriptions")
+        .select("uid,current_period_end")
+        .eq("uid", uid)
+        .maybeSingle();
+      if (subErr) throw new HttpError(500, "supabase_error", subErr.message);
+
+      const currentEnd = subRow?.current_period_end ? new Date(String(subRow.current_period_end)) : null;
+      const base = currentEnd && currentEnd.getTime() > now.getTime() ? currentEnd : now;
+      const newEnd = new Date(base.getTime() + months * 30 * 24 * 60 * 60 * 1000);
+
+      const { error: upsertErr } = await sb
+        .from("user_subscriptions")
+        .upsert(
+          {
+            uid,
+            plan_id: planId,
+            status: "active",
+            current_period_start: now.toISOString(),
+            current_period_end: newEnd.toISOString(),
+            source: "paychangu",
+            metadata: { tx_ref: txRef, reference: vReference, event_type: "manual_verify" },
+          },
+          { onConflict: "uid" },
+        );
+      if (upsertErr) throw new HttpError(500, "supabase_error", upsertErr.message);
+
+      const { error: payUpdErr } = await sb
+        .from("paychangu_payments")
+        .update({
+          status: "success",
+          reference: vReference,
+          charge_id: vChargeId,
+          raw: {
+            verify: verified,
+            source: "manual_verify",
+          },
+          processed_at: new Date().toISOString(),
+        })
+        .eq("tx_ref", txRef);
+      if (payUpdErr) throw new HttpError(500, "supabase_error", payUpdErr.message);
+
+      return json(
+        {
+          ok: true,
+          tx_ref: txRef,
+          processed: true,
+          success: true,
+          status: "success",
+          plan_id: planId,
+          months,
+        },
+        { headers: corsHeaders },
+      );
+    }
+
+    // PayChangu callback/return landing pages (required fields for Standard Checkout).
+    if ((req.method === "GET" || req.method === "POST") && normalized === "/paychangu/callback") {
+      const txRef = url.searchParams.get("tx_ref") ?? url.searchParams.get("transaction_id") ?? "";
+      const status = url.searchParams.get("status") ?? "";
+      return html(
+        `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"/><title>Payment received</title></head>
+<body style="font-family: system-ui; padding: 16px;">
+<h2>Payment received</h2>
+<p>You can return to the app now.</p>
+<p><strong>tx_ref</strong>: ${txRef || "(missing)"}<br/><strong>status</strong>: ${status || "(missing)"}</p>
+</body></html>`,
+      );
+    }
+
+    if ((req.method === "GET" || req.method === "POST") && normalized === "/paychangu/return") {
+      const txRef = url.searchParams.get("tx_ref") ?? "";
+      const status = url.searchParams.get("status") ?? "";
+      return html(
+        `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"/><title>Payment not completed</title></head>
+<body style="font-family: system-ui; padding: 16px;">
+<h2>Payment not completed</h2>
+<p>If you cancelled checkout, you can try again from the app.</p>
+<p><strong>tx_ref</strong>: ${txRef || "(missing)"}<br/><strong>status</strong>: ${status || "(missing)"}</p>
+</body></html>`,
+      );
+    }
+
+    // Webhook endpoint (configure this URL in PayChangu dashboard → API Keys & Webhooks).
+    if (req.method === "POST" && normalized === "/paychangu/webhook") {
+      if (!paychanguWebhookSecret) {
+        throw new HttpError(501, "not_configured", "Missing PAYCHANGU_WEBHOOK_SECRET");
+      }
+
+      const signature = (req.headers.get("Signature") ?? req.headers.get("signature") ?? "").trim();
+      const raw = await readRawBody(req);
+      const computed = await hmacSha256Hex(raw, paychanguWebhookSecret);
+      if (!signature || signature.toLowerCase() !== computed.toLowerCase()) {
+        throw new HttpError(401, "unauthorized", "Invalid webhook signature");
+      }
+
+      let decoded: unknown;
+      try {
+        decoded = JSON.parse(raw);
+      } catch {
+        throw new HttpError(400, "bad_request", "Webhook payload must be JSON");
+      }
+      if (!decoded || typeof decoded !== "object" || Array.isArray(decoded)) {
+        throw new HttpError(400, "bad_request", "Webhook payload must be an object");
+      }
+
+      const payload = decoded as JsonObject;
+      const eventType = String(payload.event_type ?? payload.type ?? "").trim();
+
+      const nestedA = (payload.data && typeof payload.data === "object" && !Array.isArray(payload.data))
+        ? (payload.data as JsonObject)
+        : ({} as JsonObject);
+      const nestedB = (nestedA.data && typeof nestedA.data === "object" && !Array.isArray(nestedA.data))
+        ? (nestedA.data as JsonObject)
+        : ({} as JsonObject);
+
+      const txRef = String(payload.tx_ref ?? nestedA.tx_ref ?? nestedB.tx_ref ?? "").trim();
+      if (!txRef) {
+        return json({ ok: true, ignored: true, reason: "missing_tx_ref", event_type: eventType }, { headers: corsHeaders });
+      }
+
+      const verified = await paychanguVerify(txRef);
+      const vData = (verified.data && typeof verified.data === "object" && !Array.isArray(verified.data))
+        ? (verified.data as JsonObject)
+        : ({} as JsonObject);
+
+      const vStatus = String(vData.status ?? "").trim();
+      const vCurrency = String(vData.currency ?? "MWK").trim() || "MWK";
+      const vAmount = parsePriceMwk(vData.amount ?? 0);
+      const vReference = String(vData.reference ?? payload.reference ?? "").trim() || null;
+      const vChargeId = String(vData.charge_id ?? payload.charge_id ?? "").trim() || null;
+
+      const success = isTruthySuccess(vStatus);
+
+      const sb = requireSupabaseAdmin();
+
+      // Tolerate schema drift: older tables may miss `months`, and some deployments
+      // used `user_id` instead of `uid`.
+      let payRow: any = null;
+      {
+        const selects = [
+          "tx_ref,uid,plan_id,months,amount,currency,status,processed_at,raw",
+          "tx_ref,uid,plan_id,amount,currency,status,processed_at,raw",
+          "tx_ref,user_id,plan_id,months,amount,currency,status,processed_at,raw",
+          "tx_ref,user_id,plan_id,amount,currency,status,processed_at,raw",
+        ];
+
+        let lastErr: unknown = null;
+        for (const sel of selects) {
+          const q = await sb.from("paychangu_payments").select(sel).eq("tx_ref", txRef).maybeSingle();
+          if (!q.error) {
+            payRow = q.data;
+            break;
+          }
+          lastErr = q.error;
+
+          // If it's not a schema-cache missing-column error, don't keep trying.
+          const msg = String((q.error as any)?.message ?? q.error ?? "").toLowerCase();
+          if (!msg.includes("schema cache") || !msg.includes("could not find the")) {
+            throw new HttpError(500, "supabase_error", (q.error as any)?.message ?? String(q.error));
+          }
+        }
+
+        if (!payRow && lastErr) {
+          throw new HttpError(500, "supabase_error", (lastErr as any)?.message ?? String(lastErr));
+        }
+
+        // Normalize `uid` for downstream logic.
+        if (payRow && !payRow.uid && payRow.user_id) {
+          payRow.uid = payRow.user_id;
+        }
+      }
+
+      // If this isn't a subscription payment, it may be a generic payments-ledger
+      // coin topup. Fall back to the `payments` table.
+      if (!payRow) {
+        const { data: genericPay, error: genericErr } = await sb
+          .from("payments")
+          .select("id,user_id,purpose,amount,currency,status,verified_at,metadata")
+          .eq("provider", "paychangu")
+          .eq("tx_ref", txRef)
+          .maybeSingle();
+
+        if (genericErr) {
+          throw new HttpError(500, "supabase_error", genericErr.message);
+        }
+
+        if (!genericPay) {
+          return json({ ok: true, ignored: true, reason: "unknown_tx_ref", tx_ref: txRef }, { headers: corsHeaders });
+        }
+
+        const purpose = String((genericPay as any).purpose ?? "").trim();
+
+        // Idempotency guard.
+        if ((genericPay as any).verified_at) {
+          return json({ ok: true, idempotent: true, tx_ref: txRef }, { headers: corsHeaders });
+        }
+
+        const expectedAmount = Number((genericPay as any).amount ?? 0);
+        const expectedCurrency = String((genericPay as any).currency ?? "MWK").trim() || "MWK";
+        const amountOk = vAmount >= expectedAmount;
+        const currencyOk = vCurrency.toUpperCase() === expectedCurrency.toUpperCase();
+
+        if (purpose === "coin_topup") {
+          const okToCredit = Boolean(success && amountOk && currencyOk);
+
+          const { data: applied, error: applyErr } = await sb
+            .rpc("apply_coin_topup_paychangu", {
+              p_tx_ref: txRef,
+              p_success: okToCredit,
+              p_verified_amount: vAmount,
+              p_verified_currency: vCurrency,
+              p_provider_reference: vReference,
+              p_provider_status: vStatus,
+              p_raw: payload,
+            })
+            .maybeSingle();
+
+          if (applyErr) {
+            throw new HttpError(500, "supabase_error", applyErr.message);
+          }
+
+          return json({ ok: true, processed: true, success: okToCredit, tx_ref: txRef, result: applied ?? null }, { headers: corsHeaders });
+        }
+
+        if (purpose === "battle_ticket") {
+          const okToAdmit = Boolean(success && amountOk && currencyOk);
+
+          const { data: applied, error: applyErr } = await sb
+            .rpc("apply_battle_ticket_purchase_paychangu", {
+              p_tx_ref: txRef,
+              p_success: okToAdmit,
+              p_verified_amount: vAmount,
+              p_verified_currency: vCurrency,
+              p_provider_reference: vReference,
+              p_provider_status: vStatus,
+              p_raw: payload,
+            })
+            .maybeSingle();
+
+          if (applyErr) {
+            throw new HttpError(500, "supabase_error", applyErr.message);
+          }
+
+          return json({ ok: true, processed: true, success: okToAdmit, tx_ref: txRef, result: applied ?? null }, { headers: corsHeaders });
+        }
+
+        if (purpose === "event_ticket") {
+          const okToIssue = Boolean(success && amountOk && currencyOk);
+          const meta = ((genericPay as any).metadata && typeof (genericPay as any).metadata === "object")
+            ? ((genericPay as any).metadata as Record<string, unknown>)
+            : ({} as Record<string, unknown>);
+
+          const uid = String((genericPay as any).user_id ?? "").trim();
+          const eventId = String((meta as any).event_id ?? (meta as any).eventId ?? "").trim();
+          const ticketId = String((meta as any).ticket_id ?? (meta as any).ticketId ?? (meta as any).ticket_type_id ?? "").trim();
+          const orderId = String((meta as any).order_id ?? (meta as any).orderId ?? "").trim();
+          const qtyRaw = Number((meta as any).qty ?? (meta as any).quantity ?? 1);
+          const qty = Number.isFinite(qtyRaw) ? Math.min(Math.max(Math.floor(qtyRaw), 1), 20) : 1;
+
+          // Always mark the payment as verified (idempotency guard uses verified_at).
+          {
+            const { error: payUpdErr } = await sb
+              .from("payments")
+              .update({
+                status: okToIssue ? "success" : "failed",
+                provider_reference: vReference,
+                provider_status: vStatus,
+                verified_at: new Date().toISOString(),
+              })
+              .eq("id", (genericPay as any).id);
+            if (payUpdErr) {
+              throw new HttpError(500, "supabase_error", payUpdErr.message);
+            }
+          }
+
+          // Best-effort: update the associated order if present.
+          if (orderId) {
+            const statusUpdateVariants: Array<Record<string, unknown>> = [
+              { status: okToIssue ? "paid" : "failed" },
+              { payment_status: okToIssue ? "Paid" : "Failed" },
+              { payment_status: okToIssue ? "paid" : "failed" },
+            ];
+
+            for (const patch of statusUpdateVariants) {
+              const q = await sb.from("ticket_orders").update(patch).eq("id", orderId);
+              if (!q.error) break;
+              const msg = String((q.error as any)?.message ?? q.error ?? "").toLowerCase();
+              if (!msg.includes("schema cache") || !msg.includes("could not find")) {
+                // Non-schema error shouldn't prevent issuance.
+                break;
+              }
+            }
+          }
+
+          if (!okToIssue) {
+            return json(
+              {
+                ok: true,
+                processed: true,
+                success: false,
+                tx_ref: txRef,
+                purpose,
+              },
+              { headers: corsHeaders },
+            );
+          }
+
+          if (!uid || !eventId) {
+            // Payment is verified, but we cannot issue without metadata.
+            return json(
+              { ok: true, processed: true, success: true, issued: false, reason: "missing_metadata", tx_ref: txRef },
+              { headers: corsHeaders },
+            );
+          }
+
+          const qrCodes: string[] = [];
+          for (let i = 0; i < qty; i++) {
+            const qr = crypto.randomUUID();
+
+            const insertVariants: Array<Record<string, unknown>> = [
+              {
+                order_id: orderId || null,
+                user_id: uid,
+                event_id: eventId,
+                ticket_id: ticketId || null,
+                qr_code: qr,
+                status: "Valid",
+              },
+              {
+                order_id: orderId || null,
+                user_id: uid,
+                event_id: eventId,
+                ticket_type_id: ticketId || null,
+                qr_payload: qr,
+                status: "valid",
+              },
+              {
+                order_id: orderId || null,
+                user_id: uid,
+                ticket_id: ticketId || null,
+                qr_code: qr,
+                status: "Valid",
+              },
+            ];
+
+            let inserted = false;
+            let lastErr: unknown = null;
+            for (const payload of insertVariants) {
+              const q = await sb.from("user_tickets").insert(payload).select("id").maybeSingle();
+              if (!q.error) {
+                inserted = true;
+                break;
+              }
+              lastErr = q.error;
+              const msg = String((q.error as any)?.message ?? q.error ?? "").toLowerCase();
+              if (!msg.includes("schema cache") || !msg.includes("could not find")) {
+                break;
+              }
+            }
+
+            if (!inserted) {
+              const msg = String((lastErr as any)?.message ?? lastErr ?? "");
+              throw new HttpError(500, "supabase_error", msg || "Failed to issue event ticket");
+            }
+
+            qrCodes.push(qr);
+          }
+
+          return json(
+            {
+              ok: true,
+              processed: true,
+              success: true,
+              issued: true,
+              tx_ref: txRef,
+              event_id: eventId,
+              ticket_id: ticketId || null,
+              qty,
+              qr_codes: qrCodes,
+            },
+            { headers: corsHeaders },
+          );
+        }
+
+        return json({ ok: true, ignored: true, reason: "unsupported_purpose", tx_ref: txRef, purpose }, { headers: corsHeaders });
+      }
+
+      if (payRow.processed_at) {
+        return json({ ok: true, idempotent: true, tx_ref: txRef }, { headers: corsHeaders });
+      }
+
+      const expectedAmount = parsePriceMwk(payRow.amount ?? 0);
+      const expectedCurrency = String(payRow.currency ?? "MWK").trim() || "MWK";
+      const amountOk = vAmount >= expectedAmount;
+      const currencyOk = vCurrency.toUpperCase() === expectedCurrency.toUpperCase();
+
+      if (!success || !amountOk || !currencyOk) {
+        const { error: updErr } = await sb
+          .from("paychangu_payments")
+          .update({
+            status: "failed",
+            reference: vReference,
+            charge_id: vChargeId,
+            raw: payload,
+            processed_at: new Date().toISOString(),
+          })
+          .eq("tx_ref", txRef);
+        if (updErr) throw new HttpError(500, "supabase_error", updErr.message);
+        return json({ ok: true, processed: true, success: false, tx_ref: txRef }, { headers: corsHeaders });
+      }
+
+      const uid = String(payRow.uid).trim();
+      const planId = String(payRow.plan_id).trim();
+      const inferredMonths = (() => {
+        const direct = Number(payRow.months ?? NaN);
+        if (Number.isFinite(direct) && direct > 0) return direct;
+        const raw = payRow.raw;
+        if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+          const r = raw as Record<string, any>;
+          const fromMeta = Number(r?.meta?.months ?? r?.weafrica?.months ?? NaN);
+          if (Number.isFinite(fromMeta) && fromMeta > 0) return fromMeta;
+        }
+        return 1;
+      })();
+      const months = Math.min(Math.max(inferredMonths, 1), 24);
+
+      const now = new Date();
+      const { data: subRow, error: subErr } = await sb
+        .from("user_subscriptions")
+        .select("uid,current_period_end")
+        .eq("uid", uid)
+        .maybeSingle();
+      if (subErr) throw new HttpError(500, "supabase_error", subErr.message);
+
+      const currentEnd = subRow?.current_period_end ? new Date(String(subRow.current_period_end)) : null;
+      const base = currentEnd && currentEnd.getTime() > now.getTime() ? currentEnd : now;
+      const newEnd = new Date(base.getTime() + months * 30 * 24 * 60 * 60 * 1000);
+
+      const { error: upsertErr } = await sb
+        .from("user_subscriptions")
+        .upsert(
+          {
+            uid,
+            plan_id: planId,
+            status: "active",
+            current_period_start: now.toISOString(),
+            current_period_end: newEnd.toISOString(),
+            source: "paychangu",
+            metadata: { tx_ref: txRef, reference: vReference, event_type: eventType },
+          },
+          { onConflict: "uid" },
+        );
+      if (upsertErr) throw new HttpError(500, "supabase_error", upsertErr.message);
+
+      const { error: payUpdErr } = await sb
+        .from("paychangu_payments")
+        .update({
+          status: "success",
+          reference: vReference,
+          charge_id: vChargeId,
+          raw: payload,
+          processed_at: new Date().toISOString(),
+        })
+        .eq("tx_ref", txRef);
+      if (payUpdErr) throw new HttpError(500, "supabase_error", payUpdErr.message);
+
+      return json({ ok: true, processed: true, success: true, tx_ref: txRef, uid, plan_id: planId }, { headers: corsHeaders });
+    }
+
+    // --------------------
+    // Consumer catalog/feed
+    // --------------------
+
+    if (req.method === "GET" && normalized === "/consumer/feed") {
+      const sb = supabasePublic();
+
+      const limit = Math.min(Math.max(Number(url.searchParams.get("limit") ?? 12), 1), 50);
+
+      const [artists, djs, tracks, mwTracks, videos, events] = await Promise.all([
+        sb.from("creator_profiles").select("*").eq("role", "artist").order("created_at", { ascending: false }).limit(12),
+        sb.from("creator_profiles").select("*").eq("role", "dj").order("created_at", { ascending: false }).limit(12),
+        sb.from("songs").select("*").order("created_at", { ascending: false }).limit(limit),
+        sb.from("songs").select("*").eq("country", "MW").order("created_at", { ascending: false }).limit(Math.min(limit, 20)),
+        sb.from("videos").select("*").order("created_at", { ascending: false }).limit(limit),
+        sb.from("events").select("*").order("created_at", { ascending: false }).limit(limit),
+      ]);
+
+      // If any table is missing / RLS blocks, return a helpful error.
+      const firstError = artists.error ?? djs.error ?? tracks.error ?? mwTracks.error ?? videos.error ?? events.error;
+      if (firstError) {
+        return json(
+          {
+            ok: false,
+            error: "supabase_error",
+            message: firstError.message,
+          },
+          { status: 500, headers: corsHeaders },
+        );
+      }
+
+      return json(
+        {
+          ok: true,
+          featured_artists: artists.data ?? [],
+          featured_djs: djs.data ?? [],
+          trending_songs: tracks.data ?? [],
+          recommended_songs: tracks.data ?? [],
+          malawi_spotlight: mwTracks.data ?? [],
+          videos: videos.data ?? [],
+          events: events.data ?? [],
+        },
+        { headers: corsHeaders },
+      );
+    }
+
+    if (req.method === "GET" && normalized === "/consumer/events") {
+      const sb = supabasePublic();
+      const limit = Math.min(Math.max(Number(url.searchParams.get("limit") ?? 20), 1), 100);
+      const { data, error } = await sb
+        .from("events")
+        .select("*")
+        .order("created_at", { ascending: false })
+        .limit(limit);
+
+      if (error) {
+        return json({ ok: false, error: "supabase_error", message: error.message }, { status: 500, headers: corsHeaders });
+      }
+      return json({ ok: true, events: data ?? [] }, { headers: corsHeaders });
+    }
+
+    // --------------------
+    // Tickets
+    // --------------------
+
+    // Creator battle tickets
+    // POST /api/tickets/create
+    // Auth: Bearer <Firebase ID token>
+    // Body: { battle_id: string, tier: 'standard'|'vip'|'priority', price_amount: number, price_currency?: 'MWK', quantity_total: number }
+    if (req.method === "POST" && normalized === "/tickets/create") {
+      const { uid } = await requireFirebaseUser(req);
+      const sb = requireSupabaseAdmin();
+      const body = await readJson(req);
+
+      const battleId = String(body.battle_id ?? body.battleId ?? "").trim();
+      if (!battleId) {
+        throw new HttpError(400, "bad_request", "Missing battle_id");
+      }
+      if (battleId.length > 64) {
+        throw new HttpError(400, "bad_request", "battle_id too long");
+      }
+
+      const tier = normalizeBattleTicketTier(body.tier ?? body.ticket_tier ?? body.ticketTier);
+      if (!tier) {
+        throw new HttpError(400, "bad_request", "Missing/invalid tier (standard|vip|priority)");
+      }
+
+      const currency = String(body.price_currency ?? body.currency ?? "MWK").trim().toUpperCase() || "MWK";
+      if (currency !== "MWK") {
+        throw new HttpError(400, "bad_request", "Unsupported currency (only MWK is supported)");
+      }
+
+      const priceAmountRaw = Number(body.price_amount ?? body.priceAmount ?? body.amount ?? 0);
+      const priceAmount = Number.isFinite(priceAmountRaw) ? Math.max(0, Math.round(priceAmountRaw * 100) / 100) : 0;
+      const qtyRaw = Number(body.quantity_total ?? body.quantityTotal ?? body.qty ?? 0);
+      const quantityTotal = Number.isFinite(qtyRaw) ? Math.max(0, Math.floor(qtyRaw)) : 0;
+
+      if (priceAmount <= 0) {
+        throw new HttpError(400, "bad_request", "Ticket price must be greater than 0");
+      }
+      if (quantityTotal <= 0 || quantityTotal > 5000) {
+        throw new HttpError(400, "bad_request", "Ticket quantity must be between 1 and 5000");
+      }
+
+      // Ensure caller is a creator and check plan limits.
+      const role = await resolveCreatorRoleForUid(sb, uid);
+      if (!role) {
+        throw new HttpError(403, "forbidden", "Creator account required");
+      }
+
+      const sub = await getUserSubscription(sb, uid);
+      const planId = capabilityPlanIdForCreatorRole(role, sub.planId);
+
+      const isPremium = planId.endsWith("_premium");
+      const isPro = planId.endsWith("_pro");
+
+      if (!isPremium && !isPro) {
+        throw new HttpError(
+          403,
+          "plan_upgrade_required",
+          role === "artist"
+            ? "Battle ticketing starts on Artist Pro."
+            : "Battle ticketing starts on DJ Pro.",
+        );
+      }
+
+      // Verify the battle exists and caller is a host.
+      const { data: battle, error: battleErr } = await sb
+        .from("live_battles")
+        .select("battle_id, channel_id, host_a_id, host_b_id")
+        .eq("battle_id", battleId)
+        .maybeSingle();
+
+      if (battleErr) {
+        throw new HttpError(500, "db_error", `Failed to load battle: ${battleErr.message}`);
+      }
+      if (!battle) {
+        throw new HttpError(404, "not_found", "Battle not found");
+      }
+
+      const hostA = String((battle as any).host_a_id ?? "").trim();
+      const hostB = String((battle as any).host_b_id ?? "").trim();
+      if (!hostA && !hostB) {
+        throw new HttpError(409, "not_ready", "Battle is not ready for ticketing yet. Try again in a moment.");
+      }
+      if (uid !== hostA && uid !== hostB) {
+        throw new HttpError(403, "forbidden", "Only battle hosts can create tickets");
+      }
+
+      // Enforce weekly creation limits for Pro.
+      if (isPro && !isPremium) {
+        const weekStart = utcIsoWeekStart(new Date()).toISOString();
+        const { count, error: countErr } = await sb
+          .from("battle_tickets")
+          .select("id", { head: true, count: "exact" })
+          .eq("host_user_id", uid)
+          .gte("created_at", weekStart);
+
+        if (countErr) {
+          throw new HttpError(503, "quota_check_failed", `Ticket quota check unavailable: ${countErr.message}`);
+        }
+
+        const used = count ?? 0;
+        const limit = 10;
+        if (used >= limit) {
+          throw new HttpError(
+            403,
+            "ticket_limit_exceeded",
+            "Ticket creation limit reached (10/week). Upgrade to Premium for unlimited.",
+          );
+        }
+      }
+
+      // Only one ticket config per battle per tier.
+      const { data: existing, error: existingErr } = await sb
+        .from("battle_tickets")
+        .select("id")
+        .eq("battle_id", battleId)
+        .eq("tier", tier)
+        .maybeSingle();
+      if (existingErr) {
+        throw new HttpError(500, "db_error", `Failed to check existing ticket: ${existingErr.message}`);
+      }
+      if (existing) {
+        throw new HttpError(409, "already_exists", `Tickets already created for this tier (${tier})`);
+      }
+
+      const channelId = String((battle as any).channel_id ?? `weafrica_battle_${battleId}`).trim();
+      const now = new Date().toISOString();
+
+      const { data: ticket, error: insertErr } = await sb
+        .from("battle_tickets")
+        .insert({
+          battle_id: battleId,
+          channel_id: channelId,
+          host_user_id: uid,
+          host_role: role,
+          tier,
+          price_amount: priceAmount,
+          price_currency: currency,
+          quantity_total: quantityTotal,
+          sold_quantity: 0,
+          is_active: true,
+          sale_start_at: now,
+          sale_end_at: null,
+          created_at: now,
+          updated_at: now,
+        })
+        .select("*")
+        .single();
+
+      if (insertErr) {
+        const msg = insertErr.message ?? "";
+        if (msg.toLowerCase().includes("duplicate") || msg.toLowerCase().includes("unique")) {
+          throw new HttpError(409, "already_exists", `Tickets already created for this tier (${tier})`);
+        }
+        // If the backend hasn't had migrations applied yet, be user-friendly.
+        const lower = msg.toLowerCase();
+        if (lower.includes("schema cache") || lower.includes("could not find") || lower.includes("does not exist")) {
+          throw new HttpError(503, "temporarily_unavailable", "Ticketing is updating. Please try again in a few minutes.");
+        }
+        throw new HttpError(500, "db_error", `Failed to create ticket: ${msg}`);
+      }
+
+      return json({ ok: true, ticket }, { headers: corsHeaders });
+    }
+
+    // Consumer battle tickets
+    // GET /api/battles/:battleId/tickets
+    // Auth: Bearer <Firebase ID token>
+    // Returns: { ok: true, battle_id: string, tickets: [{tier, price_amount, price_currency, quantity_total, sold_quantity, remaining, is_available, sale_start_at, sale_end_at}] }
+    if (req.method === "GET" && normalized.startsWith("/battles/") && normalized.endsWith("/tickets")) {
+      // Keep access consistent with other ticket endpoints.
+      await requireFirebaseUser(req);
+
+      const parts = normalized.split("/").filter(Boolean);
+      // Expected: ["battles", "<battleId>", "tickets"]
+      if (parts.length !== 3 || parts[0] !== "battles" || parts[2] !== "tickets") {
+        throw new HttpError(404, "not_found", "Not found");
+      }
+
+      const battleId = String(parts[1] ?? "").trim();
+      if (!battleId) {
+        throw new HttpError(400, "bad_request", "Missing battle id");
+      }
+      if (battleId.length > 64) {
+        throw new HttpError(400, "bad_request", "battle_id too long");
+      }
+
+      const sb = requireSupabaseAdmin();
+      const { data, error } = await sb
+        .from("battle_tickets")
+        .select(
+          "id,battle_id,tier,price_amount,price_currency,quantity_total,sold_quantity,sales_enabled,is_active,sale_start_at,sale_end_at",
+        )
+        .eq("battle_id", battleId)
+        .order("price_amount", { ascending: true });
+
+      if (error) {
+        const msg = String(error.message ?? "").toLowerCase();
+        if (msg.includes("schema cache") || msg.includes("does not exist") || msg.includes("could not find")) {
+          throw new HttpError(503, "temporarily_unavailable", "Ticketing is updating. Please try again in a few minutes.");
+        }
+        throw new HttpError(500, "supabase_error", error.message);
+      }
+
+      const now = new Date();
+      const tickets = (data ?? []).map((row: any) => {
+        const tier = String(row?.tier ?? "").trim().toLowerCase();
+        const priceAmount = parsePriceMwk(row?.price_amount ?? 0);
+        const currency = String(row?.price_currency ?? "MWK").trim().toUpperCase() || "MWK";
+        const qtyTotal = Number(row?.quantity_total ?? 0);
+        const soldQty = Number(row?.sold_quantity ?? 0);
+
+        const remaining = Math.max(0, Math.floor(qtyTotal - soldQty));
+
+        const isActive = row?.is_active !== false;
+        const salesEnabled = row?.sales_enabled !== false;
+        const startAt = row?.sale_start_at ? new Date(String(row.sale_start_at)) : null;
+        const endAt = row?.sale_end_at ? new Date(String(row.sale_end_at)) : null;
+
+        const inWindow = (!startAt || now.getTime() >= startAt.getTime()) && (!endAt || now.getTime() <= endAt.getTime());
+        const isAvailable = Boolean(isActive && salesEnabled && inWindow && remaining > 0 && priceAmount > 0 && currency === "MWK");
+
+        return {
+          tier,
+          price_amount: priceAmount,
+          price_currency: currency,
+          quantity_total: Number.isFinite(qtyTotal) ? Math.max(0, Math.floor(qtyTotal)) : 0,
+          sold_quantity: Number.isFinite(soldQty) ? Math.max(0, Math.floor(soldQty)) : 0,
+          remaining,
+          is_available: isAvailable,
+          sale_start_at: row?.sale_start_at ?? null,
+          sale_end_at: row?.sale_end_at ?? null,
+        };
+      }).filter((t: any) => {
+        const tier = String(t?.tier ?? "").trim();
+        return tier === "standard" || tier === "vip" || tier === "priority";
+      });
+
+      return json(
+        {
+          ok: true,
+          battle_id: battleId,
+          tickets,
+        },
+        { headers: corsHeaders },
+      );
+    }
+
+    // Auth: Bearer <Firebase ID token>
+    // Query: ?battle_id=<id>
+    // Returns whether the user has a successful battle-ticket purchase.
+    if (req.method === "GET" && normalized === "/tickets/me") {
+      const { uid } = await requireFirebaseUser(req);
+      const battleId = String(url.searchParams.get("battle_id") ?? url.searchParams.get("battleId") ?? "").trim();
+      if (!battleId) {
+        throw new HttpError(400, "bad_request", "Missing battle_id");
+      }
+
+      const sb = requireSupabaseAdmin();
+      const { data: row, error } = await sb
+        .from("battle_ticket_purchases")
+        .select("id,tier,status,verified_at")
+        .eq("battle_id", battleId)
+        .eq("user_id", uid)
+        .eq("status", "success")
+        .maybeSingle();
+
+      if (error) {
+        const msg = String(error.message ?? "").toLowerCase();
+        if (msg.includes("schema cache") || msg.includes("does not exist")) {
+          throw new HttpError(503, "temporarily_unavailable", "Ticketing is updating. Please try again in a few minutes.");
+        }
+        throw new HttpError(500, "supabase_error", error.message);
+      }
+
+      const hasTicket = Boolean(row);
+      return json(
+        {
+          ok: true,
+          battle_id: battleId,
+          user_id: uid,
+          has_ticket: hasTicket,
+          tier: hasTicket ? String((row as any).tier ?? "").trim() : null,
+          verified_at: hasTicket ? ((row as any).verified_at ?? null) : null,
+        },
+        { headers: corsHeaders },
+      );
+    }
+
+    // Auth: Bearer <Firebase ID token>
+    // Body: { battle_id: string, tier: 'standard'|'vip'|'priority' }
+    // Starts a PayChangu checkout and records a pending payment.
+    if (req.method === "POST" && normalized === "/tickets/purchase") {
+      const { uid, email } = await requireFirebaseUser(req);
+      const body = await readJson(req);
+
+      const battleId = String(body.battle_id ?? body.battleId ?? "").trim();
+      if (!battleId) {
+        throw new HttpError(400, "bad_request", "Missing battle_id");
+      }
+      if (battleId.length > 64) {
+        throw new HttpError(400, "bad_request", "battle_id too long");
+      }
+
+      const tier = normalizeBattleTicketTier(body.tier ?? body.ticket_tier ?? body.ticketTier);
+      if (!tier) {
+        throw new HttpError(400, "bad_request", "Missing/invalid tier (standard|vip|priority)");
+      }
+
+      if (!paychanguSecretKey) {
+        throw new HttpError(501, "not_configured", "Missing PAYCHANGU_SECRET_KEY (set it on the Edge Function)");
+      }
+
+      const sb = requireSupabaseAdmin();
+
+      // Avoid double-purchasing.
+      {
+        const { data: existing, error: existingErr } = await sb
+          .from("battle_ticket_purchases")
+          .select("id,tier,status,verified_at")
+          .eq("battle_id", battleId)
+          .eq("user_id", uid)
+          .eq("status", "success")
+          .maybeSingle();
+
+        if (existingErr) {
+          const msg = String(existingErr.message ?? "").toLowerCase();
+          if (msg.includes("schema cache") || msg.includes("does not exist")) {
+            throw new HttpError(503, "temporarily_unavailable", "Ticketing is updating. Please try again in a few minutes.");
+          }
+          throw new HttpError(500, "supabase_error", existingErr.message);
+        }
+
+        if (existing) {
+          return json(
+            {
+              ok: true,
+              already_owned: true,
+              battle_id: battleId,
+              user_id: uid,
+              tier: String((existing as any).tier ?? "").trim() || tier,
+              verified_at: (existing as any).verified_at ?? null,
+            },
+            { headers: corsHeaders },
+          );
+        }
+      }
+
+      const { data: ticket, error: ticketErr } = await sb
+        .from("battle_tickets")
+        .select(
+          "id,battle_id,tier,price_amount,price_currency,quantity_total,sold_quantity,sales_enabled,is_active,sale_start_at,sale_end_at",
+        )
+        .eq("battle_id", battleId)
+        .eq("tier", tier)
+        .maybeSingle();
+
+      if (ticketErr) {
+        const msg = String(ticketErr.message ?? "").toLowerCase();
+        if (msg.includes("schema cache") || msg.includes("does not exist")) {
+          throw new HttpError(503, "temporarily_unavailable", "Ticketing is updating. Please try again in a few minutes.");
+        }
+        throw new HttpError(500, "db_error", `Failed to load ticket: ${ticketErr.message}`);
+      }
+      if (!ticket) {
+        throw new HttpError(404, "not_found", "Ticket tier not found");
+      }
+
+      if ((ticket as any).sales_enabled === false || (ticket as any).is_active === false) {
+        throw new HttpError(409, "not_available", "Ticket sales are not available right now");
+      }
+      const startAt = (ticket as any).sale_start_at ? new Date(String((ticket as any).sale_start_at)) : null;
+      const endAt = (ticket as any).sale_end_at ? new Date(String((ticket as any).sale_end_at)) : null;
+      const now = new Date();
+      if (startAt && now.getTime() < startAt.getTime()) {
+        throw new HttpError(409, "not_started", "Ticket sales have not started yet");
+      }
+      if (endAt && now.getTime() > endAt.getTime()) {
+        throw new HttpError(409, "ended", "Ticket sales have ended");
+      }
+
+      const qtyTotal = Number((ticket as any).quantity_total ?? 0);
+      const soldQty = Number((ticket as any).sold_quantity ?? 0);
+      if (!Number.isFinite(qtyTotal) || !Number.isFinite(soldQty) || qtyTotal <= 0) {
+        throw new HttpError(409, "not_available", "Ticket inventory is not available");
+      }
+      if (soldQty >= qtyTotal) {
+        throw new HttpError(409, "sold_out", "Tickets are sold out");
+      }
+
+      const amount = parsePriceMwk((ticket as any).price_amount ?? 0);
+      const currency = String((ticket as any).price_currency ?? "MWK").trim().toUpperCase() || "MWK";
+      if (amount <= 0) {
+        throw new HttpError(409, "not_configured", "Ticket price is not configured");
+      }
+      if (currency !== "MWK") {
+        throw new HttpError(400, "bad_request", "Unsupported currency (only MWK is supported)");
+      }
+
+      const { callbackUrl, returnUrl } = deriveCallbackUrl(url);
+      const txRef = crypto.randomUUID();
+
+      const nameSeed = (email ?? "").split("@")[0];
+      const { first, last } = splitName(nameSeed);
+
+      const payload = {
+        amount,
+        currency,
+        email: email ?? undefined,
+        first_name: first,
+        last_name: last,
+        callback_url: callbackUrl,
+        return_url: returnUrl,
+        tx_ref: txRef,
+        customization: {
+          title: "WeAfrica Battle Ticket",
+          description: `Battle ${battleId} (${tier})`,
+        },
+        meta: {
+          uid,
+          battle_id: battleId,
+          ticket_id: String((ticket as any).id ?? ""),
+          tier,
+        },
+      };
+
+      const payRes = await fetch(`${paychanguApiBase}/payment`, {
+        method: "POST",
+        headers: {
+          "Accept": "application/json",
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${paychanguSecretKey}`,
+        },
+        body: JSON.stringify(payload),
+      });
+
+      const payText = await payRes.text();
+      let payDecoded: unknown;
+      try {
+        payDecoded = JSON.parse(payText);
+      } catch {
+        throw new HttpError(502, "bad_gateway", `PayChangu returned non-JSON (HTTP ${payRes.status})`);
+      }
+
+      if (!payDecoded || typeof payDecoded !== "object" || Array.isArray(payDecoded)) {
+        throw new HttpError(502, "bad_gateway", "PayChangu returned invalid payload");
+      }
+
+      const payObj = payDecoded as JsonObject;
+      if (payRes.status < 200 || payRes.status >= 300) {
+        throw new HttpError(502, "bad_gateway", `PayChangu initiate failed (HTTP ${payRes.status}): ${JSON.stringify(payObj)}`);
+      }
+
+      const topData = (payObj.data && typeof payObj.data === "object" && !Array.isArray(payObj.data))
+        ? (payObj.data as JsonObject)
+        : ({} as JsonObject);
+
+      const checkout = String(topData.checkout_url ?? "").trim();
+      if (!checkout) {
+        throw new HttpError(502, "bad_gateway", `PayChangu initiate missing checkout_url: ${JSON.stringify(payObj)}`);
+      }
+
+      const { error: payInsErr } = await sb
+        .from("payments")
+        .insert({
+          user_id: uid,
+          provider: "paychangu",
+          purpose: "battle_ticket",
+          amount,
+          currency,
+          tx_ref: txRef,
+          status: "pending",
+          checkout_url: checkout,
+          metadata: {
+            battle_id: battleId,
+            ticket_id: (ticket as any).id,
+            tier,
+          },
+        });
+      if (payInsErr) throw new HttpError(500, "supabase_error", payInsErr.message);
+
+      const { error: purErr } = await sb
+        .from("battle_ticket_purchases")
+        .insert({
+          user_id: uid,
+          battle_id: battleId,
+          ticket_id: (ticket as any).id,
+          tier,
+          provider: "paychangu",
+          tx_ref: txRef,
+          amount,
+          currency,
+          status: "pending",
+          checkout_url: checkout,
+          raw: null,
+        });
+
+      if (purErr) {
+        const msg = String(purErr.message ?? "").toLowerCase();
+        if (msg.includes("schema cache") || msg.includes("does not exist")) {
+          throw new HttpError(503, "temporarily_unavailable", "Ticketing is updating. Please try again in a few minutes.");
+        }
+        throw new HttpError(500, "supabase_error", purErr.message);
+      }
+
+      return json(
+        {
+          ok: true,
+          checkout_url: checkout,
+          provider_reference: txRef,
+          tx_ref: txRef,
+          battle_id: battleId,
+          ticket_id: (ticket as any).id,
+          tier,
+          user_id: uid,
+        },
+        { headers: corsHeaders },
+      );
+    }
+
+    if (req.method === "POST" && normalized === "/consumer/tickets/buy") {
+      const { uid, email } = await requireFirebaseUser(req);
+      const body = await readJson(req);
+
+      const eventId = String(body.event_id ?? body.eventId ?? "").trim();
+      const ticketId = String(body.ticket_id ?? body.ticketId ?? body.ticket_type_id ?? body.ticketTypeId ?? "").trim();
+      const qtyRaw = Number(body.qty ?? body.quantity ?? 1);
+      const qty = Number.isFinite(qtyRaw) ? Math.min(Math.max(Math.floor(qtyRaw), 1), 20) : 1;
+
+      if (!eventId) {
+        throw new HttpError(400, "bad_request", "Missing event_id");
+      }
+
+      const sbPublic = supabasePublic();
+      let eventRow: Record<string, unknown> | null = null;
+      {
+        const selectVariants = [
+          "id,title,kind,access_tier",
+          "id,title,kind",
+          "id,title",
+        ];
+
+        let lastErr: unknown = null;
+        for (const selectClause of selectVariants) {
+          const q = await sbPublic
+            .from("events")
+            .select(selectClause)
+            .eq("id", eventId)
+            .maybeSingle();
+
+          if (!q.error) {
+            eventRow = (q.data as Record<string, unknown> | null) ?? null;
+            break;
+          }
+
+          lastErr = q.error;
+          const msg = String((q.error as any)?.message ?? q.error ?? "").toLowerCase();
+          if (!msg.includes("schema cache") || !msg.includes("could not find the")) {
+            break;
+          }
+        }
+
+        if (!eventRow && lastErr) {
+          // Keep behavior user-friendly: unknown event structure appears as not found for buyers.
+          const msg = String((lastErr as any)?.message ?? lastErr ?? "");
+          if (!msg.toLowerCase().includes("no rows")) {
+            throw new HttpError(500, "supabase_error", msg);
+          }
+        }
+      }
+
+      if (!eventRow) {
+        throw new HttpError(404, "not_found", "Event not found");
+      }
+
+      const sb = supabaseAdmin();
+      const currentSubscription = await getUserSubscription(sb, uid);
+      const ticketAccessTier = normalizeTicketAccessTier((eventRow as any)?.access_tier ?? (eventRow as any)?.kind);
+
+      if (!consumerCanAccessTicketTier(currentSubscription.planId, ticketAccessTier)) {
+        throw new HttpError(
+          403,
+          "plan_upgrade_required",
+          `${requiredPlanForTicketTier(ticketAccessTier)} is required for this event tier (${ticketAccessTier})`,
+        );
+      }
+
+      // Optional: a specific ticket tier (event_tickets).
+      let unitPriceMwk = 0;
+      let currency = "MWK";
+
+      if (ticketId) {
+        const sbPublic = supabasePublic();
+        const selectVariants = [
+          "id,event_id,type_name,name,price,price_mwk,currency,quantity,capacity,sold,status",
+          "id,event_id,name,price_mwk,currency,capacity,status",
+          "id,event_id,name,price_mwk,capacity",
+        ];
+
+        let ticketRow: Record<string, unknown> | null = null;
+        let lastErr: unknown = null;
+        for (const sel of selectVariants) {
+          const q = await sbPublic.from("event_tickets").select(sel).eq("id", ticketId).maybeSingle();
+          if (!q.error) {
+            ticketRow = (q.data as Record<string, unknown> | null) ?? null;
+            break;
+          }
+          lastErr = q.error;
+          const msg = String((q.error as any)?.message ?? q.error ?? "").toLowerCase();
+          if (!msg.includes("schema cache") || !msg.includes("could not find")) {
+            break;
+          }
+        }
+
+        if (!ticketRow) {
+          const msg = String((lastErr as any)?.message ?? lastErr ?? "");
+          throw new HttpError(404, "not_found", msg.toLowerCase().includes("no rows") ? "Ticket type not found" : (msg || "Ticket type not found"));
+        }
+
+        const tidEvent = String((ticketRow as any).event_id ?? "").trim();
+        if (tidEvent && tidEvent !== eventId) {
+          throw new HttpError(400, "bad_request", "ticket_id does not belong to event_id");
+        }
+
+        const rawCurrency = String((ticketRow as any).currency ?? "MWK").trim().toUpperCase() || "MWK";
+        if (rawCurrency !== "MWK") {
+          throw new HttpError(400, "bad_request", "Unsupported currency (only MWK is supported)");
+        }
+        currency = rawCurrency;
+
+        const rawPrice = (ticketRow as any).price ?? (ticketRow as any).price_mwk ?? 0;
+        const parsed = parsePriceMwk(rawPrice);
+        unitPriceMwk = Number.isFinite(parsed) ? Math.max(0, parsed) : 0;
+
+        const qtyTotalRaw = Number((ticketRow as any).quantity ?? (ticketRow as any).capacity ?? 0);
+        const soldRaw = Number((ticketRow as any).sold ?? 0);
+        const qtyTotal = Number.isFinite(qtyTotalRaw) ? Math.max(0, Math.floor(qtyTotalRaw)) : 0;
+        const sold = Number.isFinite(soldRaw) ? Math.max(0, Math.floor(soldRaw)) : 0;
+        if (qtyTotal > 0) {
+          const remaining = Math.max(0, qtyTotal - sold);
+          if (remaining < qty) {
+            throw new HttpError(409, "sold_out", "Ticket is sold out");
+          }
+        }
+      }
+
+      const amount_mwk = unitPriceMwk * qty;
+      const isPaid = amount_mwk > 0;
+
+      const nowIso = new Date().toISOString();
+      const txRef = crypto.randomUUID();
+
+      let checkoutUrl: string | null = null;
+      if (isPaid) {
+        if (!paychanguSecretKey) {
+          throw new HttpError(501, "not_configured", "Missing PAYCHANGU_SECRET_KEY (set it on the Edge Function)");
+        }
+
+        const { callbackUrl, returnUrl } = deriveCallbackUrl(url);
+        const nameSeed = (email ?? "").split("@")[0];
+        const { first, last } = splitName(nameSeed);
+
+        const payload = {
+          amount: amount_mwk,
+          currency,
+          email: email ?? undefined,
+          first_name: first,
+          last_name: last,
+          callback_url: callbackUrl,
+          return_url: returnUrl,
+          tx_ref: txRef,
+          customization: {
+            title: "WeAfrica Event Ticket",
+            description: `Event ${eventId}`,
+          },
+          meta: {
+            uid,
+            event_id: eventId,
+            ticket_id: ticketId || null,
+            qty,
+          },
+        };
+
+        const payRes = await fetch(`${paychanguApiBase}/payment`, {
+          method: "POST",
+          headers: {
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${paychanguSecretKey}`,
+          },
+          body: JSON.stringify(payload),
+        });
+
+        const payText = await payRes.text();
+        let payDecoded: unknown;
+        try {
+          payDecoded = JSON.parse(payText);
+        } catch {
+          throw new HttpError(502, "bad_gateway", `PayChangu returned non-JSON (HTTP ${payRes.status})`);
+        }
+
+        if (!payDecoded || typeof payDecoded !== "object" || Array.isArray(payDecoded)) {
+          throw new HttpError(502, "bad_gateway", "PayChangu returned invalid payload");
+        }
+
+        const payObj = payDecoded as JsonObject;
+        if (payRes.status < 200 || payRes.status >= 300) {
+          throw new HttpError(502, "bad_gateway", `PayChangu initiate failed (HTTP ${payRes.status}): ${JSON.stringify(payObj)}`);
+        }
+
+        const topData = (payObj.data && typeof payObj.data === "object" && !Array.isArray(payObj.data))
+          ? (payObj.data as JsonObject)
+          : ({} as JsonObject);
+
+        checkoutUrl = String(topData.checkout_url ?? "").trim() || null;
+        if (!checkoutUrl) {
+          throw new HttpError(502, "bad_gateway", `PayChangu initiate missing checkout_url: ${JSON.stringify(payObj)}`);
+        }
+      }
+
+      // Create the order (best-effort tolerant insert across schema variants).
+      const orderInsertVariants: Array<Record<string, unknown>> = [
+        {
+          user_id: uid,
+          event_id: eventId,
+          ticket_id: ticketId || null,
+          qty,
+          amount_mwk,
+          currency,
+          status: isPaid ? "pending" : "paid",
+          tx_ref: txRef,
+          created_at: nowIso,
+          updated_at: nowIso,
+        },
+        {
+          user_id: uid,
+          event_id: eventId,
+          ticket_type_id: ticketId || null,
+          quantity: qty,
+          total_mwk: amount_mwk,
+          payment_method: isPaid ? "paychangu" : "free",
+          payment_ref: txRef,
+          status: isPaid ? "pending" : "paid",
+        },
+        {
+          user_id: uid,
+          ticket_id: ticketId || null,
+          quantity: qty,
+          total_price: amount_mwk,
+          payment_method: isPaid ? "paychangu" : "free",
+          qr_code: null,
+          payment_status: isPaid ? "Pending" : "Paid",
+          order_date: nowIso,
+        },
+      ];
+
+      let order: Record<string, unknown> | null = null;
+      let orderErr: unknown = null;
+      for (const payload of orderInsertVariants) {
+        const q = await sb.from("ticket_orders").insert(payload).select("*").maybeSingle();
+        if (!q.error) {
+          order = (q.data as Record<string, unknown> | null) ?? null;
+          break;
+        }
+        orderErr = q.error;
+        const msg = String((q.error as any)?.message ?? q.error ?? "").toLowerCase();
+        if (!msg.includes("schema cache") || !msg.includes("could not find")) {
+          break;
+        }
+      }
+
+      if (!order) {
+        const msg = String((orderErr as any)?.message ?? orderErr ?? "");
+        return json(
+          { ok: false, error: "supabase_error", message: msg || "Could not create ticket order" },
+          { status: 500, headers: corsHeaders },
+        );
+      }
+
+      // Record the payment ledger row for paid tickets.
+      if (isPaid) {
+        const { error: payInsErr } = await sb
+          .from("payments")
+          .insert({
+            user_id: uid,
+            provider: "paychangu",
+            purpose: "event_ticket",
+            amount: amount_mwk,
+            currency,
+            tx_ref: txRef,
+            status: "pending",
+            checkout_url: checkoutUrl,
+            metadata: {
+              event_id: eventId,
+              ticket_id: ticketId || null,
+              qty,
+              order_id: String((order as any)?.id ?? "").trim() || null,
+            },
+          });
+
+        if (payInsErr) {
+          throw new HttpError(500, "supabase_error", payInsErr.message);
+        }
+      }
+
+      // Free tickets: issue immediately (write to user_tickets so the QR exists).
+      const qrCodes: string[] = [];
+      if (!isPaid) {
+        const orderId = String((order as any)?.id ?? "").trim();
+        for (let i = 0; i < qty; i++) {
+          const qr = crypto.randomUUID();
+          const insertVariants: Array<Record<string, unknown>> = [
+            {
+              order_id: orderId || null,
+              user_id: uid,
+              event_id: eventId,
+              ticket_id: ticketId || null,
+              qr_code: qr,
+              status: "Valid",
+            },
+            {
+              order_id: orderId || null,
+              user_id: uid,
+              event_id: eventId,
+              ticket_type_id: ticketId || null,
+              qr_payload: qr,
+              status: "valid",
+            },
+            {
+              order_id: orderId || null,
+              user_id: uid,
+              ticket_id: ticketId || null,
+              qr_code: qr,
+              status: "Valid",
+            },
+          ];
+
+          let inserted = false;
+          let lastErr: unknown = null;
+          for (const payload of insertVariants) {
+            const q = await sb.from("user_tickets").insert(payload).select("id").maybeSingle();
+            if (!q.error) {
+              inserted = true;
+              break;
+            }
+            lastErr = q.error;
+            const msg = String((q.error as any)?.message ?? q.error ?? "").toLowerCase();
+            if (!msg.includes("schema cache") || !msg.includes("could not find")) {
+              break;
+            }
+          }
+
+          if (!inserted) {
+            const msg = String((lastErr as any)?.message ?? lastErr ?? "");
+            throw new HttpError(500, "supabase_error", msg || "Failed to issue ticket");
+          }
+          qrCodes.push(qr);
+        }
+      }
+
+      return json(
+        {
+          ok: true,
+          order,
+          qty,
+          amount_mwk,
+          currency,
+          is_paid: isPaid,
+          checkout_url: checkoutUrl,
+          tx_ref: txRef,
+          ticket_access_tier: ticketAccessTier,
+          consumer_plan_id: currentSubscription.planId,
+          qr_codes: qrCodes,
+        },
+        { headers: corsHeaders },
+      );
+    }
+
+    if (req.method === "GET" && normalized === "/consumer/tickets/me") {
+      const { uid } = await requireFirebaseUser(req);
+      const sb = supabaseAdmin();
+
+      const limit = Math.min(Math.max(Number(url.searchParams.get("limit") ?? 50), 1), 200);
+      const eventIdFilter = String(url.searchParams.get("event_id") ?? url.searchParams.get("eventId") ?? "").trim();
+
+      const selectVariants = [
+        // Old schema: user_tickets has event_id and qr_payload.
+        "id,order_id,user_id,event_id,ticket_id,ticket_type_id,qr_code,qr_payload,status,created_at,events(*),event_tickets(*)",
+        // Newer schema: join via ticket_id -> event_tickets -> events.
+        "id,order_id,user_id,ticket_id,qr_code,qr_payload,status,created_at,event_tickets(id,event_id,type_name,name,price,price_mwk,currency,quantity,capacity,sold,events(*))",
+        "*",
+      ];
+
+      let data: any[] | null = null;
+      let lastErr: any = null;
+      for (const sel of selectVariants) {
+        let q = sb
+          .from("user_tickets")
+          .select(sel)
+          .eq("user_id", uid)
+          .order("created_at", { ascending: false })
+          .limit(limit);
+
+        // Fast-path filter when event_id exists on the table.
+        if (eventIdFilter && sel.includes("event_id")) {
+          q = q.eq("event_id", eventIdFilter);
+        }
+
+        const res = await q;
+        if (!res.error) {
+          data = (res.data as any[]) ?? [];
+          break;
+        }
+        lastErr = res.error;
+        const msg = String(res.error.message ?? "").toLowerCase();
+        if (!msg.includes("schema cache") || !msg.includes("could not find")) {
+          break;
+        }
+      }
+
+      if (!data) {
+        return json(
+          { ok: false, error: "supabase_error", message: String(lastErr?.message ?? lastErr ?? "Unknown error") },
+          { status: 500, headers: corsHeaders },
+        );
+      }
+
+      // Client-friendly filter fallback if we couldn't push it down.
+      if (eventIdFilter) {
+        data = (data ?? []).filter((row: any) => {
+          const direct = String(row?.event_id ?? "").trim();
+          if (direct) return direct === eventIdFilter;
+          const nested = row?.event_tickets?.event_id ?? row?.event_tickets?.eventId;
+          return String(nested ?? "").trim() === eventIdFilter;
+        });
+      }
+
+      return json({ ok: true, tickets: data ?? [] }, { headers: corsHeaders });
+    }
+
+    // --------------------
+    // Song comments
+    // --------------------
+    // GET /api/songs/:id/comments?limit=&offset=
+    // POST /api/songs/:id/comments
+    if (normalized.startsWith("/songs/") && normalized.endsWith("/comments")) {
+      const parts = normalized.split("/").filter(Boolean);
+      if (parts.length === 3 && parts[0] === "songs" && parts[2] === "comments") {
+        const songId = String(parts[1] ?? "").trim();
+        if (!songId) throw new HttpError(400, "bad_request", "Missing song id");
+
+        if (req.method === "GET") {
+          const sb = supabaseServiceRoleKey ? supabaseAdmin() : supabasePublic();
+          const limit = clampInt(Number(url.searchParams.get("limit") ?? 50), 1, 200);
+          const offset = clampInt(Number(url.searchParams.get("offset") ?? 0), 0, 5000);
+
+          const { data, error, count } = await sb
+            .from("song_comments")
+            .select("id,song_id,user_id,display_name,avatar_url,comment,created_at", { count: "exact" })
+            .eq("song_id", songId)
+            .order("created_at", { ascending: false })
+            .range(offset, offset + limit - 1);
+
+          if (error) {
+            return json(
+              { ok: false, error: "supabase_error", message: error.message },
+              { status: 500, headers: corsHeaders },
+            );
+          }
+
+          return json(
+            {
+              ok: true,
+              song_id: songId,
+              total: count ?? null,
+              comments: data ?? [],
+            },
+            { headers: corsHeaders },
+          );
+        }
+
+        if (req.method === "POST") {
+          const { uid } = await requireFirebaseUser(req);
+          const sb = requireSupabaseAdmin();
+          const body = await readJson(req);
+
+          const commentRaw = body.comment ?? body.text ?? body.message;
+          const comment = String(commentRaw ?? "").trim();
+          if (!comment) throw new HttpError(400, "bad_request", "Missing comment");
+          if (comment.length > 1000) throw new HttpError(400, "bad_request", "Comment too long");
+
+          const displayName = String(body.display_name ?? body.displayName ?? "").trim();
+          const avatarUrl = String(body.avatar_url ?? body.avatarUrl ?? "").trim();
+
+          const payload: Record<string, unknown> = {
+            song_id: songId,
+            user_id: uid,
+            comment,
+          };
+          if (displayName) payload.display_name = displayName;
+          if (avatarUrl) payload.avatar_url = avatarUrl;
+
+          const { data, error } = await sb
+            .from("song_comments")
+            .insert(payload)
+            .select("id,song_id,user_id,display_name,avatar_url,comment,created_at")
+            .single();
+
+          if (error) {
+            return json(
+              { ok: false, error: "supabase_error", message: error.message },
+              { status: 500, headers: corsHeaders },
+            );
+          }
+
+          try {
+            const { ownerUid, title: songTitle } = await resolveSongNotificationTarget(sb, songId);
+            const commenterName = String(
+              (data as any)?.display_name ?? displayName ?? "Someone",
+            ).trim() || "Someone";
+            const isOwnerComment = ownerUid && ownerUid === uid;
+
+            if (ownerUid && !isOwnerComment) {
+              const tokens = await listDeviceTokensForUser(sb, ownerUid);
+              if (tokens.length) {
+                const title = "New comment on your track";
+                const commentPreview = comment.length > 120 ? `${comment.slice(0, 117)}...` : comment;
+                const bodyText = songTitle
+                  ? `${commenterName} commented on ${songTitle}: ${commentPreview}`
+                  : `${commenterName} commented: ${commentPreview}`;
+
+                await sendFcmPushToTokens({
+                  tokens,
+                  title,
+                  body: bodyText,
+                  data: {
+                    type: "comment_update",
+                    entity_id: songId,
+                    song_id: songId,
+                    comment_id: String((data as any)?.id ?? "").trim(),
+                    commenter_uid: uid,
+                    commenter_name: commenterName,
+                    title,
+                    body: bodyText,
+                  },
+                });
+              }
+            }
+          } catch (pushError) {
+            console.log("song comment push failed", pushError);
+          }
+
+          return json({ ok: true, comment: data }, { headers: corsHeaders });
+        }
+      }
+    }
+
+    // --------------------
+    // Pulse likes
+    // --------------------
+    // POST /api/pulse/:id/like
+    if (req.method === "POST" && normalized.startsWith("/pulse/") && normalized.endsWith("/like")) {
+      const parts = normalized.split("/").filter(Boolean);
+      if (parts.length === 3 && parts[0] === "pulse" && parts[2] === "like") {
+        const videoId = String(parts[1] ?? "").trim();
+        if (!videoId) throw new HttpError(400, "bad_request", "Missing video id");
+
+        const { uid } = await requireFirebaseUser(req);
+        const sb = requireSupabaseAdmin();
+        const body = await readJson(req);
+        const liked = body.liked === undefined ? true : Boolean(body.liked);
+
+        if (liked) {
+          const { error } = await sb.from("video_likes").upsert(
+            {
+              video_id: videoId,
+              user_id: uid,
+            },
+            { onConflict: "video_id,user_id" },
+          );
+          if (error) {
+            throw new HttpError(500, "db_error", `Failed to like video: ${error.message}`);
+          }
+
+          // Keep legacy pulse_likes in sync for older clients/query paths.
+          try {
+            await sb.from("pulse_likes").upsert({
+              video_id: videoId,
+              user_id: uid,
+              liked: true,
+              updated_at: new Date().toISOString(),
+            });
+          } catch (_) {
+            // ignore legacy sync failures
+          }
+
+          try {
+            const { ownerUid, title: videoTitle } = await resolveVideoNotificationTarget(sb, videoId);
+            if (ownerUid && ownerUid !== uid) {
+              let likerName = "Someone";
+              try {
+                const profile = await sb
+                  .from("profiles")
+                  .select("display_name,username")
+                  .eq("id", uid)
+                  .limit(1)
+                  .maybeSingle();
+                const displayName = String((profile.data as any)?.display_name ?? "").trim();
+                const username = String((profile.data as any)?.username ?? "").trim();
+                likerName = displayName || (username ? `@${username}` : "Someone");
+              } catch (_) {
+                // ignore profile lookup
+              }
+
+              const tokens = await listDeviceTokensForUser(sb, ownerUid);
+              if (tokens.length) {
+                const title = "New like on your video";
+                const bodyText = videoTitle
+                  ? `${likerName} liked ${videoTitle}`
+                  : `${likerName} liked your video`;
+
+                await sendFcmPushToTokens({
+                  tokens,
+                  title,
+                  body: bodyText,
+                  data: {
+                    type: "like_update",
+                    entity_id: videoId,
+                    video_id: videoId,
+                    liked_by_uid: uid,
+                    title,
+                    body: bodyText,
+                  },
+                });
+              }
+            }
+          } catch (pushError) {
+            console.log("pulse like push failed", pushError);
+          }
+        } else {
+          const { error } = await sb.from("video_likes").delete().eq("video_id", videoId).eq("user_id", uid);
+          if (error) {
+            throw new HttpError(500, "db_error", `Failed to unlike video: ${error.message}`);
+          }
+
+          try {
+            await sb.from("pulse_likes").upsert({
+              video_id: videoId,
+              user_id: uid,
+              liked: false,
+              updated_at: new Date().toISOString(),
+            });
+          } catch (_) {
+            // ignore legacy sync failures
+          }
+        }
+
+        const countRes = await sb
+          .from("video_likes")
+          .select("id", { count: "exact", head: true })
+          .eq("video_id", videoId);
+
+        if (countRes.error) {
+          throw new HttpError(500, "db_error", `Failed to load like count: ${countRes.error.message}`);
+        }
+
+        return json({
+          ok: true,
+          video_id: videoId,
+          liked,
+          likes_count: countRes.count ?? 0,
+        });
+      }
+    }
+
+    // Songs publish (create DB row)
+    // POST /api/songs/publish
+    // Auth: Bearer <Firebase ID token>
+    // Body: {
+    //   title?: string,
+    //   artist?: string,
+    //   genre?: string,
+    //   country?: string,
+    //   language?: string,
+    //   audio_url: string,
+    //   artwork_url?: string,
+    //   album_id?: string,
+    //   // Optional for cleanup if DB insert fails:
+    //   audio_bucket?: string,
+    //   audio_path?: string,
+    //   artwork_bucket?: string,
+    //   artwork_path?: string
+    // }
+    //
+    // Songs create (RLS-safe, pending by default)
+    // POST /api/songs/create
+    // Auth: Bearer <Firebase ID token>
+    // Body: {
+    //   title?: string,
+    //   artist?: string,
+    //   genre?: string,
+    //   country?: string,
+    //   language?: string,
+    //   audio_url: string,
+    //   file_path?: string,
+    //   artwork_url?: string,
+    //   thumbnail_url?: string,
+    //   duration_seconds?: number,
+    //   album_id?: string,
+    //   // Optional for cleanup if DB insert fails:
+    //   audio_bucket?: string,
+    //   audio_path?: string,
+    //   artwork_bucket?: string,
+    //   artwork_path?: string
+    // }
+    if (req.method === "POST" && normalized === "/songs/create") {
+      const { uid, email } = await requireFirebaseUser(req);
+      const sb = requireSupabaseAdmin();
+      const body = await readJson(req);
+
+      const publishRequestedRaw = body.publish ?? body.is_published ?? body.isPublished;
+      const publishRequested = publishRequestedRaw === undefined ? true : Boolean(publishRequestedRaw);
+
+      const title = String(body.title ?? "").trim();
+      const artistName = String(body.artist ?? "").trim();
+      const genre = String(body.genre ?? "").trim();
+      const country = String(body.country ?? "").trim();
+      const language = String(body.language ?? "").trim();
+      const countryCode = normalizeCountryCode(body.country_code ?? body.countryCode ?? country) ?? (country ? null : "MW");
+      const audioUrl = String(body.audio_url ?? body.audioUrl ?? "").trim();
+      const albumId = String(body.album_id ?? body.albumId ?? "").trim();
+
+      const audioBucket = String(body.audio_bucket ?? body.audioBucket ?? "").trim();
+      const audioPath = String(body.audio_path ?? body.audioPath ?? "").trim();
+      const artworkBucket = String(body.artwork_bucket ?? body.artworkBucket ?? "").trim();
+      const artworkPath = String(body.artwork_path ?? body.artworkPath ?? "").trim();
+
+      const explicitFilePath = String(body.file_path ?? body.filePath ?? "").trim();
+
+      const artworkUrl = String(body.artwork_url ?? body.artworkUrl ?? "").trim();
+      const thumbnailUrl = String(body.thumbnail_url ?? body.thumbnailUrl ?? "").trim();
+      const coverUrl = (thumbnailUrl || artworkUrl).trim();
+
+      const durationSecondsRaw = Number(body.duration_seconds ?? body.durationSeconds ?? body.duration ?? 0);
+      const durationSeconds = Number.isFinite(durationSecondsRaw) ? Math.max(0, Math.floor(durationSecondsRaw)) : 0;
+
+      if (!audioUrl) {
+        throw new HttpError(400, "bad_request", "Missing audio_url");
+      }
+
+      // Allow admin OR creators that exist in artists/djs tables.
+      // This mirrors the principle used elsewhere: only real creator accounts can create content.
+      let allowed = false;
+      try {
+        let q = sb.from("admins_with_permissions").select("status").limit(1);
+        if (email && email.trim().length > 0) q = q.eq("email", email.trim());
+        else q = q.eq("uid", uid);
+        const admin = await q.maybeSingle();
+        const status = String((admin.data as any)?.status ?? "").trim().toLowerCase();
+        if (!admin.error && admin.data && (!status || status === "active")) allowed = true;
+      } catch (_) {
+        // ignore
+      }
+
+      let artistId: string | null = null;
+      let djId: string | null = null;
+
+      if (!allowed) {
+        try {
+          // Prefer firebase_uid to avoid type errors when user_id is UUID in some deployments.
+          const { data: artists, error: artistErr } = await sb
+            .from("artists")
+            .select("id")
+            .eq("firebase_uid", uid)
+            .limit(1);
+          if (!artistErr && artists && artists.length) {
+            artistId = String((artists[0] as any).id ?? "").trim() || null;
+            allowed = true;
+          }
+        } catch (_) {
+          // ignore
+        }
+      }
+
+      if (!allowed) {
+        try {
+          const { data: artists, error: artistErr } = await sb
+            .from("artists")
+            .select("id")
+            .eq("user_id", uid)
+            .limit(1);
+          if (!artistErr && artists && artists.length) {
+            artistId = String((artists[0] as any).id ?? "").trim() || null;
+            allowed = true;
+          }
+        } catch (_) {
+          // ignore
+        }
+      }
+
+      if (!allowed) {
+        try {
+          const { data: djs, error: djErr } = await sb
+            .from("djs")
+            .select("id")
+            .eq("firebase_uid", uid)
+            .limit(1);
+          if (!djErr && djs && djs.length) {
+            djId = String((djs[0] as any).id ?? "").trim() || null;
+            allowed = true;
+          }
+        } catch (_) {
+          // ignore
+        }
+      }
+
+      if (!allowed) {
+        try {
+          const { data: djs, error: djErr } = await sb
+            .from("djs")
+            .select("id")
+            .eq("user_id", uid)
+            .limit(1);
+          if (!djErr && djs && djs.length) {
+            djId = String((djs[0] as any).id ?? "").trim() || null;
+            allowed = true;
+          }
+        } catch (_) {
+          // ignore
+        }
+      }
+
+      if (!allowed) {
+        try {
+          const { data: creatorProfile, error: creatorErr } = await sb
+            .from("creator_profiles")
+            .select("role")
+            .eq("user_id", uid)
+            .limit(1)
+            .maybeSingle();
+          if (!creatorErr && creatorProfile) {
+            const creatorRole = String((creatorProfile as any).role ?? "").trim().toLowerCase();
+            if (creatorRole === "artist" || creatorRole === "dj") {
+              allowed = true;
+            }
+          }
+        } catch (_) {
+          // ignore
+        }
+      }
+
+      if (!allowed) {
+        try {
+          const byId = await sb
+            .from("profiles")
+            .select("role")
+            .eq("id", uid)
+            .limit(1)
+            .maybeSingle();
+          if (!byId.error && byId.data) {
+            const role = String((byId.data as any)?.role ?? "").trim().toLowerCase();
+            if (role === "artist" || role === "dj") {
+              allowed = true;
+            }
+          }
+        } catch (_) {
+          // ignore
+        }
+      }
+
+      if (!allowed) {
+        try {
+          const byFirebaseUid = await sb
+            .from("profiles")
+            .select("role")
+            .eq("firebase_uid", uid)
+            .limit(1)
+            .maybeSingle();
+          if (!byFirebaseUid.error && byFirebaseUid.data) {
+            const role = String((byFirebaseUid.data as any)?.role ?? "").trim().toLowerCase();
+            if (role === "artist" || role === "dj") {
+              allowed = true;
+            }
+          }
+        } catch (_) {
+          // ignore
+        }
+      }
+
+      if (!allowed) {
+        throw new HttpError(
+          403,
+          "forbidden",
+          "Creator (artist/dj) or admin access required. No matching record found for this account in artists, djs, creator_profiles, or profiles.role.",
+        );
+      }
+
+      async function bestEffortCleanupUploads() {
+        try {
+          if (audioBucket && audioPath) {
+            await sb.storage.from(audioBucket).remove([audioPath]);
+          }
+        } catch (_) {
+          // ignore
+        }
+        try {
+          if (artworkBucket && artworkPath) {
+            await sb.storage.from(artworkBucket).remove([artworkPath]);
+          }
+        } catch (_) {
+          // ignore
+        }
+      }
+
+      const now = new Date().toISOString();
+      // Some deployments require file_path NOT NULL. Use storage path or URL as fallback.
+      let filePath = explicitFilePath || audioPath;
+      if (!filePath || filePath.trim().length === 0) {
+        filePath = audioUrl;  // Fallback to URL if path not provided
+      }
+      if (!filePath || filePath.trim().length === 0) {
+        throw new HttpError(400, "bad_request", "Missing file_path. Provide audio_path or audio_url.");
+      }
+      filePath = filePath.trim();
+
+      const baseRow: Record<string, unknown> = {
+        title: title || null,
+        genre: genre || null,
+        country: country || null,
+        country_code: countryCode,
+        language: language || null,
+        audio_url: audioUrl,
+        file_path: filePath,
+        user_id: uid,
+        firebase_uid: uid,
+        created_at: now,
+        updated_at: now,
+      };
+      if (artistName) baseRow.artist = artistName;
+      if (artistId) baseRow.artist_id = artistId;
+      if (albumId) baseRow.album_id = albumId;
+      if (durationSeconds > 0) baseRow.duration = durationSeconds;
+
+      if (coverUrl) {
+        // Support multiple common schemas.
+        baseRow.thumbnail_url = coverUrl;
+        baseRow.artwork_url = coverUrl;
+        baseRow.thumbnail = coverUrl;
+      }
+
+      // Publish by default so newly uploaded songs appear in consumer feeds.
+      // (Consumer app queries commonly filter by approved/is_public/is_published.)
+      // If you introduce moderation later, move this back to pending-by-default.
+      const publishFlags: Record<string, unknown> = publishRequested
+        ? {
+          is_active: true,
+          approved: true,
+          is_public: true,
+          is_published: true,
+          status: "active",
+          published_at: now,
+        }
+        : {
+          // Draft/hidden row for professional upload UX.
+          // Keep status compatible with schemas that only allow 'active'/'removed'.
+          is_active: true,
+          approved: false,
+          is_public: false,
+          is_published: false,
+          status: "active",
+        };
+
+      const omit = new Set<string>();
+      const table = "songs";
+
+      const buildAttempt = (): Record<string, unknown> => {
+        const out: Record<string, unknown> = { ...baseRow, ...publishFlags };
+        for (const k of omit) delete out[k];
+        return out;
+      };
+
+      let lastErr: unknown = null;
+      for (let i = 0; i < 20; i++) {
+        const attempt = buildAttempt();
+        const { data, error } = await sb.from(table).insert(attempt).select("id").single();
+        if (!error) {
+          return json({ ok: true, song_id: (data as any)?.id ?? null }, { headers: corsHeaders });
+        }
+
+        lastErr = error;
+        const missing = tryParseMissingColumnForTable(error, table);
+        if (missing) {
+          omit.add(missing);
+          continue;
+        }
+
+        // If a deployment requires NOT NULL on file_path, ensure we don't omit it.
+        if (isNotNullViolation(error, "file_path")) {
+          omit.delete("file_path");
+          // If file_path is required but missing, fall back to audioPath/audioUrl.
+          (baseRow as any).file_path = filePath;
+          continue;
+        }
+
+        // Unknown error -> stop.
+        break;
+      }
+
+      await bestEffortCleanupUploads();
+      const fallbackMsg = lastErr instanceof Error ? lastErr.message : String((lastErr as any)?.message ?? lastErr);
+      throw new HttpError(500, "create_failed", `Failed to create song record: ${fallbackMsg}`);
+    }
+
+    // Finalize an existing song row after uploads complete.
+    // POST /api/songs/finalize
+    // Auth: Bearer <Firebase ID token>
+    // Body: {
+    //   song_id: string,
+    //   audio_url?: string,
+    //   artwork_url?: string,
+    //   thumbnail_url?: string,
+    //   file_path?: string,
+    //   duration_seconds?: number,
+    // }
+    if (req.method === "POST" && normalized === "/songs/finalize") {
+      const { uid, email } = await requireFirebaseUser(req);
+      const sb = requireSupabaseAdmin();
+      const body = await readJson(req);
+
+      const songId = String(body.song_id ?? body.songId ?? body.id ?? "").trim();
+      if (!songId) {
+        throw new HttpError(400, "bad_request", "Missing song_id");
+      }
+
+      // Ownership check (best-effort across schema variants).
+      let allowed = false;
+      try {
+        let q = sb.from("admins_with_permissions").select("status").limit(1);
+        if (email && email.trim().length > 0) q = q.eq("email", email.trim());
+        else q = q.eq("uid", uid);
+        const admin = await q.maybeSingle();
+        const status = String((admin.data as any)?.status ?? "").trim().toLowerCase();
+        if (!admin.error && admin.data && (!status || status === "active")) allowed = true;
+      } catch (_) {
+        // ignore
+      }
+
+      if (!allowed) {
+        try {
+          const existing = await sb
+            .from("songs")
+            .select("id,user_id,firebase_uid")
+            .eq("id", songId)
+            .maybeSingle();
+          if (existing.error) {
+            throw new HttpError(500, "db_error", `Failed to read song: ${existing.error.message}`);
+          }
+          if (!existing.data) {
+            throw new HttpError(404, "not_found", "Song not found");
+          }
+
+          const userId = String((existing.data as any)?.user_id ?? "").trim();
+          const firebaseUid = String((existing.data as any)?.firebase_uid ?? "").trim();
+          if (userId === uid || firebaseUid === uid) {
+            allowed = true;
+          }
+        } catch (e) {
+          // If schema drift blocks ownership check, fail closed unless admin.
+          if (e instanceof HttpError) throw e;
+          throw new HttpError(403, "forbidden", "Not allowed to finalize this song.");
+        }
+      }
+
+      if (!allowed) {
+        throw new HttpError(403, "forbidden", "Not allowed to finalize this song.");
+      }
+
+      const now = new Date().toISOString();
+
+      const audioUrl = String(body.audio_url ?? body.audioUrl ?? "").trim();
+      const artworkUrl = String(body.artwork_url ?? body.artworkUrl ?? "").trim();
+      const thumbnailUrl = String(body.thumbnail_url ?? body.thumbnailUrl ?? "").trim();
+      const filePath = String(body.file_path ?? body.filePath ?? "").trim();
+
+      const durationSecondsRaw = Number(body.duration_seconds ?? body.durationSeconds ?? body.duration ?? 0);
+      const durationSeconds = Number.isFinite(durationSecondsRaw) ? Math.max(0, Math.floor(durationSecondsRaw)) : 0;
+
+      const update: Record<string, unknown> = {
+        updated_at: now,
+        is_active: true,
+        approved: true,
+        is_public: true,
+        is_published: true,
+        status: "active",
+        published_at: now,
+      };
+
+      if (audioUrl) update.audio_url = audioUrl;
+      if (filePath) update.file_path = filePath;
+      if (durationSeconds > 0) update.duration = durationSeconds;
+
+      const cover = (thumbnailUrl || artworkUrl).trim();
+      if (cover) {
+        update.artwork_url = cover;
+        update.thumbnail_url = cover;
+        update.thumbnail = cover;
+      }
+
+      const omit = new Set<string>();
+      const buildAttempt = (): Record<string, unknown> => {
+        const out: Record<string, unknown> = { ...update };
+        for (const k of omit) delete out[k];
+        return out;
+      };
+
+      let lastErr: unknown = null;
+      for (let i = 0; i < 20; i++) {
+        const attempt = buildAttempt();
+        const { data, error } = await sb.from("songs").update(attempt).eq("id", songId).select("id").single();
+        if (!error) {
+          return json({ ok: true, song_id: (data as any)?.id ?? songId }, { headers: corsHeaders });
+        }
+
+        lastErr = error;
+        const missing = tryParseMissingColumnForTable(error, "songs");
+        if (missing) {
+          omit.add(missing);
+          continue;
+        }
+
+        break;
+      }
+
+      const fallbackMsg = lastErr instanceof Error ? lastErr.message : String((lastErr as any)?.message ?? lastErr);
+      throw new HttpError(500, "finalize_failed", `Failed to finalize song: ${fallbackMsg}`);
+    }
+
+    // ADS: Next interstitial audio ad
+    // GET /api/ads/next?placement=interstitial
+    // Auth: Bearer <Firebase ID token>
+    if (req.method === "GET" && normalized === "/ads/next") {
+      const { uid } = await requireFirebaseUser(req);
+      const sb = requireSupabaseAdmin();
+
+      const url = new URL(req.url);
+      const placementRaw = String(url.searchParams.get("placement") ?? "interstitial").trim().toLowerCase();
+      const placement = placementRaw.replace(/[^a-z0-9_\-]/g, "").slice(0, 40);
+
+      // Best-effort rotation: don't serve the same ad twice in a row.
+      // If analytics tables don't exist, or there's only 1 ad, degrade gracefully.
+      let lastAdId: number | null = null;
+      try {
+        const last = await sb
+          .from("ads_impressions")
+          .select("ad_id")
+          .eq("user_id", uid)
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        if (!last.error) {
+          const n = Number((last.data as any)?.ad_id ?? 0);
+          if (Number.isFinite(n) && n > 0) lastAdId = Math.floor(n);
+        }
+      } catch (_) {
+        // ignore
+      }
+
+      const selectWithVideo =
+        "id,title,name,audio_url,video_url,image_url,advertiser,click_url,duration_seconds,is_skippable,priority,created_at,placement,is_active";
+      const selectWithoutVideo =
+        "id,title,name,audio_url,image_url,advertiser,click_url,duration_seconds,is_skippable,priority,created_at,placement,is_active";
+
+      const fetch = async (select: string) => {
+        let q = sb.from("ads").select(select).eq("is_active", true);
+        if (placement) {
+          // Prefer placement match if the column exists; otherwise this filter is harmless.
+          q = q.or(`placement.is.null,placement.eq.${placement}`);
+        }
+        return await q
+          .order("priority", { ascending: false })
+          .order("created_at", { ascending: false })
+          .limit(50);
+      };
+
+      let rows = await fetch(selectWithVideo);
+      if (rows.error) {
+        const missing = tryParseMissingColumnForTable(rows.error, "ads");
+        if (missing === "video_url") {
+          rows = await fetch(selectWithoutVideo);
+        }
+      }
+
+      if (rows.error) {
+        throw new HttpError(500, "db_error", `Failed to fetch ads: ${rows.error.message}`);
+      }
+
+      let list = (rows.data as any[]) ?? [];
+      // Only serve actual playable interstitials.
+      list = list.filter((r) => {
+        const audioUrl = String((r as any)?.audio_url ?? "").trim();
+        const videoUrl = String((r as any)?.video_url ?? "").trim();
+        return audioUrl.length > 0 || videoUrl.length > 0;
+      });
+      if (!list.length) {
+        return json({ ok: true, ad: null });
+      }
+
+      let candidates = list;
+      if (lastAdId != null && candidates.length > 1) {
+        const filtered = candidates.filter((r) => Number((r as any)?.id ?? 0) !== lastAdId);
+        if (filtered.length > 0) candidates = filtered;
+      }
+
+      const pick = candidates[Math.floor(Math.random() * candidates.length)] ?? null;
+      if (!pick) {
+        return json({ ok: true, ad: null });
+      }
+
+      const id = String((pick as any).id ?? "").trim();
+      const audioUrl = String((pick as any).audio_url ?? "").trim();
+      const videoUrl = String((pick as any).video_url ?? "").trim();
+      if (!id || (!audioUrl && !videoUrl)) {
+        return json({ ok: true, ad: null });
+      }
+
+      const durationSecondsRaw = Number((pick as any).duration_seconds ?? 0);
+      const durationSeconds = Number.isFinite(durationSecondsRaw)
+        ? Math.max(0, Math.floor(durationSecondsRaw))
+        : 0;
+
+      return json({
+        ok: true,
+        ad: {
+          id,
+          title: String((pick as any).title ?? (pick as any).name ?? "Sponsored").trim(),
+          audio_url: audioUrl || null,
+          video_url: videoUrl || null,
+          image_url: String((pick as any).image_url ?? "").trim() || null,
+          advertiser: String((pick as any).advertiser ?? "WeAfrica Music").trim(),
+          click_url: String((pick as any).click_url ?? "").trim() || null,
+          duration_seconds: durationSeconds,
+          is_skippable: Boolean((pick as any).is_skippable ?? false),
+        },
+      });
+    }
+
+    // ADS: Track ad analytics
+    // POST /api/ads/track
+    // Auth: Bearer <Firebase ID token>
+    // Body: { ad_id: string|number, event: 'impression'|'click'|'completion' }
+    if (req.method === "POST" && normalized === "/ads/track") {
+      const { uid } = await requireFirebaseUser(req);
+      const sb = requireSupabaseAdmin();
+      const body = await readJson(req);
+
+      const adIdRaw = body.ad_id ?? body.adId ?? body.id;
+      const adIdNum = Number(adIdRaw);
+      const adId = Number.isFinite(adIdNum) ? Math.floor(adIdNum) : null;
+      if (adId == null || adId <= 0) {
+        // Degrade gracefully: some deployments use UUID/string ids for ads.
+        // Analytics tables in this repo expect integer FK ids, so we skip
+        // inserting instead of failing playback.
+        return json({ ok: true, skipped: true, reason: "non_numeric_ad_id" });
+      }
+
+      const event = String(body.event ?? body.type ?? "").trim().toLowerCase();
+      const table =
+        event === "impression"
+          ? "ads_impressions"
+          : event === "click"
+            ? "ads_clicks"
+            : event === "completion"
+              ? "ads_completions"
+              : "";
+
+      if (!table) {
+        throw new HttpError(400, "bad_request", "event must be impression | click | completion");
+      }
+
+      const now = new Date().toISOString();
+      const ins = await sb.from(table).insert({
+        ad_id: adId,
+        user_id: uid,
+        created_at: now,
+      });
+
+      if (ins.error) {
+        throw new HttpError(500, "db_error", `Failed to track ad event: ${ins.error.message}`);
+      }
+
+      return json({ ok: true });
+    }
+
+    // ADS: Rewarded ad payout
+    // POST /api/ads/reward
+    // Auth: Bearer <Firebase ID token>
+    // Body: { ad_id?: string|number, source?: 'direct'|'admob'|string }
+    // Notes:
+    // - Uses wallet RPC credit_wallet_balance for atomic credit + idempotent reference.
+    // - Applies a simple cooldown bucket to limit abuse.
+    // - If ads_completions exists and ad_id is numeric, best-effort verifies a recent completion.
+    if (req.method === "POST" && normalized === "/ads/reward") {
+      const { uid } = await requireFirebaseUser(req);
+      const sb = requireSupabaseAdmin();
+      const body = await readJson(req);
+
+      const rewardRaw = Number((Deno.env.get("WEAFRICA_REWARDED_AD_COINS") ?? "5").trim());
+      const rewardCoins = Number.isFinite(rewardRaw) ? Math.max(0, Math.min(100, Math.floor(rewardRaw))) : 5;
+      if (rewardCoins <= 0) {
+        return json({ ok: true, coins_awarded: 0, coin_balance: null });
+      }
+
+      const cooldownMinRaw = Number((Deno.env.get("WEAFRICA_REWARDED_AD_COOLDOWN_MINUTES") ?? "5").trim());
+      const cooldownMinutes = Number.isFinite(cooldownMinRaw)
+        ? Math.max(1, Math.min(120, Math.floor(cooldownMinRaw)))
+        : 5;
+      const bucket = Math.floor(Date.now() / (cooldownMinutes * 60_000));
+
+      const adIdRaw = body?.ad_id ?? body?.adId ?? body?.id ?? null;
+      const adIdNum = Number(adIdRaw);
+      const adId = Number.isFinite(adIdNum) ? Math.floor(adIdNum) : null;
+      const source = String(body?.source ?? "").trim().slice(0, 40);
+
+      // Best-effort: verify a recent completion for this ad.
+      if (adId != null && adId > 0) {
+        try {
+          const since = new Date(Date.now() - 15 * 60_000).toISOString();
+          const check = await sb
+            .from("ads_completions")
+            .select("ad_id")
+            .eq("user_id", uid)
+            .eq("ad_id", adId)
+            .gte("created_at", since)
+            .limit(1)
+            .maybeSingle();
+
+          // If the table exists and no row is found, reject.
+          if (!check.error && !check.data) {
+            throw new HttpError(400, "not_completed", "Reward requires a recent ad completion.");
+          }
+        } catch (e) {
+          // If ads_completions doesn't exist or schema is stale, degrade gracefully.
+          const msg = e instanceof HttpError ? e.message : String((e as any)?.message ?? e);
+          if (e instanceof HttpError) throw e;
+          if (!msg.includes("PGRST") && !msg.toLowerCase().includes("ads_completions")) {
+            // Unknown errors are treated as non-fatal.
+          }
+        }
+      }
+
+      const reference = `rewarded_ad:${bucket}`;
+      const metadata: Record<string, unknown> = {
+        ...(source ? { source } : {}),
+        ...(adId != null && adId > 0 ? { ad_id: adId } : {}),
+      };
+
+      const rpc = await sb.rpc("credit_wallet_balance", {
+        p_user_id: uid,
+        p_amount: rewardCoins,
+        p_type: "rewarded_ad",
+        p_description: "Rewarded ad",
+        p_reference: reference,
+        p_metadata: metadata,
+        p_increment_total_earned: true,
+      });
+
+      if (rpc.error) {
+        throw new HttpError(500, "db_error", `Failed to reward coins: ${rpc.error.message}`);
+      }
+
+      const row = Array.isArray(rpc.data) ? (rpc.data[0] as any) : (rpc.data as any);
+      return json({
+        ok: true,
+        coins_awarded: rewardCoins,
+        coin_balance: row?.coin_balance ?? null,
+        total_earned: row?.total_earned ?? null,
+        transaction_id: row?.transaction_id ?? null,
+        cooldown_minutes: cooldownMinutes,
+      });
+    }
+
+    // ADS: List active ads (for client-side scheduling/rotation)
+    // GET /api/ads/active?placement=interstitial
+    // Auth: Bearer <Firebase ID token>
+    if (req.method === "GET" && normalized === "/ads/active") {
+      await requireFirebaseUser(req);
+      const sb = requireSupabaseAdmin();
+
+      const url = new URL(req.url);
+      const placementRaw = String(url.searchParams.get("placement") ?? "interstitial").trim().toLowerCase();
+      const placement = placementRaw.replace(/[^a-z0-9_\-]/g, "").slice(0, 40);
+
+      const selectWithVideo =
+        "id,title,name,audio_url,video_url,image_url,advertiser,click_url,duration_seconds,is_skippable,priority,created_at,placement,is_active";
+      const selectWithoutVideo =
+        "id,title,name,audio_url,image_url,advertiser,click_url,duration_seconds,is_skippable,priority,created_at,placement,is_active";
+
+      const fetch = async (select: string) => {
+        let q = sb.from("ads").select(select).eq("is_active", true);
+        if (placement) {
+          q = q.or(`placement.is.null,placement.eq.${placement}`);
+        }
+        return await q.order("priority", { ascending: false }).order("created_at", { ascending: false }).limit(200);
+      };
+
+      let rows = await fetch(selectWithVideo);
+      if (rows.error) {
+        const missing = tryParseMissingColumnForTable(rows.error, "ads");
+        if (missing === "video_url") {
+          rows = await fetch(selectWithoutVideo);
+        }
+      }
+
+      if (rows.error) {
+        throw new HttpError(500, "db_error", `Failed to fetch ads: ${rows.error.message}`);
+      }
+
+      let list = (rows.data as any[]) ?? [];
+      list = list.filter((r) => {
+        const audioUrl = String((r as any)?.audio_url ?? "").trim();
+        const videoUrl = String((r as any)?.video_url ?? "").trim();
+        return audioUrl.length > 0 || videoUrl.length > 0;
+      });
+
+      return json({ ok: true, ads: list });
+    }
+
+    // POST /api/ads/create
+    // Auth: Bearer <Firebase ID token>
+    // Body: {
+    //   title: string,
+    //   audio_url: string,
+    //   duration_seconds?: number,
+    //   // Optional for cleanup if DB insert fails:
+    //   audio_bucket?: string,
+    //   audio_path?: string
+    // }
+    if (req.method === "POST" && normalized === "/ads/create") {
+      const { uid, email } = await requireFirebaseUser(req);
+      const sb = requireSupabaseAdmin();
+      const body = await readJson(req);
+
+      const title = String(body.title ?? "").trim();
+      const audioUrl = String(body.audio_url ?? body.audioUrl ?? "").trim();
+      const durationSecondsRaw = Number(body.duration_seconds ?? body.durationSeconds ?? body.duration ?? 0);
+      const durationSeconds = Number.isFinite(durationSecondsRaw) ? Math.max(0, Math.floor(durationSecondsRaw)) : 0;
+
+      const audioBucket = String(body.audio_bucket ?? body.audioBucket ?? "").trim();
+      const audioPath = String(body.audio_path ?? body.audioPath ?? "").trim();
+
+      if (!title) {
+        throw new HttpError(400, "bad_request", "Missing title");
+      }
+      if (!audioUrl) {
+        throw new HttpError(400, "bad_request", "Missing audio_url");
+      }
+
+      // Allow admin only for ads
+      let allowed = false;
+      try {
+        let q = sb.from("admins_with_permissions").select("status").limit(1);
+        if (email && email.trim().length > 0) q = q.eq("email", email.trim());
+        else q = q.eq("uid", uid);
+        const admin = await q.maybeSingle();
+        const status = String((admin.data as any)?.status ?? "").trim().toLowerCase();
+        if (!admin.error && admin.data && (!status || status === "active")) allowed = true;
+      } catch (_) {
+        // ignore
+      }
+
+      if (!allowed) {
+        throw new HttpError(403, "forbidden", "Admin access required for ads");
+      }
+
+      async function bestEffortCleanupUploads() {
+        try {
+          if (audioBucket && audioPath) {
+            await sb.storage.from(audioBucket).remove([audioPath]);
+          }
+        } catch (_) {
+          // ignore
+        }
+      }
+
+      const now = new Date().toISOString();
+
+      const baseRow: Record<string, unknown> = {
+        title: title,
+        audio_url: audioUrl,
+        is_active: true,
+        created_at: now,
+        updated_at: now,
+      };
+      if (durationSeconds > 0) baseRow.duration_seconds = durationSeconds;
+
+      const omit = new Set<string>();
+      const table = "ads";
+
+      const buildAttempt = (): Record<string, unknown> => {
+        const out: Record<string, unknown> = { ...baseRow };
+        for (const k of omit) delete out[k];
+        return out;
+      };
+
+      let lastErr: unknown = null;
+      for (let i = 0; i < 20; i++) {
+        const attempt = buildAttempt();
+        const { data, error } = await sb.from(table).insert(attempt).select("id").single();
+        if (!error) {
+          return json({ ok: true, ad_id: (data as any)?.id ?? null }, { headers: corsHeaders });
+        }
+
+        lastErr = error;
+        const missing = tryParseMissingColumnForTable(error, table);
+        if (missing) {
+          omit.add(missing);
+          continue;
+        }
+
+        // Unknown error -> stop.
+        break;
+      }
+
+      await bestEffortCleanupUploads();
+      const fallbackMsg = lastErr instanceof Error ? lastErr.message : String((lastErr as any)?.message ?? lastErr);
+      throw new HttpError(500, "create_failed", `Failed to create ad record: ${fallbackMsg}`);
+    }
+
+    if (req.method === "POST" && normalized === "/songs/publish") {
+      const { uid } = await requireFirebaseUser(req);
+      const sb = requireSupabaseAdmin();
+      const body = await readJson(req);
+
+      const title = String(body.title ?? "").trim();
+      const artistName = String(body.artist ?? "").trim();
+      const genre = String(body.genre ?? "").trim();
+      const country = String(body.country ?? "").trim();
+      const language = String(body.language ?? "").trim();
+      const audioUrl = String(body.audio_url ?? body.audioUrl ?? "").trim();
+      const artworkUrl = String(body.artwork_url ?? body.artworkUrl ?? "").trim();
+      const albumId = String(body.album_id ?? body.albumId ?? "").trim();
+
+      const audioBucket = String(body.audio_bucket ?? body.audioBucket ?? "").trim();
+      const audioPath = String(body.audio_path ?? body.audioPath ?? "").trim();
+      const artworkBucket = String(body.artwork_bucket ?? body.artworkBucket ?? "").trim();
+      const artworkPath = String(body.artwork_path ?? body.artworkPath ?? "").trim();
+
+      if (!audioUrl) {
+        throw new HttpError(400, "bad_request", "Missing audio_url");
+      }
+
+      async function bestEffortCleanupUploads() {
+        try {
+          if (audioBucket && audioPath) {
+            await sb.storage.from(audioBucket).remove([audioPath]);
+          }
+        } catch (_) {
+          // ignore
+        }
+        try {
+          if (artworkBucket && artworkPath) {
+            await sb.storage.from(artworkBucket).remove([artworkPath]);
+          }
+        } catch (_) {
+          // ignore
+        }
+      }
+
+      const now = new Date().toISOString();
+      const baseRow: Record<string, unknown> = {
+        title: title || null,
+        genre: genre || null,
+        country: country || null,
+        language: language || null,
+        audio_url: audioUrl,
+        user_id: uid,
+        created_at: now,
+      };
+      if (albumId) baseRow.album_id = albumId;
+      if (artworkUrl) baseRow.artwork_url = artworkUrl;
+
+      let artistId: string | null = null;
+      try {
+        const { data: artists, error: artistErr } = await sb
+          .from("artists")
+          .select("id,user_id,firebase_uid")
+          .or(`user_id.eq.${uid},firebase_uid.eq.${uid}`)
+          .limit(1);
+        if (!artistErr && artists && artists.length) {
+          artistId = String((artists[0] as any).id ?? "").trim() || null;
+        }
+      } catch (_) {
+        // ignore
+      }
+
+      const publishFlagsAll: Record<string, unknown> = {
+        is_public: true,
+        is_active: true,
+        approved: true,
+        is_published: true,
+        // Keep compatible with DB schemas that enforce: status IN ('active','removed')
+        status: "active",
+      };
+
+      const candidates: Array<Record<string, unknown>> = [];
+      if (artistId) {
+        candidates.push({ ...baseRow, artist_id: artistId, ...publishFlagsAll });
+        candidates.push({ ...baseRow, artist_id: artistId, is_public: true, is_active: true, approved: true });
+        candidates.push({ ...baseRow, artist_id: artistId, is_active: true, approved: true });
+        candidates.push({ ...baseRow, artist_id: artistId, is_active: true });
+        candidates.push({ ...baseRow, artist_id: artistId });
+      }
+
+      if (artistName) {
+        candidates.push({ ...baseRow, artist: artistName, ...publishFlagsAll });
+        candidates.push({ ...baseRow, artist: artistName, is_public: true, is_active: true, approved: true });
+        candidates.push({ ...baseRow, artist: artistName, is_active: true, approved: true });
+        candidates.push({ ...baseRow, artist: artistName, is_active: true });
+        candidates.push({ ...baseRow, artist: artistName });
+      }
+
+      candidates.push({ ...baseRow, ...publishFlagsAll });
+      candidates.push({ ...baseRow, is_public: true, is_active: true, approved: true });
+      candidates.push({ ...baseRow, is_active: true, approved: true });
+      candidates.push({ ...baseRow, is_active: true });
+      candidates.push({ ...baseRow });
+
+      let lastErr: unknown = null;
+      for (const row of candidates) {
+        try {
+          const { data, error } = await sb.from("songs").insert(row).select("id").single();
+          if (error) {
+            lastErr = error;
+            const msg = String((error as any).message ?? "").toLowerCase();
+            const details = String((error as any).details ?? "").toLowerCase();
+            const schemaMismatch = msg.includes("column") || msg.includes("does not exist") || details.includes("column");
+            if (schemaMismatch) continue;
+            throw new HttpError(500, "supabase_error", error.message);
+          }
+          return json({ ok: true, song_id: (data as any)?.id ?? null }, { headers: corsHeaders });
+        } catch (e) {
+          lastErr = e;
+          // Continue on likely schema drift errors.
+          const msg = String((e as any)?.message ?? e).toLowerCase();
+          const schemaMismatch = msg.includes("column") || msg.includes("does not exist") || msg.includes("schema cache");
+          if (schemaMismatch) continue;
+          break;
+        }
+      }
+
+      await bestEffortCleanupUploads();
+      const fallbackMsg = lastErr instanceof Error ? lastErr.message : String(lastErr);
+      throw new HttpError(500, "publish_failed", `Failed to create song record: ${fallbackMsg}`);
+    }
+
+    // POST /api/videos/publish
+    // Auth: Bearer <Firebase ID token>
+    // Body: {
+    //   title?: string,
+    //   caption?: string,
+    //   video_url: string,
+    //   thumbnail_url?: string,
+    //   // Optional for cleanup if DB insert fails:
+    //   video_bucket?: string,
+    //   video_path?: string,
+    //   thumbnail_bucket?: string,
+    //   thumbnail_path?: string
+    // }
+    if (req.method === "POST" && normalized === "/videos/publish") {
+      const { uid } = await requireFirebaseUser(req);
+      const sb = requireSupabaseAdmin();
+      const body = await readJson(req);
+
+      const title = String(body.title ?? "").trim();
+      const caption = String(body.caption ?? body.description ?? "").trim();
+      const videoUrl = String(body.video_url ?? body.videoUrl ?? "").trim();
+      const thumbnailUrl = String(body.thumbnail_url ?? body.thumbnailUrl ?? "").trim();
+
+      const categoryRaw = String(
+        (body as any).category ?? (body as any).video_category ?? (body as any).videoCategory ?? "",
+      ).trim();
+
+      const videoBucket = String(body.video_bucket ?? body.videoBucket ?? "").trim();
+      const videoPath = String(body.video_path ?? body.videoPath ?? "").trim();
+      const thumbBucket = String(body.thumbnail_bucket ?? body.thumb_bucket ?? body.thumbnailBucket ?? "").trim();
+      const thumbPath = String(body.thumbnail_path ?? body.thumb_path ?? body.thumbnailPath ?? "").trim();
+
+      if (!videoUrl) {
+        throw new HttpError(400, "bad_request", "Missing video_url");
+      }
+
+      async function bestEffortCleanupUploads() {
+        try {
+          if (videoBucket && videoPath) {
+            await sb.storage.from(videoBucket).remove([videoPath]);
+          }
+        } catch (_) {
+          // ignore
+        }
+        try {
+          if (thumbBucket && thumbPath) {
+            await sb.storage.from(thumbBucket).remove([thumbPath]);
+          }
+        } catch (_) {
+          // ignore
+        }
+      }
+
+      // Keep the base row minimal to maximize compatibility across deployments.
+      // (Some environments have schema drift and will reject unknown columns.)
+      const baseRow: Record<string, unknown> = {
+        title: title || null,
+        caption: caption || title || null,
+        video_url: videoUrl,
+        user_id: uid,
+      };
+
+      // Some deployments have videos.category as NOT NULL. Only include it if the column exists.
+      // (If it doesn't exist, selecting it will error and we keep baseRow minimal.)
+      let categoryColumnSupported = false;
+      try {
+        const probe = await sb.from("videos").select("category").limit(1);
+        if (!probe.error) categoryColumnSupported = true;
+      } catch (_) {
+        // ignore
+      }
+
+      if (categoryColumnSupported) {
+        let category = categoryRaw;
+
+        // If not provided, try to reuse an existing DB value (helps with enum/check constraints).
+        if (!category) {
+          try {
+            const existing = await sb
+              .from("videos")
+              .select("category")
+              .not("category", "is", null)
+              .order("created_at", { ascending: false })
+              .limit(1)
+              .maybeSingle();
+            const c = String((existing.data as any)?.category ?? "").trim();
+            if (c) category = c;
+          } catch (_) {
+            // ignore
+          }
+        }
+
+        if (!category) category = "music_video";
+        baseRow.category = category;
+      }
+
+      // Thumbnail column names vary across deployments.
+      const baseRows: Array<Record<string, unknown>> = [];
+      if (thumbnailUrl) {
+        baseRows.push({ ...baseRow, thumbnail_url: thumbnailUrl });
+        baseRows.push({ ...baseRow, artwork_url: thumbnailUrl });
+        baseRows.push({ ...baseRow, thumb_url: thumbnailUrl });
+      }
+      baseRows.push({ ...baseRow });
+
+      let artistId: string | null = null;
+      try {
+        const { data: artists, error: artistErr } = await sb
+          .from("artists")
+          .select("id,user_id,firebase_uid")
+          .or(`user_id.eq.${uid},firebase_uid.eq.${uid}`)
+          .limit(1);
+        if (!artistErr && artists && artists.length) {
+          artistId = String((artists[0] as any).id ?? "").trim() || null;
+        }
+      } catch (_) {
+        // ignore
+      }
+
+      const publishFlagsAll: Record<string, unknown> = {
+        is_public: true,
+        is_active: true,
+        approved: true,
+        is_published: true,
+        status: "active",
+      };
+
+      const candidates: Array<Record<string, unknown>> = [];
+
+      for (const br of baseRows) {
+        // Prefer explicit owner fields if present in schema.
+        if (artistId) {
+          candidates.push({ ...br, artist_id: artistId, owner_type: "artist", owner_id: artistId, ...publishFlagsAll });
+          candidates.push({ ...br, artist_id: artistId, owner_type: "artist", owner_id: artistId, is_public: true, is_active: true, approved: true });
+          candidates.push({ ...br, artist_id: artistId, owner_type: "artist", owner_id: artistId, is_active: true, approved: true });
+          candidates.push({ ...br, artist_id: artistId, owner_type: "artist", owner_id: artistId, is_active: true });
+          candidates.push({ ...br, artist_id: artistId, owner_type: "artist", owner_id: artistId });
+
+          // Legacy schemas with artist_id only.
+          candidates.push({ ...br, artist_id: artistId, ...publishFlagsAll });
+          candidates.push({ ...br, artist_id: artistId, is_public: true, is_active: true, approved: true });
+          candidates.push({ ...br, artist_id: artistId, is_active: true, approved: true });
+          candidates.push({ ...br, artist_id: artistId, is_active: true });
+          candidates.push({ ...br, artist_id: artistId });
+        }
+
+        // No artist id available (consumer uploads or schema uses user_id only).
+        candidates.push({ ...br, ...publishFlagsAll });
+        candidates.push({ ...br, is_public: true, is_active: true, approved: true });
+        candidates.push({ ...br, is_active: true, approved: true });
+        candidates.push({ ...br, is_active: true });
+        candidates.push({ ...br });
+      }
+
+      let lastErr: unknown = null;
+      for (const row of candidates) {
+        try {
+          const { data, error } = await sb.from("videos").insert(row).select("id").single();
+          if (error) {
+            lastErr = error;
+            const msg = String((error as any).message ?? "").toLowerCase();
+            const details = String((error as any).details ?? "").toLowerCase();
+            const schemaMismatch = msg.includes("column") || msg.includes("does not exist") || details.includes("column") || msg.includes("schema cache");
+            if (schemaMismatch) continue;
+            throw new HttpError(500, "supabase_error", error.message);
+          }
+
+          return json({ ok: true, video_id: (data as any)?.id ?? null }, { headers: corsHeaders });
+        } catch (e) {
+          lastErr = e;
+          const msg = String((e as any)?.message ?? e).toLowerCase();
+          const schemaMismatch = msg.includes("column") || msg.includes("does not exist") || msg.includes("schema cache");
+          if (schemaMismatch) continue;
+          break;
+        }
+      }
+
+      await bestEffortCleanupUploads();
+      const fallbackMsg = lastErr instanceof Error ? lastErr.message : String(lastErr);
+      throw new HttpError(500, "publish_failed", `Failed to create video record: ${fallbackMsg}`);
+    }
+
+    // Videos create (RLS-safe, pending/draft supported)
+    // POST /api/videos/create
+    // Auth: Bearer <Firebase ID token>
+    // Body: {
+    //   title?: string,
+    //   caption?: string,
+    //   video_url: string,
+    //   file_path?: string,
+    //   thumbnail_url?: string,
+    //   // Optional for cleanup if DB insert fails:
+    //   video_bucket?: string,
+    //   video_path?: string,
+    //   thumbnail_bucket?: string,
+    //   thumbnail_path?: string
+    // }
+    if (req.method === "POST" && normalized === "/videos/create") {
+      const { uid, email } = await requireFirebaseUser(req);
+      const sb = requireSupabaseAdmin();
+      const body = await readJson(req);
+
+      const publishRequestedRaw = (body as any).publish ?? (body as any).is_published ?? (body as any).isPublished;
+      const publishRequested = publishRequestedRaw === undefined ? true : Boolean(publishRequestedRaw);
+
+      const title = String((body as any).title ?? "").trim();
+      const caption = String((body as any).caption ?? (body as any).description ?? "").trim();
+      const videoUrl = String((body as any).video_url ?? (body as any).videoUrl ?? "").trim();
+      const thumbnailUrl = String((body as any).thumbnail_url ?? (body as any).thumbnailUrl ?? "").trim();
+
+      const categoryRaw = String(
+        (body as any).category ?? (body as any).video_category ?? (body as any).videoCategory ?? "",
+      ).trim();
+
+      const videoBucket = String((body as any).video_bucket ?? (body as any).videoBucket ?? "").trim();
+      const videoPath = String((body as any).video_path ?? (body as any).videoPath ?? "").trim();
+      const thumbBucket = String((body as any).thumbnail_bucket ?? (body as any).thumb_bucket ?? (body as any).thumbnailBucket ?? "").trim();
+      const thumbPath = String((body as any).thumbnail_path ?? (body as any).thumb_path ?? (body as any).thumbnailPath ?? "").trim();
+
+      const explicitFilePath = String((body as any).file_path ?? (body as any).filePath ?? "").trim();
+
+      if (!videoUrl) {
+        throw new HttpError(400, "bad_request", "Missing video_url");
+      }
+
+      // Creator/admin gating (mirrors /songs/create).
+      let allowed = false;
+      try {
+        let q: any = sb.from("admins_with_permissions").select("status").limit(1);
+        if (email && email.trim().length > 0) q = q.eq("email", email.trim());
+        else q = q.eq("uid", uid);
+        const admin = await q.maybeSingle();
+        const status = String((admin.data as any)?.status ?? "").trim().toLowerCase();
+        if (!admin.error && admin.data && (!status || status === "active")) allowed = true;
+      } catch (_) {
+        // ignore
+      }
+
+      let artistId: string | null = null;
+      let djId: string | null = null;
+
+      if (!allowed) {
+        try {
+          const { data: artists, error: artistErr } = await sb
+            .from("artists")
+            .select("id")
+            .eq("firebase_uid", uid)
+            .limit(1);
+          if (!artistErr && artists && artists.length) {
+            artistId = String((artists[0] as any).id ?? "").trim() || null;
+            allowed = true;
+          }
+        } catch (_) {
+          // ignore
+        }
+      }
+
+      if (!allowed) {
+        try {
+          const { data: artists, error: artistErr } = await sb
+            .from("artists")
+            .select("id")
+            .eq("user_id", uid)
+            .limit(1);
+          if (!artistErr && artists && artists.length) {
+            artistId = String((artists[0] as any).id ?? "").trim() || null;
+            allowed = true;
+          }
+        } catch (_) {
+          // ignore
+        }
+      }
+
+      if (!allowed) {
+        try {
+          const { data: djs, error: djErr } = await sb
+            .from("djs")
+            .select("id")
+            .eq("firebase_uid", uid)
+            .limit(1);
+          if (!djErr && djs && djs.length) {
+            djId = String((djs[0] as any).id ?? "").trim() || null;
+            allowed = true;
+          }
+        } catch (_) {
+          // ignore
+        }
+      }
+
+      if (!allowed) {
+        try {
+          const { data: djs, error: djErr } = await sb
+            .from("djs")
+            .select("id")
+            .eq("user_id", uid)
+            .limit(1);
+          if (!djErr && djs && djs.length) {
+            djId = String((djs[0] as any).id ?? "").trim() || null;
+            allowed = true;
+          }
+        } catch (_) {
+          // ignore
+        }
+      }
+
+      if (!allowed) {
+        try {
+          const { data: creatorProfile, error: creatorErr } = await sb
+            .from("creator_profiles")
+            .select("role")
+            .eq("user_id", uid)
+            .limit(1)
+            .maybeSingle();
+          if (!creatorErr && creatorProfile) {
+            const creatorRole = String((creatorProfile as any).role ?? "").trim().toLowerCase();
+            if (creatorRole === "artist" || creatorRole === "dj") {
+              allowed = true;
+            }
+          }
+        } catch (_) {
+          // ignore
+        }
+      }
+
+      if (!allowed) {
+        try {
+          const byId = await sb
+            .from("profiles")
+            .select("role")
+            .eq("id", uid)
+            .limit(1)
+            .maybeSingle();
+          if (!byId.error && byId.data) {
+            const role = String((byId.data as any)?.role ?? "").trim().toLowerCase();
+            if (role === "artist" || role === "dj") {
+              allowed = true;
+            }
+          }
+        } catch (_) {
+          // ignore
+        }
+      }
+
+      if (!allowed) {
+        try {
+          const byFirebaseUid = await sb
+            .from("profiles")
+            .select("role")
+            .eq("firebase_uid", uid)
+            .limit(1)
+            .maybeSingle();
+          if (!byFirebaseUid.error && byFirebaseUid.data) {
+            const role = String((byFirebaseUid.data as any)?.role ?? "").trim().toLowerCase();
+            if (role === "artist" || role === "dj") {
+              allowed = true;
+            }
+          }
+        } catch (_) {
+          // ignore
+        }
+      }
+
+      if (!allowed) {
+        throw new HttpError(
+          403,
+          "forbidden",
+          "Creator (artist/dj) or admin access required. No matching record found for this account in artists, djs, creator_profiles, or profiles.role.",
+        );
+      }
+
+      async function bestEffortCleanupUploads() {
+        try {
+          if (videoBucket && videoPath) {
+            await sb.storage.from(videoBucket).remove([videoPath]);
+          }
+        } catch (_) {
+          // ignore
+        }
+        try {
+          if (thumbBucket && thumbPath) {
+            await sb.storage.from(thumbBucket).remove([thumbPath]);
+          }
+        } catch (_) {
+          // ignore
+        }
+      }
+
+      const now = new Date().toISOString();
+
+      // Some deployments have videos.category as NOT NULL.
+      // If the client did not supply one, try to reuse an existing category from the table first
+      // (helps if category is constrained by enum/check constraints), else fall back.
+      let category = categoryRaw;
+      if (!category) {
+        try {
+          const existing = await sb
+            .from("videos")
+            .select("category")
+            .not("category", "is", null)
+            .order("created_at", { ascending: false })
+            .limit(1)
+            .maybeSingle();
+          const c = String((existing.data as any)?.category ?? "").trim();
+          if (c) category = c;
+        } catch (_) {
+          // ignore
+        }
+      }
+      if (!category) category = "music_video";
+
+      // Some schemas include file_path; others don't.
+      let filePath = explicitFilePath || videoPath;
+      if (!filePath || filePath.trim().length === 0) filePath = videoUrl;
+      filePath = filePath.trim();
+
+      const baseRow: Record<string, unknown> = {
+        title: title || null,
+        caption: caption || title || null,
+        category,
+        video_url: videoUrl,
+        file_path: filePath || null,
+        user_id: uid,
+        uploader_id: uid,
+        firebase_uid: uid,
+        created_at: now,
+        updated_at: now,
+        status: "active",
+      };
+
+      if (thumbnailUrl) {
+        baseRow.thumbnail_url = thumbnailUrl;
+        baseRow.artwork_url = thumbnailUrl;
+        baseRow.thumb_url = thumbnailUrl;
+        baseRow.thumbnail = thumbnailUrl;
+      }
+
+      // Prefer explicit owner fields if present in schema.
+      if (artistId) {
+        baseRow.artist_id = artistId;
+        baseRow.owner_type = "artist";
+        baseRow.owner_id = artistId;
+      } else if (djId) {
+        baseRow.dj_id = djId;
+        baseRow.owner_type = "dj";
+        baseRow.owner_id = djId;
+      }
+
+      const publishFlags: Record<string, unknown> = publishRequested
+        ? {
+          is_active: true,
+          approved: true,
+          is_public: true,
+          is_published: true,
+          status: "active",
+          published_at: now,
+        }
+        : {
+          is_active: true,
+          approved: false,
+          is_public: false,
+          is_published: false,
+          status: "active",
+        };
+
+      const omit = new Set<string>();
+      const table = "videos";
+      const buildAttempt = (): Record<string, unknown> => {
+        const out: Record<string, unknown> = { ...baseRow, ...publishFlags };
+        for (const k of omit) delete out[k];
+        return out;
+      };
+
+      let lastErr: unknown = null;
+      for (let i = 0; i < 20; i++) {
+        const attempt = buildAttempt();
+        const { data, error } = await sb.from(table).insert(attempt).select("id").single();
+        if (!error) {
+          return json({ ok: true, video_id: (data as any)?.id ?? null }, { headers: corsHeaders });
+        }
+
+        lastErr = error;
+        const missing = tryParseMissingColumnForTable(error, table);
+        if (missing) {
+          omit.add(missing);
+          continue;
+        }
+
+        if (isNotNullViolation(error, "file_path")) {
+          omit.delete("file_path");
+          (baseRow as any).file_path = filePath || videoUrl;
+          continue;
+        }
+
+        break;
+      }
+
+      await bestEffortCleanupUploads();
+      const fallbackMsg = lastErr instanceof Error ? lastErr.message : String((lastErr as any)?.message ?? lastErr);
+      throw new HttpError(500, "create_failed", `Failed to create video record: ${fallbackMsg}`);
+    }
+
+    // Finalize an existing video row after uploads complete.
+    // POST /api/videos/finalize
+    // Auth: Bearer <Firebase ID token>
+    // Body: {
+    //   video_id: string,
+    //   video_url?: string,
+    //   thumbnail_url?: string,
+    //   file_path?: string,
+    // }
+    if (req.method === "POST" && normalized === "/videos/finalize") {
+      const { uid, email } = await requireFirebaseUser(req);
+      const sb = requireSupabaseAdmin();
+      const body = await readJson(req);
+
+      const videoId = String((body as any).video_id ?? (body as any).videoId ?? (body as any).id ?? "").trim();
+      if (!videoId) {
+        throw new HttpError(400, "bad_request", "Missing video_id");
+      }
+
+      // Ownership check (best-effort across schema variants).
+      let allowed = false;
+      try {
+        let q: any = sb.from("admins_with_permissions").select("status").limit(1);
+        if (email && email.trim().length > 0) q = q.eq("email", email.trim());
+        else q = q.eq("uid", uid);
+        const admin = await q.maybeSingle();
+        const status = String((admin.data as any)?.status ?? "").trim().toLowerCase();
+        if (!admin.error && admin.data && (!status || status === "active")) allowed = true;
+      } catch (_) {
+        // ignore
+      }
+
+      if (!allowed) {
+        try {
+          const existing = await sb
+            .from("videos")
+            .select("id,user_id,firebase_uid")
+            .eq("id", videoId)
+            .maybeSingle();
+          if (existing.error) {
+            throw new HttpError(500, "db_error", `Failed to read video: ${existing.error.message}`);
+          }
+          if (!existing.data) {
+            throw new HttpError(404, "not_found", "Video not found");
+          }
+
+          const userId = String((existing.data as any)?.user_id ?? "").trim();
+          const firebaseUid = String((existing.data as any)?.firebase_uid ?? "").trim();
+          if (userId === uid || firebaseUid === uid) {
+            allowed = true;
+          }
+        } catch (e) {
+          if (e instanceof HttpError) throw e;
+          throw new HttpError(403, "forbidden", "Not allowed to finalize this video.");
+        }
+      }
+
+      if (!allowed) {
+        throw new HttpError(403, "forbidden", "Not allowed to finalize this video.");
+      }
+
+      const now = new Date().toISOString();
+
+      const videoUrl = String((body as any).video_url ?? (body as any).videoUrl ?? "").trim();
+      const thumbnailUrl = String((body as any).thumbnail_url ?? (body as any).thumbnailUrl ?? "").trim();
+      const filePath = String((body as any).file_path ?? (body as any).filePath ?? "").trim();
+
+      const update: Record<string, unknown> = {
+        updated_at: now,
+        is_active: true,
+        approved: true,
+        is_public: true,
+        is_published: true,
+        status: "active",
+        published_at: now,
+      };
+
+      if (videoUrl) update.video_url = videoUrl;
+      if (filePath) update.file_path = filePath;
+
+      if (thumbnailUrl) {
+        update.thumbnail_url = thumbnailUrl;
+        update.artwork_url = thumbnailUrl;
+        update.thumb_url = thumbnailUrl;
+        update.thumbnail = thumbnailUrl;
+      }
+
+      const omit = new Set<string>();
+      const buildAttempt = (): Record<string, unknown> => {
+        const out: Record<string, unknown> = { ...update };
+        for (const k of omit) delete out[k];
+        return out;
+      };
+
+      let lastErr: unknown = null;
+      for (let i = 0; i < 20; i++) {
+        const attempt = buildAttempt();
+        const { data, error } = await sb.from("videos").update(attempt).eq("id", videoId).select("id").single();
+        if (!error) {
+          return json({ ok: true, video_id: (data as any)?.id ?? videoId }, { headers: corsHeaders });
+        }
+
+        lastErr = error;
+        const missing = tryParseMissingColumnForTable(error, "videos");
+        if (missing) {
+          omit.add(missing);
+          continue;
+        }
+        break;
+      }
+
+      const fallbackMsg = lastErr instanceof Error ? lastErr.message : String((lastErr as any)?.message ?? lastErr);
+      throw new HttpError(500, "finalize_failed", `Failed to finalize video: ${fallbackMsg}`);
+    }
+
+    // Provision base profile row (Firebase Auth -> service role writes)
+    // POST /api/auth/provision-profile
+    //
+    // This is used because the app uses Firebase Auth (not Supabase Auth), so
+    // Supabase will NOT auto-create a `public.profiles` row.
+    //
+    // Safety rule: do not downgrade an existing creator role to `consumer`.
+    if (req.method === "POST" && normalized === "/auth/provision-profile") {
+      const { uid, email } = await requireFirebaseUser(req);
+      const sb = requireSupabaseAdmin();
+
+      const body = await readJson(req);
+      const requestedRaw = String((body as any).role ?? (body as any).intent ?? "consumer")
+        .trim()
+        .toLowerCase();
+      const requestedRole = requestedRaw === "artist" || requestedRaw === "dj" || requestedRaw === "consumer" ? requestedRaw : "consumer";
+
+      const usernameRaw = String((body as any).username ?? (body as any).user_name ?? (body as any).userName ?? "").trim();
+      const displayNameRaw = String((body as any).display_name ?? (body as any).displayName ?? "").trim();
+      const countryCodeRaw = String(
+        (body as any).country_code ?? (body as any).countryCode ?? (body as any).country ?? "",
+      )
+        .trim()
+        .toUpperCase();
+
+      const countryCode = /^[A-Z]{2}$/.test(countryCodeRaw) ? countryCodeRaw : "";
+      const fallbackName = (() => {
+        const e = (email ?? "").trim();
+        if (e.includes("@")) return e.split("@")[0];
+        if (uid.length <= 8) return uid;
+        return `${uid.slice(0, 4)}…${uid.slice(uid.length - 4)}`;
+      })();
+
+      const toUsernameBase = (input: string): string => {
+        const t = String(input ?? "").trim().toLowerCase();
+        if (!t) return "";
+        const cleaned = t
+          .replace(/\s+/g, "_")
+          .replace(/[^a-z0-9_\-.]/g, "")
+          .replace(/_+/g, "_")
+          .replace(/\.+/g, ".")
+          .replace(/-+/g, "-")
+          .replace(/^[_\-.]+|[_\-.]+$/g, "");
+        return cleaned.slice(0, 24);
+      };
+
+      const buildGeneratedUsername = (attempt: number): string => {
+        const base =
+          toUsernameBase(usernameRaw) ||
+          toUsernameBase(displayNameRaw) ||
+          toUsernameBase(fallbackName) ||
+          "user";
+
+        const uidHint = uid.slice(0, 4).toLowerCase();
+        const withAttempt = attempt <= 0 ? base : `${base}_${attempt}`;
+        const withUid = withAttempt.length < 3 ? `user_${uidHint}` : withAttempt;
+        return (withUid || `user_${uidHint}`).slice(0, 24);
+      };
+
+      const now = new Date().toISOString();
+      const emailClean = (email ?? "").trim();
+
+      // Check if row exists so we can avoid clobbering optional fields.
+      let existing = await sb.from("profiles").select("id, role").eq("id", uid).maybeSingle();
+      if (existing.error && isInvalidUuidSyntax(existing.error)) {
+        // Some deployments use UUID ids and store Firebase UID in `firebase_uid`.
+        try {
+          existing = await sb.from("profiles").select("id, role").eq("firebase_uid", uid).maybeSingle();
+        } catch (_) {
+          // ignore
+        }
+      }
+      if (existing.error) {
+        throw new HttpError(500, "db_error", `Failed to read profiles: ${existing.error.message}`);
+      }
+
+      // If we didn't find a profile by UID, try to match by email and link it.
+      // This prevents duplicates in deployments where `profiles.id` is UUID and `firebase_uid` is NULL.
+      if (!existing.data && emailClean) {
+        try {
+          const byEmail = await sb.from("profiles").select("id, role").eq("email", emailClean).limit(2);
+          if (!byEmail.error && Array.isArray(byEmail.data) && byEmail.data.length === 1) {
+            existing = { data: byEmail.data[0], error: null } as any;
+          }
+        } catch (_) {
+          // ignore
+        }
+      }
+
+      if (!existing.data) {
+        let insData: any = null;
+        let lastErr: any = null;
+
+        // Create a usable @username (or a generated fallback) so the app can
+        // support search/invites without exposing raw Firebase UIDs.
+        for (let attempt = 0; attempt < 8; attempt++) {
+          const candidateUsername = buildGeneratedUsername(attempt);
+          const baseInsert: Record<string, unknown> = {
+            id: uid,
+            firebase_uid: uid,
+            email: emailClean || null,
+            username: candidateUsername,
+            display_name: displayNameRaw || fallbackName,
+            role: requestedRole,
+            created_at: now,
+            updated_at: now,
+          };
+
+          if (countryCode) baseInsert.country_code = countryCode;
+
+          let ins = await sb.from("profiles").insert(baseInsert as any).select("id, role").single();
+
+          if (ins.error) {
+            const missing = tryParseMissingColumnForTable(ins.error, "profiles");
+            if (missing) {
+              const copy = { ...baseInsert };
+              delete (copy as any)[missing];
+              ins = await sb.from("profiles").insert(copy as any).select("id, role").single();
+            }
+          }
+
+          // UUID-id schema fallback: try inserting without `id` and populate `firebase_uid`.
+          if (ins.error && isInvalidUuidSyntax(ins.error)) {
+            try {
+              const copy: Record<string, unknown> = { ...baseInsert };
+              delete (copy as any).id;
+              let ins2 = await sb.from("profiles").insert(copy as any).select("id, role").single();
+              if (ins2.error) {
+                const missing = tryParseMissingColumnForTable(ins2.error, "profiles");
+                if (missing) {
+                  const copy2 = { ...copy };
+                  delete (copy2 as any)[missing];
+                  ins2 = await sb.from("profiles").insert(copy2 as any).select("id, role").single();
+                }
+              }
+              if (!ins2.error) {
+                ins = ins2;
+              }
+            } catch (_) {
+              // ignore
+            }
+          }
+
+          if (!ins.error) {
+            insData = ins.data;
+            lastErr = null;
+            break;
+          }
+
+          lastErr = ins.error;
+          const msg = String((ins.error as any)?.message ?? ins.error).toLowerCase();
+          if (msg.includes("duplicate") || msg.includes("unique")) {
+            continue;
+          }
+          break;
+        }
+
+        if (lastErr || !insData) {
+          throw new HttpError(500, "db_error", `Failed to create profile: ${String((lastErr as any)?.message ?? lastErr)}`);
+        }
+
+        return json(
+          {
+            ok: true,
+            user_id: uid,
+            role: String((insData as any)?.role ?? requestedRole),
+            created: true,
+          },
+          { headers: corsHeaders },
+        );
+      }
+
+      const currentRole = String((existing.data as any)?.role ?? "").trim().toLowerCase();
+
+      const isCreatorRole = (r: string): boolean => r === "artist" || r === "dj";
+
+      // Production safety: never downgrade an existing creator to consumer.
+      // This prevents a stale client intent (or missing local storage) from
+      // clobbering the authoritative role.
+      if (isCreatorRole(currentRole) && requestedRole === "consumer") {
+        return json(
+          {
+            ok: true,
+            user_id: uid,
+            role: currentRole,
+            created: false,
+            skipped: true,
+          },
+          { headers: corsHeaders },
+        );
+      }
+
+      const nextRole = isCreatorRole(requestedRole) ? requestedRole : currentRole || "consumer";
+
+      const updatePayload: Record<string, unknown> = {
+        role: nextRole,
+        firebase_uid: uid,
+        updated_at: now,
+      };
+      if (usernameRaw) updatePayload.username = toUsernameBase(usernameRaw);
+      // Only set display_name when the client explicitly provided it.
+      if (displayNameRaw) updatePayload.display_name = displayNameRaw;
+      // Email changes are safe to accept.
+      if (emailClean) updatePayload.email = emailClean;
+      if (countryCode) updatePayload.country_code = countryCode;
+
+      let whereCol: "id" | "firebase_uid" = "id";
+      let whereVal: string = uid;
+      const existingId = String((existing.data as any)?.id ?? "").trim();
+      if (existingId) {
+        // If we matched by email/firebase_uid, the DB id may be a UUID.
+        // Prefer updating the real id row when available.
+        whereVal = existingId;
+      }
+
+      let upd = await sb.from("profiles").update(updatePayload as any).eq(whereCol, whereVal).select("id, role").single();
+      if (upd.error && isInvalidUuidSyntax(upd.error)) {
+        // UUID-id schema fallback.
+        whereCol = "firebase_uid";
+        whereVal = uid;
+        try {
+          upd = await sb.from("profiles").update(updatePayload as any).eq(whereCol, whereVal).select("id, role").single();
+        } catch (_) {
+          // ignore
+        }
+      }
+      if (upd.error) {
+        const missing = tryParseMissingColumnForTable(upd.error, "profiles");
+        if (missing) {
+          const copy = { ...updatePayload };
+          delete (copy as any)[missing];
+          upd = await sb.from("profiles").update(copy as any).eq(whereCol, whereVal).select("id, role").single();
+        }
+      }
+      if (upd.error) {
+        throw new HttpError(500, "db_error", `Failed to update profile: ${upd.error.message}`);
+      }
+
+      return json(
+        {
+          ok: true,
+          user_id: uid,
+          role: String((upd.data as any)?.role ?? nextRole),
+          created: false,
+        },
+        { headers: corsHeaders },
+      );
+    }
+
+    // Stage rankings (public leaderboard snapshots)
+    // GET /api/stage/rankings?ranking_type=coins_earned&scope=global&scope_key=&period_end=
+    // Public: safe to read.
+    if (req.method === "GET" && normalized === "/stage/rankings") {
+      const url = new URL(req.url);
+
+      const rankingType = String(
+        url.searchParams.get("ranking_type") ??
+          url.searchParams.get("type") ??
+          url.searchParams.get("rankingType") ??
+          "",
+      )
+        .trim()
+        .toLowerCase();
+
+      const allowedRankingTypes = new Set([
+        "coins_earned",
+        "gifts_received",
+        "battle_wins",
+        "followers_growth",
+        "view_minutes",
+      ]);
+
+      if (!rankingType || !allowedRankingTypes.has(rankingType)) {
+        throw new HttpError(
+          400,
+          "bad_request",
+          "ranking_type is required and must be one of: coins_earned, gifts_received, battle_wins, followers_growth, view_minutes",
+        );
+      }
+
+      const scope = String(url.searchParams.get("scope") ?? "global")
+        .trim()
+        .toLowerCase();
+
+      const allowedScopes = new Set(["global", "country", "city", "genre"]);
+      if (!allowedScopes.has(scope)) {
+        throw new HttpError(400, "bad_request", "Invalid scope (global|country|city|genre)");
+      }
+
+      const scopeKey = String(url.searchParams.get("scope_key") ?? url.searchParams.get("scopeKey") ?? "").trim();
+
+      const periodEndRaw = String(url.searchParams.get("period_end") ?? url.searchParams.get("periodEnd") ?? "").trim();
+      let periodEndIso: string | undefined;
+      if (periodEndRaw) {
+        const d = new Date(periodEndRaw);
+        if (Number.isNaN(d.getTime())) {
+          throw new HttpError(400, "bad_request", "period_end must be an ISO date string");
+        }
+        periodEndIso = d.toISOString();
+      }
+
+      const sb = supabasePublic();
+
+      let q = sb
+        .from("stage_rankings_snapshots")
+        .select("id,ranking_type,scope,scope_key,period_start,period_end,computed_at,entries,meta")
+        .eq("ranking_type", rankingType)
+        .eq("scope", scope)
+        .order("period_end", { ascending: false })
+        .order("computed_at", { ascending: false })
+        .limit(1);
+
+      // If scope_key is omitted, accept either NULL or empty string for backwards compatibility.
+      if (scopeKey) q = q.eq("scope_key", scopeKey);
+      else q = q.or("scope_key.is.null,scope_key.eq.");
+
+      if (periodEndIso) q = q.eq("period_end", periodEndIso);
+
+      const { data, error } = await q.maybeSingle();
+      if (error) {
+        const msg = String((error as any)?.message ?? error);
+        const looksMissing = msg.includes("PGRST205") || msg.includes("stage_rankings_snapshots");
+        if (looksMissing) {
+          throw new HttpError(
+            503,
+            "not_configured",
+            "Rankings snapshots not configured. Apply the STAGE v1.1 migration for stage_rankings_snapshots and refresh schema cache.",
+          );
+        }
+        throw new HttpError(500, "db_error", `Failed to load rankings: ${msg}`);
+      }
+
+      return json({ ok: true, snapshot: data ?? null }, { headers: corsHeaders });
+    }
+
+    // Rankings convenience endpoints (period-bound)
+    // These are thin wrappers around stage_rankings_snapshots.
+    // - GET /api/rankings/weekly
+    // - GET /api/rankings/monthly
+    // - GET /api/rankings/continental
+    // Public: safe to read.
+
+    const isRankingsWeekly = req.method === "GET" && normalized === "/rankings/weekly";
+    const isRankingsMonthly = req.method === "GET" && normalized === "/rankings/monthly";
+    const isRankingsContinental = req.method === "GET" && normalized === "/rankings/continental";
+
+    if (isRankingsWeekly || isRankingsMonthly || isRankingsContinental) {
+      const url = new URL(req.url);
+
+      const rankingType = String(
+        url.searchParams.get("ranking_type") ??
+          url.searchParams.get("type") ??
+          url.searchParams.get("rankingType") ??
+          "",
+      )
+        .trim()
+        .toLowerCase();
+
+      const allowedRankingTypes = new Set([
+        "coins_earned",
+        "gifts_received",
+        "battle_wins",
+        "followers_growth",
+        "view_minutes",
+      ]);
+
+      if (!rankingType || !allowedRankingTypes.has(rankingType)) {
+        throw new HttpError(
+          400,
+          "bad_request",
+          "ranking_type is required and must be one of: coins_earned, gifts_received, battle_wins, followers_growth, view_minutes",
+        );
+      }
+
+      // Scope handling:
+      // - weekly/monthly: caller can provide scope/scope_key; defaults to global.
+      // - continental: default to global (continent filtering is not modeled in DB yet).
+      let scope = String(url.searchParams.get("scope") ?? "global")
+        .trim()
+        .toLowerCase();
+      if (isRankingsContinental) scope = "global";
+
+      const allowedScopes = new Set(["global", "country", "city", "genre"]);
+      if (!allowedScopes.has(scope)) {
+        throw new HttpError(400, "bad_request", "Invalid scope (global|country|city|genre)");
+      }
+
+      const scopeKey = String(url.searchParams.get("scope_key") ?? url.searchParams.get("scopeKey") ?? "").trim();
+
+      // Compute a canonical last-completed period in UTC.
+      const now = new Date();
+
+      const startOfUtcDay = (d: Date): Date => new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+
+      const startOfUtcWeekMonday = (d: Date): Date => {
+        const base = startOfUtcDay(d);
+        const day = base.getUTCDay(); // 0=Sun..6=Sat
+        const mondayOffset = (day + 6) % 7; // Mon=0 .. Sun=6
+        return new Date(base.getTime() - mondayOffset * 86400_000);
+      };
+
+      const startOfUtcMonth = (d: Date): Date => new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1));
+
+      let period: "weekly" | "monthly" | "continental" = "continental";
+      let periodStart: Date | undefined;
+      let periodEnd: Date | undefined;
+
+      if (isRankingsWeekly) {
+        period = "weekly";
+        periodEnd = startOfUtcWeekMonday(now);
+        periodStart = new Date(periodEnd.getTime() - 7 * 86400_000);
+      } else if (isRankingsMonthly) {
+        period = "monthly";
+        periodEnd = startOfUtcMonth(now);
+        periodStart = new Date(Date.UTC(periodEnd.getUTCFullYear(), periodEnd.getUTCMonth() - 1, 1));
+      } else {
+        period = "continental";
+      }
+
+      const sb = supabasePublic();
+      let q = sb
+        .from("stage_rankings_snapshots")
+        .select("id,ranking_type,scope,scope_key,period_start,period_end,computed_at,entries,meta")
+        .eq("ranking_type", rankingType)
+        .eq("scope", scope)
+        .order("period_end", { ascending: false })
+        .order("computed_at", { ascending: false })
+        .limit(1);
+
+      if (scopeKey) q = q.eq("scope_key", scopeKey);
+      else q = q.or("scope_key.is.null,scope_key.eq.");
+
+      // When a period is computed, prefer that exact snapshot window.
+      if (periodStart && periodEnd) {
+        q = q.eq("period_start", periodStart.toISOString()).eq("period_end", periodEnd.toISOString());
+      }
+
+      const { data, error } = await q.maybeSingle();
+      if (error) {
+        const msg = String((error as any)?.message ?? error);
+        const looksMissing = msg.includes("PGRST205") || msg.includes("stage_rankings_snapshots");
+        if (looksMissing) {
+          throw new HttpError(
+            503,
+            "not_configured",
+            "Rankings snapshots not configured. Apply the STAGE v1.1 migration for stage_rankings_snapshots and refresh schema cache.",
+          );
+        }
+        throw new HttpError(500, "db_error", `Failed to load rankings: ${msg}`);
+      }
+
+      return json(
+        {
+          ok: true,
+          period,
+          period_start: periodStart ? periodStart.toISOString() : null,
+          period_end: periodEnd ? periodEnd.toISOString() : null,
+          snapshot: data ?? null,
+        },
+        { headers: corsHeaders },
+      );
+    }
+
+    // Search public profiles by username/display name/full name.
+    // GET /api/profiles/search?q=<query>&limit=<n>
+    // Auth: Bearer <Firebase ID token>
+    if (req.method === "GET" && normalized === "/profiles/search") {
+      const { uid } = await requireFirebaseUser(req);
+      const url = new URL(req.url);
+
+      const raw = String(url.searchParams.get("q") ?? url.searchParams.get("query") ?? "").trim();
+      const limitRaw = Number(url.searchParams.get("limit") ?? 10);
+      const limit = Number.isFinite(limitRaw) ? Math.max(1, Math.min(25, Math.floor(limitRaw))) : 10;
+
+      // Reduce PostgREST filter injection surface area.
+      const safe = raw.replace(/[^a-zA-Z0-9_\-. @]/g, "").trim();
+      if (safe.length < 2) {
+        return json({ ok: true, profiles: [] }, { headers: corsHeaders });
+      }
+
+      const sb = requireSupabaseAdmin();
+      const like = `%${safe}%`;
+
+      let q = sb
+        .from("profiles")
+        .select("id,username,display_name,full_name,avatar_url,role")
+        .neq("id", uid)
+        .limit(limit);
+
+      // Prefer inviting creators.
+      q = q.in("role", ["artist", "dj"] as any);
+      q = q.or(`username.ilike.${like},display_name.ilike.${like},full_name.ilike.${like}`);
+      q = q.order("updated_at", { ascending: false });
+
+      const { data, error } = await q;
+      if (error) {
+        throw new HttpError(500, "db_error", `Failed to search profiles: ${error.message}`);
+      }
+
+      return json({ ok: true, profiles: data ?? [] }, { headers: corsHeaders });
+    }
+
+    // Provision creator role (Firebase Auth -> service role writes)
+    // POST /api/auth/provision-creator
+    if (req.method === "POST" && normalized === "/auth/provision-creator") {
+      const { uid, email } = await requireFirebaseUser(req);
+      const sb = requireSupabaseAdmin();
+
+      const body = await readJson(req);
+      const intentRaw = String((body as any).intent ?? (body as any).role ?? "").trim().toLowerCase();
+      if (intentRaw !== "artist" && intentRaw !== "dj") {
+        throw new HttpError(400, "bad_request", "Invalid intent (expected 'artist' or 'dj')");
+      }
+
+      const displayNameRaw = String((body as any).display_name ?? (body as any).displayName ?? "").trim();
+      const fallbackName = (() => {
+        const e = (email ?? "").trim();
+        if (e.includes("@")) return e.split("@")[0];
+        if (uid.length <= 8) return uid;
+        return `${uid.slice(0, 4)}…${uid.slice(uid.length - 4)}`;
+      })();
+
+      const displayName = displayNameRaw || fallbackName;
+      const now = new Date().toISOString();
+
+      // Ensure a base `profiles` row exists and the role is saved.
+      // This is intentionally best-effort; creator provisioning should still
+      // succeed even if a deployment doesn't use `public.profiles`.
+      try {
+        const existing = await sb.from("profiles").select("id, role").eq("id", uid).maybeSingle();
+        if (!existing.error) {
+          if (!existing.data) {
+            await sb.from("profiles").insert(
+              {
+                id: uid,
+                email: (email ?? "").trim() || null,
+                display_name: displayName,
+                role: intentRaw,
+                created_at: now,
+                updated_at: now,
+              } as any,
+            );
+          } else {
+            await sb.from("profiles").update({ role: intentRaw, updated_at: now } as any).eq("id", uid);
+          }
+        }
+      } catch (e) {
+        console.log(`provision-creator: profiles best-effort update failed: ${String((e as any)?.message ?? e)}`);
+      }
+
+      // Best-effort creator_profiles upsert.
+      // In this repo, `public.creator_profiles` is often a VIEW (read-only).
+      // Provisioning should still succeed as long as we can write the backing
+      // creator tables (artists/djs) and/or persist `profiles.role`.
+      try {
+        const up = await sb
+          .from("creator_profiles")
+          .upsert(
+            {
+              user_id: uid,
+              role: intentRaw,
+              display_name: displayName,
+              updated_at: now,
+            } as any,
+            { onConflict: "user_id" },
+          )
+          .select("user_id, role")
+          .maybeSingle();
+
+        if (up.error) {
+          console.log(`provision-creator: creator_profiles upsert skipped: ${String((up.error as any)?.message ?? up.error)}`);
+        }
+      } catch (e) {
+        console.log(`provision-creator: creator_profiles upsert skipped: ${String((e as any)?.message ?? e)}`);
+      }
+
+      // Return the backing row IDs when available. This helps mobile clients
+      // avoid client-side SELECTs that might be blocked/filtered by RLS.
+      let artistId: string | null = null;
+      let djId: string | null = null;
+
+      const findArtistId = async (): Promise<string | null> => {
+        try {
+          const q1 = await sb
+            .from("artists")
+            .select("id")
+            .eq("firebase_uid", uid)
+            .limit(1);
+          if (!q1.error && Array.isArray(q1.data) && q1.data.length) {
+            const id = (q1.data[0] as any)?.id;
+            if (id) return String(id);
+          }
+        } catch (_) {
+          // ignore
+        }
+
+        try {
+          const q2 = await sb
+            .from("artists")
+            .select("id")
+            .eq("user_id", uid)
+            .limit(1);
+          if (!q2.error && Array.isArray(q2.data) && q2.data.length) {
+            const id = (q2.data[0] as any)?.id;
+            if (id) return String(id);
+          }
+        } catch (_) {
+          // ignore
+        }
+
+        return null;
+      };
+
+      const findDjId = async (): Promise<string | null> => {
+        try {
+          const q1 = await sb
+            .from("djs")
+            .select("id")
+            .eq("firebase_uid", uid)
+            .limit(1);
+          if (!q1.error && Array.isArray(q1.data) && q1.data.length) {
+            const id = (q1.data[0] as any)?.id;
+            if (id) return String(id);
+          }
+        } catch (_) {
+          // ignore
+        }
+
+        try {
+          const q2 = await sb
+            .from("djs")
+            .select("id")
+            .eq("user_id", uid)
+            .limit(1);
+          if (!q2.error && Array.isArray(q2.data) && q2.data.length) {
+            const id = (q2.data[0] as any)?.id;
+            if (id) return String(id);
+          }
+        } catch (_) {
+          // ignore
+        }
+
+        return null;
+      };
+
+      // Best-effort provisioning of backing tables used by some deployments.
+      // NOTE: This runs with service role, so it bypasses RLS.
+      if (intentRaw === "artist") {
+        artistId = await findArtistId();
+
+        const payload: Record<string, unknown> = {
+          user_id: uid,
+          firebase_uid: uid,
+          stage_name: displayName,
+          display_name: displayName,
+          // Some deployments require `artist_name` NOT NULL.
+          artist_name: displayName,
+          email: email && email.trim().length > 0 ? email.trim() : null,
+          updated_at: now,
+        };
+
+        const omit = new Set<string>();
+        const buildAttempt = (): Record<string, unknown> => {
+          const out: Record<string, unknown> = { ...payload };
+          for (const k of omit) delete out[k];
+          return out;
+        };
+
+        let lastErr: unknown = null;
+        // Prefer firebase_uid first because some deployments still have user_id UUID.
+        const conflictTargets = ["firebase_uid", "user_id"];
+        for (const onConflict of conflictTargets) {
+          // Upsert (preferred)
+          for (let i = 0; i < 8; i++) {
+            if (omit.has(onConflict)) break;
+            const attempt = buildAttempt();
+            const up = await sb.from("artists").upsert(attempt as any, { onConflict }).select("id");
+            if (!up.error) {
+              if (Array.isArray(up.data) && up.data.length) {
+                const id = (up.data[0] as any)?.id;
+                if (id) artistId = String(id);
+              }
+              lastErr = null;
+              break;
+            }
+
+            lastErr = up.error;
+            const missing = tryParseMissingColumnForTable(up.error, "artists");
+            if (missing) {
+              omit.add(missing);
+              continue;
+            }
+
+            if (isInvalidUuidSyntax(up.error)) {
+              omit.add("user_id");
+              continue;
+            }
+
+            if (isOnConflictConstraintMissing(up.error)) break;
+            break;
+          }
+          if (!lastErr || artistId) break;
+
+          // Fallback: insert (no ON CONFLICT)
+          for (let j = 0; j < 8; j++) {
+            const attempt = buildAttempt();
+            const ins = await sb.from("artists").insert(attempt as any).select("id");
+            if (!ins.error) {
+              if (Array.isArray(ins.data) && ins.data.length) {
+                const id = (ins.data[0] as any)?.id;
+                if (id) artistId = String(id);
+              }
+              lastErr = null;
+              break;
+            }
+
+            lastErr = ins.error;
+            const missing = tryParseMissingColumnForTable(ins.error, "artists");
+            if (missing) {
+              omit.add(missing);
+              continue;
+            }
+            if (isInvalidUuidSyntax(ins.error)) {
+              omit.add("user_id");
+              continue;
+            }
+            break;
+          }
+          if (!lastErr || artistId) break;
+        }
+
+        if (!artistId) {
+          // If upsert/insert didn't return representation, try a read.
+          artistId = await findArtistId();
+        }
+
+        if (!artistId) {
+          const msg = String((lastErr as any)?.message ?? lastErr ?? "unknown_error");
+          throw new HttpError(
+            503,
+            "not_configured",
+            "Creator provision succeeded but the artists backing row could not be created/resolved. " +
+              `Last error: ${msg}. ` +
+              "Ensure the public.artists table exists and supports Firebase UIDs (user_id TEXT and/or firebase_uid TEXT), then refresh PostgREST schema cache.",
+          );
+        }
+      }
+
+      if (intentRaw === "dj") {
+        djId = await findDjId();
+
+        const payload: Record<string, unknown> = {
+          user_id: uid,
+          firebase_uid: uid,
+          dj_name: displayName,
+          display_name: displayName,
+          email: email && email.trim().length > 0 ? email.trim() : null,
+          created_at: now,
+          updated_at: now,
+        };
+
+        // Some deployments require `djs.id` NOT NULL with no default.
+        // Generate once and reuse across retries.
+        let insertId: string | null = null;
+        const ensureInsertId = (): string => {
+          if (!insertId) insertId = crypto.randomUUID();
+          return insertId;
+        };
+
+        const omit = new Set<string>();
+        const buildAttempt = (): Record<string, unknown> => {
+          const out: Record<string, unknown> = { ...payload };
+          for (const k of omit) delete out[k];
+          return out;
+        };
+
+        let lastErr: unknown = null;
+        // Prefer firebase_uid first because some deployments still have user_id UUID.
+        const conflictTargets = ["firebase_uid", "user_id"];
+        for (const onConflict of conflictTargets) {
+          // Upsert (preferred)
+          for (let i = 0; i < 8; i++) {
+            if (omit.has(onConflict)) break;
+            const attempt = buildAttempt();
+            const up = await sb.from("djs").upsert(attempt as any, { onConflict, ignoreDuplicates: true }).select("id");
+            if (!up.error) {
+              if (Array.isArray(up.data) && up.data.length) {
+                const id = (up.data[0] as any)?.id;
+                if (id) djId = String(id);
+              }
+              lastErr = null;
+              break;
+            }
+
+            lastErr = up.error;
+
+            // If the schema requires an explicit id, retry with a generated UUID.
+            if (isNotNullViolation(up.error, "id")) {
+              (payload as any).id = ensureInsertId();
+              continue;
+            }
+
+            const missing = tryParseMissingColumnForTable(up.error, "djs");
+            if (missing) {
+              omit.add(missing);
+              continue;
+            }
+
+            if (isInvalidUuidSyntax(up.error)) {
+              omit.add("user_id");
+              continue;
+            }
+
+            if (isOnConflictConstraintMissing(up.error)) break;
+            break;
+          }
+          if (!lastErr || djId) break;
+
+          // Fallback: insert (no ON CONFLICT)
+          for (let j = 0; j < 8; j++) {
+            const attempt = buildAttempt();
+            const ins = await sb.from("djs").insert(attempt as any).select("id");
+            if (!ins.error) {
+              if (Array.isArray(ins.data) && ins.data.length) {
+                const id = (ins.data[0] as any)?.id;
+                if (id) djId = String(id);
+              }
+              lastErr = null;
+              break;
+            }
+
+            lastErr = ins.error;
+
+            if (isNotNullViolation(ins.error, "id")) {
+              (payload as any).id = ensureInsertId();
+              continue;
+            }
+
+            const missing = tryParseMissingColumnForTable(ins.error, "djs");
+            if (missing) {
+              omit.add(missing);
+              continue;
+            }
+            if (isInvalidUuidSyntax(ins.error)) {
+              omit.add("user_id");
+              continue;
+            }
+            break;
+          }
+          if (!lastErr || djId) break;
+        }
+
+        if (!djId) {
+          djId = await findDjId();
+        }
+
+        if (!djId) {
+          const msg = String((lastErr as any)?.message ?? lastErr ?? "unknown_error");
+          throw new HttpError(
+            503,
+            "not_configured",
+            "Creator provision succeeded but the djs backing row could not be created/resolved. " +
+              `Last error: ${msg}. ` +
+              "Ensure the public.djs table exists and supports Firebase UIDs (user_id TEXT and/or firebase_uid TEXT), then refresh PostgREST schema cache.",
+          );
+        }
+      }
+
+      return json(
+        {
+          ok: true,
+          user_id: uid,
+          role: intentRaw,
+          artist_id: artistId,
+          dj_id: djId,
+        },
+        { headers: corsHeaders },
+      );
+    }
+
+    // Resolve current user's role (Firebase Auth -> service role read)
+    // GET /api/auth/role
+    if (req.method === "GET" && normalized === "/auth/role") {
+      const { uid } = await requireFirebaseUser(req);
+      const sb = requireSupabaseAdmin();
+
+      // Keep role resolution consistent with creator entitlement checks.
+      const creatorRole = await resolveCreatorRoleForUid(sb, uid);
+      if (creatorRole) {
+        return json(
+          {
+            ok: true,
+            user_id: uid,
+            role: creatorRole,
+          },
+          { headers: corsHeaders },
+        );
+      }
+
+      // Fallback to explicit consumer role when no creator signal is found.
+      try {
+        let role: string | null = null;
+
+        const byId = await sb.from("profiles").select("role").eq("id", uid).limit(1).maybeSingle();
+        if (!byId.error) {
+          const r = String((byId.data as any)?.role ?? "").trim().toLowerCase();
+          if (r) role = r;
+        }
+
+        if (!role) {
+          try {
+            const byFirebaseUid = await sb.from("profiles").select("role").eq("firebase_uid", uid).limit(1).maybeSingle();
+            if (!byFirebaseUid.error) {
+              const r = String((byFirebaseUid.data as any)?.role ?? "").trim().toLowerCase();
+              if (r) role = r;
+            }
+          } catch (_) {
+            // ignore
+          }
+        }
+
+        if (role === "consumer") {
+          return json(
+            {
+              ok: true,
+              user_id: uid,
+              role,
+            },
+            { headers: corsHeaders },
+          );
+        }
+      } catch (_) {
+        // ignore
+      }
+
+      return json(
+        {
+          ok: true,
+          user_id: uid,
+          role: "consumer",
+        },
+        { headers: corsHeaders },
+      );
+    }
+
+    // Storage upload (generic)
+    // POST /api/uploads/storage
+    if (req.method === "POST" && normalized === "/uploads/storage") {
+      await requireFirebaseUser(req);
+      const sb = requireSupabaseAdmin();
+
+      const formData = await req.formData();
+      const bucket = String(formData.get("bucket") ?? formData.get("bucket_id") ?? "").trim();
+      const prefix = String(formData.get("prefix") ?? "").trim();
+      const file = formData.get("file") as File | null;
+
+      if (!bucket) {
+        throw new HttpError(400, "bad_request", "Missing bucket");
+      }
+      if (!file) {
+        throw new HttpError(400, "bad_request", "Missing file");
+      }
+
+      const fileName = String(file.name ?? "file").trim();
+      if (!fileName) {
+        throw new HttpError(400, "bad_request", "Invalid file name");
+      }
+
+      const fileBytes = new Uint8Array(await file.arrayBuffer());
+
+      let objectPath = fileName;
+      if (prefix) {
+        objectPath = `${prefix}/${fileName}`;
+      }
+
+      const { error } = await sb.storage.from(bucket).upload(objectPath, fileBytes, {
+        contentType: file.type || "application/octet-stream",
+        upsert: true,
+      });
+
+      if (error) {
+        const rawMsg = String((error as any).message ?? error);
+        const msg = rawMsg.toLowerCase();
+        // Supabase Storage returns "Bucket not found" when the bucket id does not exist.
+        if (msg.includes("bucket not found")) {
+          throw new HttpError(
+            404,
+            "bucket_not_found",
+            `Upload failed: Bucket not found ("${bucket}"). Create this bucket in Supabase Storage or apply the migration 20260220090000_dj_sets_storage_bucket.sql.`,
+          );
+        }
+        throw new HttpError(500, "storage_error", `Upload failed: ${rawMsg}`);
+      }
+
+      const { data: publicUrlData } = sb.storage.from(bucket).getPublicUrl(objectPath);
+      const publicUrl = publicUrlData?.publicUrl ?? null;
+
+      let signedUrl: string | null = null;
+      try {
+        const { data: signedData, error: signedError } = await sb.storage.from(bucket).createSignedUrl(objectPath, 60 * 60 * 24 * 7); // 7 days
+        if (!signedError && signedData?.signedUrl) {
+          signedUrl = signedData.signedUrl;
+        }
+      } catch (_) {
+        // Signed URL optional
+      }
+
+      return json({
+        ok: true,
+        bucket,
+        path: objectPath,
+        public_url: publicUrl,
+        signed_url: signedUrl,
+      }, { headers: corsHeaders });
+    }
+
+    return json(
+      {
+        ok: false,
+        error: "not_found",
+        message: `No route for ${req.method} ${path}`,
+      },
+      { status: 404, headers: corsHeaders },
+    );
+  } catch (e) {
+    if (e instanceof HttpError) {
+      return json(
+        { ok: false, error: e.code, message: e.message },
+        { status: e.status, headers: corsHeaders },
+      );
+    }
+    return json(
+      {
+        ok: false,
+        error: "internal_error",
+        message: e instanceof Error ? e.message : String(e),
+      },
+      { status: 500, headers: corsHeaders },
+    );
+  }
+});
+
+type Plan = {
+  plan_id: string;
+  audience?: string;
+  name: string;
+  price_mwk: number;
+  billing_interval: string;
+  currency?: string;
+  active?: boolean;
+  features?: Record<string, unknown>;
+  perks?: Record<string, unknown>;
+  trial_eligible?: boolean;
+  trial_duration_days?: number;
+  marketing?: {
+    tagline?: string;
+    bullets?: string[];
+  };
+};
+
+type Audience = "consumer" | "artist" | "dj" | "creator";
+
+const CONSUMER_LAUNCH_PLAN_IDS = new Set(["free", "premium", "platinum"]);
+const ARTIST_LAUNCH_PLAN_IDS = new Set(["artist_starter", "artist_pro", "artist_premium"]);
+const DJ_LAUNCH_PLAN_IDS = new Set(["dj_starter", "dj_pro", "dj_premium"]);
+const STARTER_TRIAL_DURATION_DAYS = 7;
+
+const DEFAULT_PLAN_DEFINITIONS: Plan[] = [
+  {
+    plan_id: "free",
+    audience: "consumer",
+    name: "Free",
+    price_mwk: 0,
+    billing_interval: "month",
+    currency: "MWK",
+    active: true,
+    features: {
+      ads: { enabled: true, interstitial_every_songs: 2, mode: "standard" },
+      playback: { background_play: false, skips_per_hour: 6 },
+      background_play: false,
+      downloads: { enabled: false, video_enabled: false },
+      video_downloads: false,
+      playlists: { create: false, mix: false },
+      quality: { audio: "standard", audio_max_kbps: 128 },
+      audio_quality: "standard",
+      audio_max_kbps: 128,
+      gifting: { tier: "limited" },
+      live: {
+        access: "watch_only",
+        priority_access: false,
+        gifts: { tier: "limited" },
+        song_requests: { enabled: false },
+        highlighted_comments: false,
+      },
+      vip_badge: false,
+      highlighted_comments: false,
+      exclusive_content: false,
+      priority_live_access: false,
+      song_requests: { enabled: false },
+      content: { exclusive: false, early_access: false },
+      content_access: "limited",
+      content_limit_ratio: 0.3,
+      tickets: {
+        buy: { enabled: true, tiers: ["standard"] },
+        priority_booking: false,
+        redeem_bonus_coins: false,
+      },
+      monthly_bonus_coins: 0,
+      coins: { monthly_bonus: { amount: 0 } },
+      analytics: { level: "basic" },
+      visibility: { boost: "none" },
+    },
+    perks: {
+      ads: { enabled: true, interstitial_every_songs: 2 },
+      playback: { background_play: false, skips_per_hour: 6 },
+      downloads: { enabled: false, video_enabled: false },
+      playlists: { create: false, mix: false },
+      quality: { audio: "standard", audio_max_kbps: 128 },
+      gifting: { tier: "limited" },
+      live: {
+        access: "watch_only",
+        priority_access: false,
+        gifts: { tier: "limited" },
+        song_requests: { enabled: false },
+        highlighted_comments: false,
+      },
+      recognition: { vip_badge: false },
+      content: { exclusive: false, early_access: false },
+      content_access: "limited",
+      content_limit_ratio: 0.3,
+      tickets: {
+        buy: { enabled: true, tiers: ["standard"] },
+        priority_booking: false,
+        redeem_bonus_coins: false,
+      },
+      coins: { monthly_bonus: { amount: 0 } },
+      battles: { priority: "none" },
+    },
+    marketing: {
+      tagline: "Discover new music for free with light limits.",
+      bullets: [
+        "Ad-supported listening with limited skips",
+        "Standard audio quality and no background play",
+        "No audio or video downloads",
+        "Light fan gifts (coin top-ups available separately)",
+      ],
+    },
+  },
+  {
+    plan_id: "premium",
+    audience: "consumer",
+    name: "Premium",
+    price_mwk: 4000,
+    billing_interval: "month",
+    currency: "MWK",
+    active: true,
+    features: {
+      ads: { enabled: false, interstitial_every_songs: 0 },
+      playback: { background_play: true, skips_per_hour: -1 },
+      background_play: true,
+      downloads: { enabled: true, video_enabled: false },
+      video_downloads: false,
+      playlists: { create: true, mix: false },
+      quality: { audio: "high", audio_max_kbps: 320 },
+      audio_quality: "high",
+      audio_max_kbps: 320,
+      gifting: { tier: "standard" },
+      live: {
+        access: "standard",
+        priority_access: false,
+        gifts: { tier: "standard" },
+        song_requests: { enabled: false },
+        highlighted_comments: false,
+      },
+      vip_badge: false,
+      highlighted_comments: false,
+      exclusive_content: false,
+      priority_live_access: false,
+      song_requests: { enabled: false },
+      content: { exclusive: false, early_access: true },
+      content_access: "standard",
+      tickets: {
+        buy: { enabled: true, tiers: ["standard", "vip"] },
+        priority_booking: false,
+        redeem_bonus_coins: false,
+      },
+      monthly_bonus_coins: 0,
+      coins: { monthly_bonus: { amount: 0 } },
+      analytics: { level: "standard" },
+      visibility: { boost: "small" },
+    },
+    perks: {
+      ads: { enabled: false, interstitial_every_songs: 0 },
+      playback: { background_play: true, skips_per_hour: -1 },
+      downloads: { enabled: true, video_enabled: false },
+      playlists: { create: true, mix: false },
+      quality: { audio: "high", audio_max_kbps: 320 },
+      gifting: { tier: "standard" },
+      live: {
+        access: "standard",
+        priority_access: false,
+        gifts: { tier: "standard" },
+        song_requests: { enabled: false },
+        highlighted_comments: false,
+      },
+      recognition: { vip_badge: false },
+      content: { exclusive: false, early_access: true },
+      content_access: "standard",
+      tickets: {
+        buy: { enabled: true, tiers: ["standard", "vip"] },
+        priority_booking: false,
+        redeem_bonus_coins: false,
+      },
+      coins: { monthly_bonus: { amount: 0 } },
+      battles: { priority: "standard" },
+    },
+    marketing: {
+      tagline: "Freedom tier: no ads, downloads, and full listening control.",
+      bullets: [
+        "Ad-free playback",
+        "Unlimited skips, background play, and offline audio downloads",
+        "High quality audio up to 320 kbps",
+        "Standard gift catalog for stronger fan support",
+        "Limited early access to select drops",
+      ],
+    },
+  },
+  {
+    plan_id: "platinum",
+    audience: "consumer",
+    name: "Platinum",
+    price_mwk: 8500,
+    billing_interval: "month",
+    currency: "MWK",
+    active: true,
+    features: {
+      ads: { enabled: false, interstitial_every_songs: 0 },
+      playback: { background_play: true, skips_per_hour: -1 },
+      background_play: true,
+      downloads: { enabled: true, video_enabled: true },
+      video_downloads: true,
+      playlists: { create: true, mix: true },
+      quality: { audio: "studio", audio_max_kbps: 320, audio_max_bit_depth: 24, audio_max_sample_rate_khz: 44.1 },
+      audio_quality: "studio",
+      audio_max_kbps: 320,
+      gifting: { tier: "vip" },
+      live: {
+        access: "priority",
+        priority_access: true,
+        gifts: { tier: "vip" },
+        song_requests: { enabled: true },
+        highlighted_comments: true,
+      },
+      vip_badge: true,
+      highlighted_comments: true,
+      exclusive_content: true,
+      priority_live_access: true,
+      song_requests: { enabled: true },
+      content: { exclusive: true, early_access: true },
+      content_access: "exclusive",
+      tickets: {
+        buy: { enabled: true, tiers: ["standard", "vip", "priority"] },
+        priority_booking: true,
+        redeem_bonus_coins: true,
+      },
+      monthly_bonus_coins: 200,
+      analytics: { level: "advanced" },
+      visibility: { boost: "high" },
+      featured: true,
+      battles: { priority: "priority" },
+      coins: { monthly_free: { amount: 200 }, monthly_bonus: { amount: 200 } },
+    },
+    perks: {
+      ads: { enabled: false, interstitial_every_songs: 0 },
+      playback: { background_play: true, skips_per_hour: -1 },
+      downloads: { enabled: true, video_enabled: true },
+      playlists: { create: true, mix: true },
+      quality: { audio: "studio", audio_max_bit_depth: 24, audio_max_sample_rate_khz: 44.1 },
+      gifting: { tier: "vip" },
+      live: {
+        access: "priority",
+        priority_access: true,
+        gifts: { tier: "vip" },
+        song_requests: { enabled: true },
+        highlighted_comments: true,
+      },
+      recognition: { vip_badge: true },
+      content: { exclusive: true, early_access: true },
+      content_access: "exclusive",
+      tickets: {
+        buy: { enabled: true, tiers: ["standard", "vip", "priority"] },
+        priority_booking: true,
+        redeem_bonus_coins: true,
+      },
+      battles: { priority: "priority" },
+      featured: true,
+      coins: { monthly_free: { amount: 200 }, monthly_bonus: { amount: 200 } },
+    },
+    marketing: {
+      tagline: "Status tier: VIP fan power in every live room.",
+      bullets: [
+        "Everything in Premium",
+        "Priority live access, VIP gifts, and highlighted comments",
+        "Song requests, exclusive drops, and full early access",
+        "200 monthly bonus coins and the VIP badge",
+      ],
+    },
+  },
+  {
+    plan_id: "artist_starter",
+    audience: "artist",
+    name: "Artist Free",
+    price_mwk: 0,
+    billing_interval: "month",
+    currency: "MWK",
+    active: true,
+    trial_eligible: true,
+    trial_duration_days: STARTER_TRIAL_DURATION_DAYS,
+    features: {
+      creator: {
+        audience: "artist",
+        tier: "free",
+        uploads: { songs: 5, videos: 5, bulk_upload: false },
+        quality: { audio: "standard", video: "standard" },
+        analytics: { level: "basic", views: true, likes: true, comments: false, revenue: false, watch_time: false, countries: false },
+        monetization: { streams: false, coins: false, live: false, battles: true, fan_support: false },
+        withdrawals: { access: "none" },
+        live: { host: false, battles: true, multi_guest: false },
+        visibility: { boost: "none", featured_sections: [] },
+        profile: { customization: false, verified_badge: false, pin_content: false },
+        marketing: { promote_content: false, push_to_fans: false },
+        ads_on_content: "full",
+      },
+      ads: { enabled: true, interstitial_every_songs: 2 },
+      battles: { enabled: true, priority: "none" },
+      content_access: "limited",
+      content_limit_ratio: 0.3,
+      tickets: { sell: { enabled: false, tiers: [] } },
+    },
+    perks: {
+      creator: {
+        type: "artist",
+        uploads: { songs: 5, videos: 5 },
+        monetization: { enabled: false },
+        withdrawals: { access: "none" },
+        live: { enabled: false, battles: true },
+        visibility: { boost: "none" },
+        profile: { customization: false, verified_badge: false },
+      },
+      ads: { enabled: true, interstitial_every_songs: 2 },
+      battles: { priority: "none" },
+      tickets: { sell: { enabled: false, tiers: [] } },
+    },
+    marketing: {
+      tagline: "Start as an artist and build traction before monetizing.",
+      bullets: [
+        "Upload up to 5 songs per month",
+        "Upload up to 5 videos per month",
+        "Basic analytics: plays and likes",
+        "1 live battle per week, capped at 10 minutes",
+        "Comments-only fan engagement and no ticket selling",
+      ],
+    },
+  },
+  {
+    plan_id: "artist_pro",
+    audience: "artist",
+    name: "Artist Premium",
+    price_mwk: 6000,
+    billing_interval: "month",
+    currency: "MWK",
+    active: true,
+    features: {
+      creator: {
+        audience: "artist",
+        tier: "premium",
+        uploads: { songs: 20, videos: 5, bulk_upload: false },
+        quality: { audio: "high", video: "hd" },
+        analytics: { level: "medium", views: true, likes: true, comments: true, revenue: true, watch_time: false, countries: false },
+        monetization: { streams: true, coins: true, live: true, battles: true, fan_support: false },
+        withdrawals: { access: "limited" },
+        live: { host: true, battles: true, multi_guest: false },
+        visibility: { boost: "small", featured_sections: [] },
+        profile: { customization: true, verified_badge: false, pin_content: false },
+        marketing: { promote_content: false, push_to_fans: false },
+        ads_on_content: "reduced",
+      },
+      ads: { enabled: false, interstitial_every_songs: 0 },
+      battles: { enabled: true, priority: "standard" },
+      content_access: "standard",
+      quality: { audio: "high", audio_max_kbps: 320 },
+      tickets: { sell: { enabled: true, tiers: ["standard"] } },
+    },
+    perks: {
+      creator: {
+        type: "artist",
+        uploads: { songs: 20, videos: 5 },
+        monetization: { streams: true, coins: true },
+        withdrawals: { access: "limited" },
+        live: { enabled: true, battles: true },
+        visibility: { boost: "small" },
+        profile: { customization: true, verified_badge: false },
+      },
+      ads: { enabled: false, interstitial_every_songs: 0 },
+      quality: { audio: "high", audio_max_kbps: 320 },
+      battles: { priority: "standard" },
+      tickets: { sell: { enabled: true, tiers: ["standard"] } },
+    },
+    marketing: {
+      tagline: "Growth tier for active artists with moderate monetization.",
+      bullets: [
+        "Upload up to 20 songs per month",
+        "Join standard live battles and earn from gifts/coins",
+        "Detailed audience analytics with moderate monetization",
+        "Sell tickets for standard events",
+      ],
+    },
+  },
+  {
+    plan_id: "artist_premium",
+    audience: "artist",
+    name: "Artist Platinum",
+    price_mwk: 12500,
+    billing_interval: "month",
+    currency: "MWK",
+    active: true,
+    features: {
+      creator: {
+        audience: "artist",
+        tier: "platinum",
+        uploads: { songs: -1, videos: -1, bulk_upload: true },
+        quality: { audio: "studio", video: "hd" },
+        analytics: { level: "advanced", views: true, likes: true, comments: true, revenue: true, watch_time: true, countries: true },
+        monetization: { streams: true, coins: true, live: true, battles: true, fan_support: true },
+        withdrawals: { access: "unlimited" },
+        live: { host: true, battles: true, multi_guest: true },
+        visibility: { boost: "high", featured_sections: ["trending", "recommended", "top_artists"] },
+        profile: { customization: true, verified_badge: true, pin_content: true },
+        marketing: { promote_content: true, push_to_fans: true },
+        ads_on_content: "none",
+      },
+      ads: { enabled: false, interstitial_every_songs: 0 },
+      battles: { enabled: true, priority: "priority" },
+      content_access: "exclusive",
+      quality: { audio: "studio", audio_max_kbps: 320, audio_max_bit_depth: 24, audio_max_sample_rate_khz: 44.1 },
+      featured: true,
+      tickets: { sell: { enabled: true, tiers: ["standard", "vip", "priority"] } },
+    },
+    perks: {
+      creator: {
+        type: "artist",
+        uploads: { songs: "unlimited", videos: "unlimited", bulk_upload: true },
+        monetization: { streams: true, coins: true, live: true, battles: true, fan_support: true },
+        withdrawals: { access: "unlimited" },
+        live: { enabled: true, battles: true, multi_guest: true },
+        visibility: { boost: "high" },
+        profile: { customization: true, verified_badge: true, pin_content: true },
+        marketing: { promote_content: true, push_to_fans: true },
+      },
+      ads: { enabled: false, interstitial_every_songs: 0 },
+      quality: { audio: "studio", audio_max_bit_depth: 24, audio_max_sample_rate_khz: 44.1 },
+      battles: { priority: "priority" },
+      featured: true,
+      tickets: { sell: { enabled: true, tiers: ["standard", "vip", "priority"] } },
+    },
+    marketing: {
+      tagline: "Full artist power for VIP battles, events, and monetization.",
+      bullets: [
+        "Unlimited high-quality uploads plus bulk upload",
+        "Battles, multi-guest live, and full earnings",
+        "Advanced analytics with revenue and country insights",
+        "Sell VIP and priority ticketed events with top promotion",
+      ],
+    },
+  },
+  {
+    plan_id: "dj_starter",
+    audience: "dj",
+    name: "DJ Free",
+    price_mwk: 0,
+    billing_interval: "month",
+    currency: "MWK",
+    active: true,
+    trial_eligible: true,
+    trial_duration_days: STARTER_TRIAL_DURATION_DAYS,
+    features: {
+      creator: {
+        audience: "dj",
+        tier: "free",
+        uploads: { mixes: 5, videos: 5, bulk_upload: false },
+        analytics: { level: "basic", views: true, likes: true, comments: false, revenue: false },
+        monetization: { live_gifts: false, battles: true, streams: false },
+        withdrawals: { access: "none" },
+        live: { host: false, battles: true },
+        visibility: { boost: "none", featured_sections: [] },
+        profile: { customization: false, verified_badge: false },
+        ads_on_content: "full",
+      },
+      ads: { enabled: true, interstitial_every_songs: 2 },
+      battles: { enabled: true, priority: "none" },
+      content_access: "limited",
+      content_limit_ratio: 0.3,
+      tickets: { sell: { enabled: false, tiers: [] } },
+    },
+    perks: {
+      creator: {
+        type: "dj",
+        uploads: { mixes: 5, videos: 5 },
+        monetization: { enabled: false },
+        withdrawals: { access: "none" },
+        live: { enabled: false, battles: true },
+        visibility: { boost: "none" },
+        profile: { customization: false, verified_badge: false },
+      },
+      ads: { enabled: true, interstitial_every_songs: 2 },
+      battles: { priority: "none" },
+      tickets: { sell: { enabled: false, tiers: [] } },
+    },
+    marketing: {
+      tagline: "Start as a DJ and learn what your crowd responds to.",
+      bullets: [
+        "Upload up to 5 mixes/songs and 5 videos per month",
+        "Basic stats only",
+        "1 live battle per week, capped at 10 minutes",
+        "No monetization, VIP badge, or ticket hosting",
+      ],
+    },
+  },
+  {
+    plan_id: "dj_pro",
+    audience: "dj",
+    name: "DJ Premium",
+    price_mwk: 8000,
+    billing_interval: "month",
+    currency: "MWK",
+    active: true,
+    features: {
+      creator: {
+        audience: "dj",
+        tier: "premium",
+        uploads: { mixes: -1, bulk_upload: false },
+        analytics: { level: "medium", views: true, likes: true, comments: true, revenue: true },
+        monetization: { live_gifts: true, battles: true, streams: true },
+        withdrawals: { access: "limited" },
+        live: { host: true, battles: true },
+        visibility: { boost: "small", featured_sections: [] },
+        profile: { customization: true, verified_badge: false },
+        ads_on_content: "reduced",
+      },
+      ads: { enabled: false, interstitial_every_songs: 0 },
+      battles: { enabled: true, priority: "standard" },
+      content_access: "standard",
+      quality: { audio: "high", audio_max_kbps: 320 },
+      tickets: { sell: { enabled: true, tiers: ["standard"] } },
+    },
+    perks: {
+      creator: {
+        type: "dj",
+        uploads: { mixes: "unlimited" },
+        monetization: { live_gifts: true, streams: true },
+        withdrawals: { access: "limited" },
+        live: { enabled: true, battles: true },
+        visibility: { boost: "small" },
+        profile: { customization: true, verified_badge: false },
+      },
+      ads: { enabled: false, interstitial_every_songs: 0 },
+      quality: { audio: "high", audio_max_kbps: 320 },
+      battles: { priority: "standard" },
+      tickets: { sell: { enabled: true, tiers: ["standard"] } },
+    },
+    marketing: {
+      tagline: "Host standard battles and paid events with better insights.",
+      bullets: [
+        "Host standard battles and live DJ sets",
+        "Moderate analytics with audience and engagement trends",
+        "Partial coin earnings and standard gift monetization",
+        "Host standard paid events and concerts",
+      ],
+    },
+  },
+  {
+    plan_id: "dj_premium",
+    audience: "dj",
+    name: "DJ Platinum",
+    price_mwk: 15000,
+    billing_interval: "month",
+    currency: "MWK",
+    active: true,
+    features: {
+      creator: {
+        audience: "dj",
+        tier: "platinum",
+        uploads: { mixes: -1, bulk_upload: true },
+        analytics: { level: "advanced", views: true, likes: true, comments: true, revenue: true, watch_time: true, countries: true },
+        monetization: { live_gifts: true, battles: true, streams: true, fan_support: true },
+        withdrawals: { access: "unlimited" },
+        live: { host: true, battles: true, audience_voting: true, rewards: true, song_requests: true, highlighted_comments: true, polls: true },
+        visibility: { boost: "high", featured_sections: ["live_now", "top_djs"] },
+        profile: { customization: true, verified_badge: true, pin_content: true },
+        ads_on_content: "none",
+      },
+      ads: { enabled: false, interstitial_every_songs: 0 },
+      battles: { enabled: true, priority: "priority" },
+      content_access: "exclusive",
+      quality: { audio: "studio", audio_max_kbps: 320, audio_max_bit_depth: 24, audio_max_sample_rate_khz: 44.1 },
+      featured: true,
+      tickets: { sell: { enabled: true, tiers: ["standard", "vip", "priority"] } },
+    },
+    perks: {
+      creator: {
+        type: "dj",
+        uploads: { mixes: "unlimited", bulk_upload: true },
+        monetization: { live_gifts: true, battles: true, streams: true, fan_support: true },
+        withdrawals: { access: "unlimited" },
+        live: { enabled: true, battles: true, audience_voting: true, rewards: true, song_requests: true, highlighted_comments: true, polls: true },
+        visibility: { boost: "high" },
+        profile: { customization: true, verified_badge: true, pin_content: true },
+      },
+      ads: { enabled: false, interstitial_every_songs: 0 },
+      quality: { audio: "studio", audio_max_bit_depth: 24, audio_max_sample_rate_khz: 44.1 },
+      battles: { priority: "priority" },
+      featured: true,
+      tickets: { sell: { enabled: true, tiers: ["standard", "vip", "priority"] } },
+    },
+    marketing: {
+      tagline: "Elite DJ tier for VIP battles, events, and full crowd control.",
+      bullets: [
+        "Create and schedule VIP/priority battles and events",
+        "Full analytics with top fans and live battle performance",
+        "Full monetization with VIP gifts, coins, and ad revenue share",
+        "Maximum visibility, VIP badge, and exclusive hosting rights",
+      ],
+    },
+  },
+];
+
+type BattleTicketTier = "standard" | "vip" | "priority";
+
+function normalizeBattleTicketTier(raw: unknown): BattleTicketTier | null {
+  const s = String(raw ?? "").trim().toLowerCase();
+  if (s === "standard" || s === "vip" || s === "priority") return s;
+  return null;
+}
+
+function defaultPlanById(rawPlanId: string): Plan | null {
+  const legacyAliases: Record<string, string> = {
+    starter: "free",
+    pro: "premium",
+    elite: "platinum",
+    vip: "platinum",
+    premium_weekly: "premium",
+    platinum_weekly: "platinum",
+    pro_weekly: "premium",
+    elite_weekly: "platinum",
+  };
+
+  const normalized = normalizePlanId(rawPlanId) || "free";
+  const resolved = legacyAliases[normalized] ?? normalized;
+  const plan = DEFAULT_PLAN_DEFINITIONS.find((candidate) => normalizePlanId(candidate.plan_id) === resolved) ?? null;
+  return plan ? withPlanContractDefaults(plan) : null;
+}
+
+function defaultEntitlementsForPlanId(rawPlanId: string): {
+  plan_id: string;
+  ads_enabled: boolean;
+  features?: Record<string, unknown>;
+  perks?: Record<string, unknown>;
+} {
+  const plan = defaultPlanById(rawPlanId) ?? defaultPlanById("free");
+  const planId = normalizePlanId(plan?.plan_id ?? rawPlanId) || "free";
+  const features = plan?.features;
+  const perks = plan?.perks;
+  const adsFromFeatures = asRecord(asRecord(features)?.ads)?.enabled;
+  const adsFromPerks = asRecord(asRecord(perks)?.ads)?.enabled;
+  const adsEnabled = typeof adsFromFeatures === "boolean"
+    ? adsFromFeatures
+    : typeof adsFromPerks === "boolean"
+    ? adsFromPerks
+    : isFreeLikePlanId(planId);
+
+  return {
+    plan_id: planId,
+    ads_enabled: adsEnabled,
+    features,
+    perks,
+  };
+}
+
+function normalizePlanId(raw: unknown): string {
+  const value = String(raw ?? "").trim().toLowerCase();
+  if (!value) return "";
+
+  const normalized = value.replace(/[\s\-]+/g, "_");
+  if (normalized === "vip" || normalized === "vip_listener") return "platinum";
+  return normalized;
+}
+
+function defaultAudienceForPlanId(rawPlanId: string): string | undefined {
+  const planId = normalizePlanId(rawPlanId);
+  if (!planId) return undefined;
+  if (planId.startsWith("artist_")) return "artist";
+  if (planId.startsWith("dj_")) return "dj";
+  if (CONSUMER_LAUNCH_PLAN_IDS.has(planId)) return "consumer";
+  return undefined;
+}
+
+function defaultTrialEligibilityForPlanId(rawPlanId: string): boolean {
+  const planId = normalizePlanId(rawPlanId);
+  return planId === "artist_starter" || planId === "dj_starter";
+}
+
+function defaultTrialDurationDaysForPlanId(rawPlanId: string): number {
+  return defaultTrialEligibilityForPlanId(rawPlanId) ? STARTER_TRIAL_DURATION_DAYS : 0;
+}
+
+function parseBooleanLike(value: unknown): boolean | undefined {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") {
+    if (value === 1) return true;
+    if (value === 0) return false;
+    return undefined;
+  }
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (normalized === "true" || normalized === "1") return true;
+    if (normalized === "false" || normalized === "0") return false;
+  }
+  return undefined;
+}
+
+function parseNonNegativeInteger(value: unknown): number | undefined {
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? Math.max(0, Math.round(value)) : undefined;
+  }
+  if (typeof value === "string") {
+    const normalized = value.trim();
+    if (!normalized) return undefined;
+    const parsed = Number(normalized);
+    return Number.isFinite(parsed) ? Math.max(0, Math.round(parsed)) : undefined;
+  }
+  return undefined;
+}
+
+function withPlanContractDefaults(plan: Plan): Plan {
+  const planId = normalizePlanId(plan.plan_id) || plan.plan_id;
+  const trialEligible =
+    typeof plan.trial_eligible === "boolean"
+      ? plan.trial_eligible
+      : defaultTrialEligibilityForPlanId(planId);
+  const trialDurationDays =
+    parseNonNegativeInteger(plan.trial_duration_days) ??
+    (trialEligible ? defaultTrialDurationDaysForPlanId(planId) : 0);
+
+  return {
+    ...plan,
+    plan_id: planId,
+    audience: plan.audience ?? defaultAudienceForPlanId(planId),
+    trial_eligible: trialEligible,
+    trial_duration_days: trialDurationDays,
+  };
+}
+
+function isFreeLikePlanId(raw: unknown): boolean {
+  const id = normalizePlanId(raw);
+  return id === "free" ||
+    id === "starter" ||
+    id === "artist_starter" ||
+    id === "dj_starter" ||
+    id === "artist_free" ||
+    id === "dj_free" ||
+    id.startsWith("free_") ||
+    id.startsWith("starter_") ||
+    id.startsWith("artist_starter_") ||
+    id.startsWith("dj_starter_") ||
+    id.startsWith("artist_free_") ||
+    id.startsWith("dj_free_");
+}
+
+function launchPlanIdsForAudience(audience: Audience): Set<string> {
+  switch (audience) {
+    case "artist":
+      return ARTIST_LAUNCH_PLAN_IDS;
+    case "dj":
+      return DJ_LAUNCH_PLAN_IDS;
+    case "creator":
+      return new Set([...ARTIST_LAUNCH_PLAN_IDS, ...DJ_LAUNCH_PLAN_IDS]);
+    case "consumer":
+    default:
+      return CONSUMER_LAUNCH_PLAN_IDS;
+  }
+}
+
+function audienceValuesForQuery(audience: Audience): string[] {
+  switch (audience) {
+    case "artist":
+      return ["artist", "creator", "both"];
+    case "dj":
+      return ["dj", "creator", "both"];
+    case "creator":
+      return ["artist", "dj", "creator", "both"];
+    case "consumer":
+    default:
+      return ["consumer", "both"];
+  }
+}
+
+function filterPlansForAudience(plans: Plan[], audience: Audience): Plan[] {
+  const allowedPlanIds = launchPlanIdsForAudience(audience);
+  const deduped = new Map<string, Plan>();
+
+  for (const plan of plans) {
+    const planId = normalizePlanId(plan.plan_id);
+    if (!planId || !allowedPlanIds.has(planId) || plan.active === false) continue;
+
+    const interval = String(plan.billing_interval ?? "month").trim().toLowerCase();
+    if (interval && interval !== "month" && interval !== "monthly") continue;
+
+    if (!deduped.has(planId)) {
+      deduped.set(planId, withPlanContractDefaults({ ...plan, plan_id: planId }));
+    }
+  }
+
+  return [...deduped.values()];
+}
+
+function parseAudience(raw: string | null): Audience {
+  const value = (raw ?? "").trim().toLowerCase();
+  if (!value || value === "listener") return "consumer";
+  if (value === "consumer") return "consumer";
+  if (value === "artist") return "artist";
+  if (value === "dj") return "dj";
+  if (value === "creator") return "creator";
+  throw new HttpError(400, "bad_request", "Invalid audience (use 'consumer', 'artist', 'dj', or 'creator')");
+}
+
+type DbPlanRow = {
+  plan_id: string;
+  audience: string | null;
+  name: string;
+  price_mwk: number | string | null;
+  billing_interval: string | null;
+  currency: string | null;
+  active: boolean | null;
+  is_active?: boolean | null;
+  features: unknown;
+  perks?: unknown;
+  trial_eligible?: boolean | string | number | null;
+  trial_duration_days?: number | string | null;
+  marketing: unknown;
+  sort_order: number | null;
+};
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  return value as Record<string, unknown>;
+}
+
+function mergeRecordsDeep(
+  base?: Record<string, unknown>,
+  override?: Record<string, unknown>,
+): Record<string, unknown> | undefined {
+  if (!base && !override) return undefined;
+  if (!base) return override ? { ...override } : undefined;
+  if (!override) return { ...base };
+
+  const out: Record<string, unknown> = { ...base };
+  for (const [key, value] of Object.entries(override)) {
+    const existing = asRecord(out[key]);
+    const incoming = asRecord(value);
+    out[key] = existing && incoming ? mergeRecordsDeep(existing, incoming) ?? incoming : value;
+  }
+  return out;
+}
+
+async function readPlanEntitlementsByPlanId(
+  sb: ReturnType<typeof supabaseAdmin>,
+  planId: string,
+): Promise<{ features?: Record<string, unknown>; perks?: Record<string, unknown> } | null> {
+  const selectVariants = ["features,perks", "features", "perks"];
+
+  for (const selectClause of selectVariants) {
+    const q = await sb
+      .from("subscription_plans")
+      .select(selectClause)
+      .eq("plan_id", planId)
+      .maybeSingle();
+
+    if (!q.error) {
+      const row = (q.data ?? {}) as Record<string, unknown>;
+      return {
+        features: asRecord(row.features),
+        perks: asRecord(row.perks),
+      };
+    }
+  }
+
+  return null;
+}
+
+async function readPlansFromDb(audience: Audience): Promise<Plan[] | null> {
+  try {
+    const sb = supabaseServiceRoleKey ? supabaseAdmin() : supabasePublic();
+
+    const audienceValues = audienceValuesForQuery(audience);
+    const selectVariants = [
+      "plan_id,audience,name,price_mwk,billing_interval,currency,active,is_active,features,perks,marketing,trial_eligible,trial_duration_days,sort_order",
+      "plan_id,audience,name,price_mwk,billing_interval,currency,active,features,perks,marketing,trial_eligible,trial_duration_days,sort_order",
+      "plan_id,audience,name,price_mwk,billing_interval,currency,is_active,features,perks,marketing,trial_eligible,trial_duration_days,sort_order",
+      "plan_id,audience,name,price_mwk,billing_interval,currency,active,is_active,features,perks,marketing,sort_order",
+      "plan_id,audience,name,price_mwk,billing_interval,currency,active,features,perks,marketing,sort_order",
+      "plan_id,audience,name,price_mwk,billing_interval,currency,is_active,features,perks,marketing,sort_order",
+      "plan_id,audience,name,price_mwk,billing_interval,currency,active,features,marketing,sort_order",
+    ];
+
+    let data: unknown[] | null = null;
+    for (const selectClause of selectVariants) {
+      const q = await sb
+        .from("subscription_plans")
+        .select(selectClause)
+        .in("audience", audienceValues)
+        .order("sort_order", { ascending: true })
+        .order("price_mwk", { ascending: true });
+
+      if (!q.error) {
+        data = (q.data ?? []) as unknown[];
+        break;
+      }
+    }
+
+    if (data === null) {
+      // Typical when migrations haven't been applied yet: relation/table missing.
+      return null;
+    }
+
+    const out: Plan[] = [];
+    for (const row of data as DbPlanRow[]) {
+      const planId = normalizePlanId(row.plan_id ?? "");
+      if (!planId) continue;
+
+      const defaultPlan = defaultPlanById(planId);
+
+      const name = String(defaultPlan?.name ?? row.name ?? planId).trim() || planId;
+      const price = parsePriceMwk(row.price_mwk ?? 0);
+      const interval = String(row.billing_interval ?? "month").trim() || "month";
+      const currency = String(row.currency ?? defaultPlan?.currency ?? "MWK").trim() || "MWK";
+
+      const active = row.active ?? row.is_active ?? true;
+
+      const dbFeatures = asRecord(row.features);
+      const mergedFeatures = mergeRecordsDeep(defaultPlan?.features, dbFeatures);
+      const features = mergedFeatures && Object.keys(mergedFeatures).length > 0 ? mergedFeatures : undefined;
+      const mergedPerks = mergeRecordsDeep(defaultPlan?.perks, asRecord(row.perks));
+      const perks = mergedPerks && Object.keys(mergedPerks).length > 0 ? mergedPerks : undefined;
+      const trialEligible =
+        parseBooleanLike(row.trial_eligible) ??
+        defaultPlan?.trial_eligible ??
+        defaultTrialEligibilityForPlanId(planId);
+      const trialDurationDays =
+        parseNonNegativeInteger(row.trial_duration_days) ??
+        defaultPlan?.trial_duration_days ??
+        (trialEligible ? defaultTrialDurationDaysForPlanId(planId) : 0);
+
+      let marketing: Plan["marketing"] | undefined;
+      const m = asRecord(row.marketing);
+      if (m) {
+        const tagline = (m.tagline ?? m.subtitle) ? String(m.tagline ?? m.subtitle).trim() : undefined;
+        const bullets = Array.isArray(m.bullets)
+          ? m.bullets.map((b) => String(b).trim()).filter(Boolean)
+          : undefined;
+        marketing = { tagline, bullets };
+      }
+      marketing ??= defaultPlan?.marketing;
+
+      out.push(withPlanContractDefaults({
+        plan_id: planId,
+        audience: row.audience ?? defaultPlan?.audience ?? undefined,
+        name,
+        price_mwk: price,
+        billing_interval: interval,
+        currency,
+        active,
+        features,
+        perks,
+        trial_eligible: trialEligible,
+        trial_duration_days: trialDurationDays,
+        marketing,
+      }));
+    }
+
+    return filterPlansForAudience(out, audience);
+  } catch {
+    return null;
+  }
+}
+
+function parsePriceMwk(value: unknown): number {
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? Math.round(value) : 0;
+  }
+
+  if (typeof value === "string") {
+    // Supports formats like: "20000", "20,000", "MK 20,000", "MK 20 000".
+    const cleaned = value.replace(/[^0-9.]/g, "");
+    const n = Number(cleaned);
+    return Number.isFinite(n) ? Math.round(n) : 0;
+  }
+
+  return 0;
+}
+
+function readPlansFromEnv(): Plan[] | null {
+  const raw = (Deno.env.get("WEAFRICA_PLANS_JSON") ?? Deno.env.get("WEAFRICA_PLANS") ?? "").trim();
+  if (!raw) return null;
+
+  const decoded = JSON.parse(raw);
+  const list = Array.isArray(decoded)
+    ? decoded
+    : (decoded && typeof decoded === "object" && Array.isArray((decoded as Record<string, unknown>).plans))
+    ? (decoded as Record<string, unknown>).plans as unknown[]
+    : null;
+
+  if (!list) return null;
+
+  const out: Plan[] = [];
+  for (const item of list) {
+    if (!item || typeof item !== "object") continue;
+    const obj = item as Record<string, unknown>;
+    const planId = normalizePlanId(obj.plan_id ?? obj.id ?? "");
+    if (!planId) continue;
+
+    const audience = obj.audience ? String(obj.audience).trim().toLowerCase() : undefined;
+
+    const name = String(obj.name ?? planId).trim();
+    const price = parsePriceMwk(obj.price_mwk ?? obj.price ?? 0);
+    const interval = String(obj.billing_interval ?? obj.interval ?? "month").trim() || "month";
+    const currency = String(obj.currency ?? obj.currency_code ?? "MWK").trim() || "MWK";
+
+    const active = obj.active === undefined ? true : Boolean(obj.active);
+
+    const rawFeatures = (obj.features ?? obj.entitlements ?? obj.flags) as unknown;
+    const features =
+      rawFeatures && typeof rawFeatures === "object" && !Array.isArray(rawFeatures)
+        ? (rawFeatures as Record<string, unknown>)
+        : undefined;
+    const rawPerks = obj.perks as unknown;
+    const perks =
+      rawPerks && typeof rawPerks === "object" && !Array.isArray(rawPerks)
+        ? (rawPerks as Record<string, unknown>)
+        : undefined;
+    const trialEligible =
+      parseBooleanLike(obj.trial_eligible ?? obj.trialEligible) ??
+      defaultTrialEligibilityForPlanId(planId);
+    const trialDurationDays =
+      parseNonNegativeInteger(obj.trial_duration_days ?? obj.trialDurationDays) ??
+      (trialEligible ? defaultTrialDurationDaysForPlanId(planId) : 0);
+
+    let marketing: Plan["marketing"] | undefined;
+    const rawMarketing = obj.marketing as unknown;
+    if (rawMarketing && typeof rawMarketing === "object" && !Array.isArray(rawMarketing)) {
+      const m = rawMarketing as Record<string, unknown>;
+      const tagline = (m.tagline ?? m.subtitle) ? String(m.tagline ?? m.subtitle).trim() : undefined;
+      const bullets = Array.isArray(m.bullets)
+        ? m.bullets.map((b) => String(b).trim()).filter(Boolean)
+        : undefined;
+      marketing = { tagline, bullets };
+    } else {
+      const tagline = (obj.marketing_tagline ?? obj.tagline ?? obj.subtitle)
+        ? String(obj.marketing_tagline ?? obj.tagline ?? obj.subtitle).trim()
+        : undefined;
+      const bulletsSrc = (obj.marketing_bullets ?? obj.bullets) as unknown;
+      const bullets = Array.isArray(bulletsSrc)
+        ? bulletsSrc.map((b) => String(b).trim()).filter(Boolean)
+        : undefined;
+      if (tagline || bullets) marketing = { tagline, bullets };
+    }
+
+    out.push(withPlanContractDefaults({
+      plan_id: planId,
+      audience,
+      name,
+      price_mwk: price,
+      billing_interval: interval,
+      currency,
+      active,
+      features,
+      perks,
+      trial_eligible: trialEligible,
+      trial_duration_days: trialDurationDays,
+      marketing,
+    }));
+  }
+
+  return out.filter((p) => p.active !== false);
+}
+
+function checkoutUrlForPlan(planId: string): string {
+  const direct = (Deno.env.get("PAYCHANGU_CHECKOUT_URL") ?? "").trim();
+  const keyed = (Deno.env.get(`PAYCHANGU_CHECKOUT_URL_${planId.toUpperCase()}`) ?? "").trim();
+  return keyed || direct;
+}
+
+function defaultPlans(audience: Audience): Plan[] {
+  switch (audience) {
+    case "artist":
+      return DEFAULT_PLAN_DEFINITIONS.filter((plan) => plan.audience === "artist").map(withPlanContractDefaults);
+    case "dj":
+      return DEFAULT_PLAN_DEFINITIONS.filter((plan) => plan.audience === "dj").map(withPlanContractDefaults);
+    case "creator":
+      return DEFAULT_PLAN_DEFINITIONS
+        .filter((plan) => plan.audience === "artist" || plan.audience === "dj")
+        .map(withPlanContractDefaults);
+    case "consumer":
+    default:
+      return DEFAULT_PLAN_DEFINITIONS.filter((plan) => plan.audience === "consumer").map(withPlanContractDefaults);
+  }
+}
+
+type Promotion = {
+  id: string;
+  title: string;
+  subtitle?: string;
+  image_url?: string;
+  deep_link?: string;
+  target_plan?: string;
+  target_plans?: string[];
+};
+
+type DbPromotionRow = {
+  id: string;
+  title: string;
+  description?: string | null;
+  image_url?: string | null;
+  deep_link?: string | null;
+  target_plan?: string | null;
+  target_plans?: string[] | null;
+  is_active?: boolean | null;
+  priority?: number | null;
+  starts_at?: string | null;
+  ends_at?: string | null;
+};
+
+async function readPromotionsFromDb(): Promise<Promotion[] | null> {
+  try {
+    const sb = supabaseServiceRoleKey ? supabaseAdmin() : supabasePublic();
+    const selectVariants = [
+      "id,title,description,image_url,deep_link,target_plan,target_plans,is_active,priority,starts_at,ends_at",
+      "id,title,description,image_url,target_plan,target_plans,is_active,priority,starts_at,ends_at",
+      "id,title,description,image_url,target_plan,is_active,priority,starts_at,ends_at",
+    ];
+
+    let data: DbPromotionRow[] | null = null;
+    for (const selectClause of selectVariants) {
+      const q = await sb
+        .from("promotions")
+        .select(selectClause)
+        .eq("is_active", true)
+        .order("priority", { ascending: false });
+
+      if (!q.error) {
+        data = (q.data ?? []) as unknown as DbPromotionRow[];
+        break;
+      }
+    }
+
+    if (data === null) return null;
+
+    const now = Date.now();
+    const out: Promotion[] = [];
+    for (const row of data) {
+      const id = String(row.id ?? "").trim();
+      const title = String(row.title ?? "").trim();
+      if (!id || !title) continue;
+
+      const startsAt = row.starts_at ? new Date(String(row.starts_at)).getTime() : null;
+      const endsAt = row.ends_at ? new Date(String(row.ends_at)).getTime() : null;
+      if (startsAt !== null && Number.isFinite(startsAt) && startsAt > now) continue;
+      if (endsAt !== null && Number.isFinite(endsAt) && endsAt < now) continue;
+
+      const targetPlans = Array.isArray(row.target_plans)
+        ? row.target_plans.map((value) => normalizePlanId(value)).filter(Boolean)
+        : undefined;
+      const targetPlan = normalizePlanId(row.target_plan ?? "") || undefined;
+
+      out.push({
+        id,
+        title,
+        subtitle: row.description ? String(row.description) : undefined,
+        image_url: row.image_url ? String(row.image_url) : undefined,
+        deep_link: row.deep_link ? String(row.deep_link) : undefined,
+        target_plan: targetPlan,
+        target_plans: targetPlans,
+      });
+    }
+
+    return out;
+  } catch {
+    return null;
+  }
+}
+
+function readPromotionsFromEnv(): Promotion[] | null {
+  const raw = (Deno.env.get("WEAFRICA_PROMOTIONS_JSON") ?? Deno.env.get("WEAFRICA_PROMOTIONS") ?? "").trim();
+  if (!raw) return null;
+
+  const decoded = JSON.parse(raw);
+  const list = Array.isArray(decoded)
+    ? decoded
+    : (decoded && typeof decoded === "object" && Array.isArray((decoded as Record<string, unknown>).promotions))
+    ? (decoded as Record<string, unknown>).promotions as unknown[]
+    : null;
+
+  if (!list) return null;
+
+  const out: Promotion[] = [];
+  for (const item of list) {
+    if (!item || typeof item !== "object") continue;
+    const obj = item as Record<string, unknown>;
+    const id = String(obj.id ?? obj.promo_id ?? "").trim();
+    const title = String(obj.title ?? "").trim();
+    if (!id || !title) continue;
+
+    const targetPlans = Array.isArray(obj.target_plans)
+      ? obj.target_plans.map((value) => normalizePlanId(value)).filter(Boolean)
+      : undefined;
+    const targetPlan = normalizePlanId(obj.target_plan ?? obj.plan_id ?? "") || undefined;
+
+    out.push({
+      id,
+      title,
+      subtitle: obj.subtitle ? String(obj.subtitle) : undefined,
+      image_url: obj.image_url ? String(obj.image_url) : undefined,
+      deep_link: obj.deep_link ? String(obj.deep_link) : undefined,
+      target_plan: targetPlan,
+      target_plans: targetPlans,
+    });
+  }
+  return out;
+}
+
+type CatalogCoinPackage = {
+  id: string;
+  title: string;
+  coins: number;
+  bonus_coins: number;
+  price: number;
+  currency: string;
+  active: boolean;
+  sort_order: number;
+  usd_reference_price?: number;
+};
+
+function mapCoinCatalogRow(row: Record<string, unknown>): CatalogCoinPackage | null {
+  const id = String(row.code ?? row.id ?? "").trim();
+  const title = String(row.name ?? row.title ?? id).trim() || id;
+  const coins = Math.max(parsePriceMwk(row.coin_amount ?? row.coins ?? 0), 0);
+  const bonus = Math.max(parsePriceMwk(row.bonus_coins ?? 0), 0);
+  const price = Math.max(parsePriceMwk(row.value_mwk ?? row.price ?? 0), 0);
+  const currency = String(row.currency ?? "MWK").trim() || "MWK";
+  const sortOrder = parsePriceMwk(row.sort_order ?? 0);
+  const status = String(row.status ?? "active").trim().toLowerCase();
+  const active = row.active === undefined ? status !== "disabled" : Boolean(row.active);
+  const usdReferencePrice = row.usd_reference_price === undefined || row.usd_reference_price === null
+    ? undefined
+    : Number(row.usd_reference_price);
+
+  if (!id || !title || coins <= 0 || price <= 0) return null;
+
+  return {
+    id,
+    title,
+    coins,
+    bonus_coins: bonus,
+    price,
+    currency,
+    active,
+    sort_order: sortOrder,
+    usd_reference_price: Number.isFinite(usdReferencePrice ?? NaN) ? usdReferencePrice : undefined,
+  };
+}
+
+async function listCoinPackages(): Promise<CatalogCoinPackage[] | null> {
+  try {
+    const sb = supabasePublic();
+
+    const qCoins = await sb
+      .from("coins")
+      .select("code,name,coin_amount,value_mwk,usd_reference_price,sort_order,status")
+      .eq("status", "active")
+      .order("sort_order", { ascending: true });
+
+    if (!qCoins.error) {
+      return (qCoins.data ?? [])
+        .map((row) => mapCoinCatalogRow(row as Record<string, unknown>))
+        .filter((row): row is CatalogCoinPackage => row !== null);
+    }
+
+    const qLegacy = await sb
+      .from("coin_packages")
+      .select("id,title,coins,bonus_coins,price,currency,active,sort_order")
+      .eq("active", true)
+      .order("sort_order", { ascending: true });
+
+    if (qLegacy.error) return null;
+
+    return (qLegacy.data ?? [])
+      .map((row) => mapCoinCatalogRow(row as Record<string, unknown>))
+      .filter((row): row is CatalogCoinPackage => row !== null);
+  } catch {
+    return null;
+  }
+}
+
+async function getCoinPackageById(
+  sb: ReturnType<typeof supabaseAdmin>,
+  packageId: string,
+): Promise<CatalogCoinPackage | null> {
+  const normalizedId = String(packageId ?? "").trim();
+  if (!normalizedId) return null;
+
+  try {
+    const qCoins = await sb
+      .from("coins")
+      .select("code,name,coin_amount,value_mwk,usd_reference_price,sort_order,status")
+      .eq("code", normalizedId)
+      .maybeSingle();
+
+    if (!qCoins.error && qCoins.data) {
+      const mapped = mapCoinCatalogRow(qCoins.data as Record<string, unknown>);
+      if (mapped && mapped.active) return mapped;
+      return null;
+    }
+  } catch {
+    // fall through to legacy table
+  }
+
+  const qLegacy = await sb
+    .from("coin_packages")
+    .select("id,title,coins,bonus_coins,price,currency,active,sort_order")
+    .eq("id", normalizedId)
+    .maybeSingle();
+
+  if (qLegacy.error || !qLegacy.data) return null;
+  const mapped = mapCoinCatalogRow(qLegacy.data as Record<string, unknown>);
+  return mapped && mapped.active ? mapped : null;
+}

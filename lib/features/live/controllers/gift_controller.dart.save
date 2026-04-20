@@ -1,0 +1,22 @@
+import 'dart:async';
+
+import 'package:flutter/material.dart';
+
+# Open gift_controller.dart
+nano lib/features/live/controllers/gift_controller.dart
+  @override
+  void dispose() {
+    _comboTimer?.cancel();
+    super.dispose();
+  }
+}
+
+  void receiveGift(dynamic gift) {
+    // Handle gift reception
+    notifyListeners();
+  }
+
+  void receiveGift(dynamic gift) {
+    // Handle gift reception
+    notifyListeners();
+  }

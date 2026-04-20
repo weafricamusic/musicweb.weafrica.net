@@ -1,0 +1,79 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Consumer Mock (Exact UI)",
+      "request": "launch",
+      "type": "dart",
+      "program": "lib/consumer_mock_exact_main.dart"
+    },
+    {
+      "name": "Agora Preview Test",
+      "request": "launch",
+      "type": "dart",
+      "program": "lib/agora_preview_test_main.dart",
+      "args": [
+        "--dart-define-from-file=tool/supabase.env.json"
+      ]
+    },
+    {
+      "name": "Consumer Mock (Real Playback)",
+      "request": "launch",
+      "type": "dart",
+      "program": "lib/consumer_mock_main.dart",
+      "args": [
+        "--dart-define-from-file=tool/supabase.env.json"
+      ]
+    },
+    {
+      "name": "Flutter (Physical Device - LAN API)",
+      "request": "launch",
+      "type": "dart",
+      "args": [
+        "--dart-define-from-file=tool/supabase.env.json"
+      ]
+    },
+    {
+      "name": "Flutter (Supabase)",
+      "request": "launch",
+      "type": "dart",
+      "args": [
+        "--dart-define-from-file=tool/supabase.env.json"
+      ]
+    },
+    {
+      "name": "Flutter (Supabase + Agora Live Battle)",
+      "request": "launch",
+      "type": "dart",
+      "args": [
+        "--dart-define-from-file=tool/supabase.env.json",
+        "--dart-define=AGORA_CHANNEL=weafrica_live",
+        "--dart-define=AGORA_SEAT=1"
+      ]
+    },
+    {
+      "name": "Flutter (Supabase + Agora Live Battle) [Seat 1]",
+      "request": "launch",
+      "type": "dart",
+      "args": [
+        "--dart-define-from-file=tool/supabase.env.json",
+        "--dart-define=AGORA_CHANNEL=weafrica_live",
+        "--dart-define=AGORA_SEAT=1",
+        "--dart-define=AGORA_UID_SEAT1=1001",
+        "--dart-define=AGORA_UID_SEAT2=1002"
+      ]
+    },
+    {
+      "name": "Flutter (Supabase + Agora Live Battle) [Seat 2]",
+      "request": "launch",
+      "type": "dart",
+      "args": [
+        "--dart-define-from-file=tool/supabase.env.json",
+        "--dart-define=AGORA_CHANNEL=weafrica_live",
+        "--dart-define=AGORA_SEAT=2",
+        "--dart-define=AGORA_UID_SEAT1=1001",
+        "--dart-define=AGORA_UID_SEAT2=1002"
+      ]
+    }
+  ]
+}

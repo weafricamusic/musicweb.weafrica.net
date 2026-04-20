@@ -1,0 +1,22 @@
+import 'package:flutter/material.dart';
+
+import '../config/debug_flags.dart';
+import 'app_unavailable_screen.dart';
+
+class FirebaseSetupScreen extends StatelessWidget {
+  const FirebaseSetupScreen({super.key, required this.errorMessage});
+
+  final String errorMessage;
+
+  @override
+  Widget build(BuildContext context) {
+    final dev = DebugFlags.showDeveloperUi;
+    return AppUnavailableScreen(
+      title: dev ? 'Firebase not initialized' : 'App unavailable',
+      message: dev
+          ? 'Some features may be disabled until Firebase is configured.'
+          : 'Some features may be temporarily unavailable. Please try again later.',
+      details: dev ? errorMessage : null,
+    );
+  }
+}

@@ -1,0 +1,30 @@
+{
+  "name": "weafrica_music",
+  "private": true,
+  "scripts": {
+    "admin": "npm run admin:dev",
+    "admin:install": "npm --prefix admin_dashboard install",
+    "admin:setup": "npm --prefix admin_dashboard run setup:env && npm --prefix admin_dashboard run setup:supabase --",
+    "admin:setup:firebase-admin": "npm --prefix admin_dashboard run setup:firebase-admin --",
+    "admin:setup:supabase": "npm --prefix admin_dashboard run setup:supabase --",
+    "admin:dev": "npm --prefix admin_dashboard run dev",
+    "admin:dev:lan": "npm --prefix admin_dashboard run dev:lan",
+    "admin:build": "npm --prefix admin_dashboard run build",
+    "admin:start": "npm --prefix admin_dashboard run start",
+    "admin:lint": "npm --prefix admin_dashboard run lint",
+    "dev": "bash tool/flutter_run_with_env.sh",
+    "dev:web": "bash tool/flutter_run_with_env.sh -d chrome",
+    "dev:backend": "npm --prefix backend run dev",
+    "build:web": "bash tool/build_web_vercel.sh",
+    "analyze": "flutter analyze",
+    "test": "flutter test",
+    "smoke:feed": "node tool/smoke_feed_track.mjs",
+    "smoke:admin": "node tool/smoke_admin_endpoints.mjs"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.103.3",
+    "agora-rtc-sdk-ng": "^4.24.3",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1"
+  }
+}

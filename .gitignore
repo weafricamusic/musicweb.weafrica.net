@@ -1,0 +1,75 @@
+# Miscellaneous
+*.class
+*.log
+*.pyc
+*.swp
+.DS_Store
+.atom/
+.build/
+.buildlog/
+.history
+.svn/
+.swiftpm/
+migrate_working_dir/
+
+# IntelliJ related
+*.iml
+*.ipr
+*.iws
+.idea/
+
+# Vercel local project metadata
+.vercel/
+
+# The .vscode folder contains launch configuration and tasks you configure in
+# VS Code which you may wish to be included in version control, so this line
+# is commented out by default.
+#.vscode/
+
+# Flutter/Dart/Pub related
+**/doc/api/
+**/ios/Flutter/.last_build_id
+.dart_tool/
+.flutter-plugins-dependencies
+.pub-cache/
+.pub/
+/build/
+/coverage/
+
+# Local env (secrets)
+.env
+.env.*
+.env.local
+admin_dashboard/.next/
+admin_dashboard/node_modules/
+tool/supabase.env.json
+assets/config/supabase.env.json
+.env.local
+
+# Generated helper output (contains secrets)
+tool/WEAFRICA_ENV_JSON_BASE64.txt
+
+# Optional local debug outputs
+tool/inspect_env_config.out
+
+# Firebase / Google service account keys (never commit)
+**/firebase-adminsdk-*.json
+**/*firebase-adminsdk*.json
+**/*service-account*.json
+**/*service_account*.json
+**/*gcp-service-account*.json
+**/*google-service-account*.json
+
+# Symbolication related
+app.*.symbols
+
+# Obfuscation related
+app.*.map.json
+
+# Android Studio will place build artifacts here
+/android/app/debug
+/android/app/profile
+/android/app/release
+.vercel
+.env*.local
+node_modules

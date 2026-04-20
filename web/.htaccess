@@ -1,0 +1,44 @@
+<IfModule mod_mime.c>
+  AddType application/wasm .wasm
+  AddType application/javascript .js
+  AddType application/json .json
+  AddType application/octet-stream .data
+  AddType application/octet-stream .bin
+</IfModule>
+
+# Prefer Flutter's entrypoint if WordPress/PHP files exist in the same folder.
+DirectoryIndex index.html
+
+<IfModule mod_headers.c>
+  # Avoid stale engine/runtime files being cached by the browser/CDN.
+  # These files are not content-hashed, so long cache lifetimes can break deployments.
+  # Apply no-cache based on URL so it also covers /canvaskit/* assets.
+  Header set Cache-Control "no-cache, no-store, must-revalidate" env=FLUTTER_NOCACHE
+  Header set Pragma "no-cache" env=FLUTTER_NOCACHE
+  Header set Expires "0" env=FLUTTER_NOCACHE
+</IfModule>
+
+<IfModule mod_setenvif.c>
+  # Top-level Flutter boot/runtime files (not content-hashed).
+  SetEnvIf Request_URI "^/(index\.html|flutter\.js|flutter_bootstrap\.js|flutter_service_worker\.js|manifest\.json|version\.json|main\.dart\.js|firebase-messaging-sw\.js)$" FLUTTER_NOCACHE=1
+  # CanvasKit directory (not content-hashed).
+  SetEnvIf Request_URI "^/canvaskit/" FLUTTER_NOCACHE=1
+</IfModule>
+
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteBase /
+
+  # Never rewrite core runtime/service-worker assets.
+  # If missing, they should return 404 (not index.html).
+  RewriteRule ^(firebase-messaging-sw\.js|flutter_bootstrap\.js|flutter\.js|flutter_service_worker\.js|manifest\.json|version\.json|main\.dart\.js)$ - [L,NC]
+
+  # Let existing files/directories be served as-is.
+  RewriteRule ^index\.html$ - [L]
+  RewriteCond %{REQUEST_FILENAME} -f [OR]
+  RewriteCond %{REQUEST_FILENAME} -d
+  RewriteRule ^ - [L]
+
+  # Flutter web is a single-page app; route all other paths to index.html.
+  RewriteRule . /index.html [L]
+</IfModule>

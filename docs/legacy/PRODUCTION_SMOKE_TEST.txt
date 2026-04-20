@@ -1,0 +1,303 @@
+✅ FINAL — WEAFRICA MUSIC
+5-Minute End-to-End Smoke Test (Production-Accurate)
+
+This matches your ACTUAL system: Next.js API + Supabase + FCM
+No Cloud Functions. No mismatched endpoints. This is how it works TODAY.
+
+═══════════════════════════════════════════════════════════════════════════
+
+🔹 STEP 1 — Consumer App (Flutter)
+
+After Firebase login:
+
+1. Get Tokens:
+   • Firebase ID Token (for auth)
+   • FCM Device Token (for notifications)
+
+2. Register Device:
+
+   Endpoint: POST /api/push/register
+   Headers:  Authorization: Bearer <firebase_id_token>
+   
+   Request Body:
+   {
+     "token": "FCM_DEVICE_TOKEN",
+     "platform": "android",
+     "device_id": "unique-device-id",
+     "country_code": "mw",
+     "topics": ["all", "consumers"]
+   }
+
+   ✅ This hits your Next.js API route
+   ✅ Next.js API inserts/updates row in Supabase
+   ✅ Response: 200 OK with token data
+
+Flutter Code:
+```dart
+final helper = PushSmokeTestHelper();
+final tokens = await helper.collectTokens();
+final result = await helper.registerDeviceToken(
+  idToken: tokens['id_token'],
+  fcmToken: tokens['fcm_token'],
+  platform: tokens['platform'],
+  deviceModel: tokens['device_model'],
+  countryCode: 'mw', // or 'gh', 'ng', etc.
+);
+```
+
+═══════════════════════════════════════════════════════════════════════════
+
+🔹 STEP 2 — Verify Token Stored (Supabase)
+
+Go to: Supabase Dashboard → SQL Editor
+
+Run this query:
+```sql
+SELECT
+  token,
+  user_uid,
+  topics,
+  country_code,
+  platform,
+  last_seen_at
+FROM notification_device_tokens
+ORDER BY last_seen_at DESC
+LIMIT 20;
+```
+
+Expected Results:
+  ✔ token = Your FCM device token
+  ✔ user_uid = Your Firebase UID
+  ✔ topics = ["all", "consumers"] (JSONB array)
+  ✔ country_code = "mw" (or your test country)
+  ✔ platform = "android" or "ios"
+  ✔ last_seen_at = Recent timestamp (within last few minutes)
+
+Flutter Code:
+```dart
+final verified = await helper.verifyTokenInSupabase(tokens['fcm_token']);
+print('✅ Token verified: ${verified['user_uid']}');
+```
+
+═══════════════════════════════════════════════════════════════════════════
+
+🔹 STEP 3 — Send Test Notification (Admin Dashboard)
+
+Location: Admin Dashboard → Notifications
+
+Configure:
+  • Topic: "all" or "consumers"
+  • Country: "mw" (match your device)
+  • Title: "Test Notification"
+  • Body: "Smoke test from admin"
+
+Click: "Send Now"
+
+What happens:
+  1. Calls: POST /api/admin/notifications/push
+     Body: { ...notification_data, send_now: true }
+  2. Creates row in notifications table
+  3. Auto-injects: data.notification_id = <row.id>
+  4. Sends immediately to matched devices via FCM
+
+Expected: "Sent to X devices" (where X >= 1)
+
+═══════════════════════════════════════════════════════════════════════════
+
+🔹 STEP 4 — Receive on Device
+
+Check device for notification:
+
+Foreground (App Open):
+  → FirebaseMessaging.onMessage fires
+  → Console shows: "🔔 Foreground message received"
+  → You can show custom in-app UI
+
+Background (App Closed) / Tap:
+  → Native notification appears
+  → Tap → FirebaseMessaging.onMessageOpenedApp fires
+  → App opens and routes to screen based on:
+     • data.screen (target screen)
+     • data.entity_id (track/post/battle ID)
+     • data.notification_id (ALWAYS present = row.id from admin)
+
+Verify in Flutter console:
+```
+🔔 Notification received
+data.notification_id: abc123 (row ID) ✅
+data.screen: track_detail
+data.entity_id: track-456
+Routing: ✅
+```
+
+═══════════════════════════════════════════════════════════════════════════
+
+🔹 STEP 5 — Test Rate-Limiting
+
+Test that same user can't be spammed with same topic:
+
+Endpoint: POST /api/push/send
+
+Request Body:
+```json
+{
+  "token_topic": "trending",
+  "max_per_user_per_day": 1
+}
+```
+
+Test:
+  1. Send first request → 200 OK (notification sent)
+  2. Send second request (same user, same topic, same day) → 429 Too Many Requests
+
+Flutter Code:
+```dart
+final rateLimitTest = PushRateLimitTest();
+await rateLimitTest.runRateLimitTest(
+  tokenTopic: 'trending',
+  maxPerUserPerDay: 1,
+);
+```
+
+Expected Console Output:
+```
+📤 ATTEMPT 1: POST /api/push/send → 200 OK ✅
+📤 ATTEMPT 2: POST /api/push/send → 429 Rate Limited ✅
+✅ RATE-LIMITING TEST PASSED
+User cannot be spammed with same topic today.
+```
+
+═══════════════════════════════════════════════════════════════════════════
+
+✅ SUCCESS CRITERIA
+
+Your system is working when:
+
+☐ Step 1: Device registration returns 200 OK
+☐ Step 2: Token appears in Supabase with correct user_uid
+☐ Step 2: topics is JSONB array ["all", "consumers"]
+☐ Step 2: country_code matches device
+☐ Step 3: Admin can send notification
+☐ Step 4: Device receives notification (foreground + background)
+☐ Step 4: Tapping notification opens correct screen
+☐ Step 5: Rate-limiting prevents duplicate notifications
+☐ No console errors
+
+When all checked: ✅ PRODUCTION READY
+
+═══════════════════════════════════════════════════════════════════════════
+
+🗂️ YOUR ACTUAL SYSTEM ARCHITECTURE
+
+Consumer App (Flutter)
+   ↓ POST /api/push/register
+Next.js API Route
+   ↓ INSERT/UPDATE
+Supabase (notification_device_tokens)
+   ↓ Query for matching tokens
+Admin Dashboard
+   ↓ Trigger notification
+Next.js API → FCM
+   ↓ Deliver
+Consumer App (receives notification)
+
+Key Differences from Generic Setup:
+  ❌ NO Cloud Functions (you use Next.js API routes)
+  ❌ NO fcm_token field (you use "token")
+  ❌ NO user_id field (you use "user_uid")
+  ✅ Next.js API handles all backend logic
+  ✅ Supabase is pure storage
+  ✅ Topics are JSONB arrays
+
+═══════════════════════════════════════════════════════════════════════════
+
+🎯 QUICK REFERENCE
+
+Update Backend URL:
+  File: lib/features/notifications/services/push_smoke_test_helper.dart
+  Change: _backendBaseUrl = 'https://YOUR_NEXTJS_DOMAIN'
+
+Run Full Test:
+  final helper = PushSmokeTestHelper();
+  await helper.runFullTest(countryCode: 'mw');
+
+Verify in Supabase:
+  SELECT * FROM notification_device_tokens
+  WHERE user_uid = 'YOUR_FIREBASE_UID'
+  ORDER BY last_seen_at DESC;
+
+Check Topics (JSONB):
+  SELECT topics FROM notification_device_tokens
+  WHERE topics @> '["consumers"]'::jsonb;
+
+═══════════════════════════════════════════════════════════════════════════
+
+📋 DATABASE SCHEMA (Your Actual Table)
+
+notification_device_tokens
+┌──────────────────────────────────────────┐
+│ token           TEXT (FCM device token)  │ ← NOT fcm_token
+│ user_uid        TEXT (Firebase UID)      │ ← NOT user_id
+│ platform        TEXT ('ios'|'android')   │
+│ device_id       TEXT                     │ ← NOT device_model
+│ country_code    TEXT                     │
+│ topics          JSONB (array)            │ ← NOT TEXT[]
+│ last_seen_at    TIMESTAMP                │ ← NOT last_updated
+│ created_at      TIMESTAMP                │
+└──────────────────────────────────────────┘
+
+Example Row:
+{
+  "token": "d-7v-EYAAe0:APA91bHK3j_Ux...",
+  "user_uid": "firebase-uid-12345",
+  "platform": "android",
+  "device_id": "Pixel 8 Pro",
+  "country_code": "mw",
+  "topics": ["all", "consumers"],
+  "last_seen_at": "2026-01-28T10:30:00Z",
+  "created_at": "2026-01-28T10:30:00Z"
+}
+
+═══════════════════════════════════════════════════════════════════════════
+
+🔧 TROUBLESHOOTING
+
+Problem: "Failed to register device token"
+  → Check Next.js API route is deployed
+  → Verify endpoint URL is correct
+  → Check Firebase ID Token is valid
+
+Problem: "Token not found in Supabase"
+  → Verify Next.js API successfully inserted row
+  → Check Supabase connection in Next.js
+  → Query by token field, not fcm_token
+
+Problem: "Topics not showing as array"
+  → Verify Next.js sends topics as JSONB
+  → Check column type is JSONB, not TEXT
+
+Problem: "user_uid is null"
+  → Verify Next.js extracts UID from Firebase token
+  → Check Authorization header is sent
+
+═══════════════════════════════════════════════════════════════════════════
+
+🚀 NEXT STEPS
+
+1. Update backend URL in smoke test helper
+2. Run: await PushSmokeTestHelper().runFullTest(countryCode: 'mw')
+3. Verify in Supabase using queries above
+4. Send test notification from Admin Dashboard
+5. Confirm device receives notification
+6. Document results
+7. Deploy to production! 🎉
+
+═══════════════════════════════════════════════════════════════════════════
+
+Version: 1.0 (Production-Accurate)
+Date: January 28, 2026
+System: Next.js API + Supabase + FCM
+Status: ✅ Ready for Testing
+
+This is YOUR actual system. No guessing. No generic examples.
+Run the test and verify it works! 🚀

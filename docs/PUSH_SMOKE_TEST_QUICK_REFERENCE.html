@@ -1,0 +1,516 @@
+<!-- 🔔 PUSH NOTIFICATION SMOKE TEST - QUICK REFERENCE CARD -->
+<!-- Print this or keep it handy while testing -->
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Push Notification Smoke Test - Quick Reference</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            padding: 40px 20px;
+            min-height: 100vh;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        
+        .header {
+            text-align: center;
+            color: white;
+            margin-bottom: 40px;
+        }
+        
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+        
+        .header p {
+            font-size: 1.1em;
+            opacity: 0.9;
+        }
+        
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+            gap: 25px;
+            margin-bottom: 30px;
+        }
+        
+        .card {
+            background: white;
+            border-radius: 12px;
+            padding: 25px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            border-left: 5px solid #667eea;
+        }
+        
+        .card.step-2 { border-left-color: #764ba2; }
+        .card.step-3 { border-left-color: #f093fb; }
+        .card.step-4 { border-left-color: #4facfe; }
+        .card.step-5 { border-left-color: #00f2fe; }
+        .card.step-6 { border-left-color: #fa709a; }
+        
+        .card h2 {
+            color: #333;
+            margin-bottom: 15px;
+            font-size: 1.5em;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .step-num {
+            display: inline-block;
+            background: #667eea;
+            color: white;
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            font-size: 1.2em;
+        }
+        
+        .step-2 .step-num { background: #764ba2; }
+        .step-3 .step-num { background: #f093fb; }
+        .step-4 .step-num { background: #4facfe; }
+        .step-5 .step-num { background: #00f2fe; }
+        .step-6 .step-num { background: #fa709a; }
+        
+        .action-list {
+            list-style: none;
+            margin-bottom: 20px;
+        }
+        
+        .action-list li {
+            padding: 8px 0;
+            padding-left: 25px;
+            position: relative;
+            color: #555;
+            line-height: 1.5;
+        }
+        
+        .action-list li:before {
+            content: "✓";
+            position: absolute;
+            left: 0;
+            color: #667eea;
+            font-weight: bold;
+            font-size: 1.2em;
+        }
+        
+        .code-block {
+            background: #f5f5f5;
+            border-radius: 6px;
+            padding: 12px;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9em;
+            overflow-x: auto;
+            color: #333;
+            margin-bottom: 15px;
+            border-left: 3px solid #667eea;
+        }
+        
+        .expected {
+            background: #e8f5e9;
+            border-left: 3px solid #4caf50;
+            padding: 12px;
+            border-radius: 6px;
+            margin-top: 15px;
+            font-size: 0.95em;
+            color: #2e7d32;
+        }
+        
+        .expected:before {
+            content: "✅ Expected: ";
+            font-weight: bold;
+        }
+        
+        .error {
+            background: #ffebee;
+            border-left: 3px solid #f44336;
+            padding: 12px;
+            border-radius: 6px;
+            margin-top: 15px;
+            font-size: 0.95em;
+            color: #c62828;
+        }
+        
+        .error:before {
+            content: "❌ If failed: ";
+            font-weight: bold;
+        }
+        
+        .timeline {
+            background: white;
+            border-radius: 12px;
+            padding: 25px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            margin-top: 30px;
+        }
+        
+        .timeline h3 {
+            color: #333;
+            margin-bottom: 25px;
+            font-size: 1.4em;
+        }
+        
+        .timeline-item {
+            display: flex;
+            gap: 20px;
+            margin-bottom: 25px;
+            position: relative;
+            padding-left: 20px;
+        }
+        
+        .timeline-item:not(:last-child):after {
+            content: "";
+            position: absolute;
+            left: 9px;
+            top: 40px;
+            width: 2px;
+            height: calc(100% + 25px);
+            background: #ddd;
+        }
+        
+        .timeline-marker {
+            flex-shrink: 0;
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            background: #667eea;
+            color: white;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            position: relative;
+            z-index: 1;
+        }
+        
+        .timeline-content h4 {
+            color: #333;
+            margin-bottom: 5px;
+        }
+        
+        .timeline-content p {
+            color: #666;
+            font-size: 0.95em;
+        }
+        
+        .checklist {
+            background: #f9f9f9;
+            border-radius: 6px;
+            padding: 15px;
+            margin-top: 15px;
+        }
+        
+        .checklist label {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 8px;
+            cursor: pointer;
+            color: #666;
+        }
+        
+        .checklist input[type="checkbox"] {
+            cursor: pointer;
+            width: 18px;
+            height: 18px;
+        }
+        
+        .footer {
+            text-align: center;
+            color: white;
+            margin-top: 40px;
+            opacity: 0.9;
+        }
+        
+        .print-btn {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        
+        .print-btn button {
+            background: white;
+            color: #667eea;
+            border: none;
+            padding: 12px 30px;
+            border-radius: 6px;
+            font-size: 1em;
+            font-weight: bold;
+            cursor: pointer;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+            transition: all 0.3s ease;
+        }
+        
+        .print-btn button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(0,0,0,0.3);
+        }
+        
+        @media print {
+            body {
+                background: white;
+                padding: 0;
+            }
+            .print-btn {
+                display: none;
+            }
+            .grid {
+                page-break-inside: avoid;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🔔 Push Notification Smoke Test</h1>
+            <p>Complete step-by-step guide for testing push notifications</p>
+        </div>
+        
+        <div class="print-btn">
+            <button onclick="window.print()">📄 Print This Guide</button>
+        </div>
+        
+        <div class="grid">
+            <!-- STEP 1 -->
+            <div class="card step-1">
+                <h2>
+                    <span class="step-num">1</span>
+                    Login & Collect Tokens
+                </h2>
+                <ul class="action-list">
+                    <li>Login to app with Firebase Auth</li>
+                    <li>Get Firebase ID Token</li>
+                    <li>Get FCM Device Token</li>
+                    <li>Collect device info</li>
+                </ul>
+                
+                <div class="code-block">
+final helper = 
+  PushSmokeTestHelper();
+final tokens = 
+  await helper.collectTokens();
+                </div>
+                
+                <div class="expected">
+                    ✅ Firebase UID, FCM Token, Device Model
+                </div>
+            </div>
+            
+            <!-- STEP 2 -->
+            <div class="card step-2">
+                <h2>
+                    <span class="step-num">2</span>
+                    Register Device Token
+                </h2>
+                <ul class="action-list">
+                    <li>Send token to backend</li>
+                    <li>Backend saves to Supabase</li>
+                    <li>Verify 200 OK response</li>
+                </ul>
+                
+                <div class="code-block">
+await helper.registerDeviceToken(
+  idToken: tokens['id_token'],
+  fcmToken: tokens['fcm_token'],
+  platform: tokens['platform'],
+  deviceModel: tokens['device_model'],
+);
+                </div>
+                
+                <div class="expected">
+                    ✅ 200 OK with token ID
+                </div>
+            </div>
+            
+            <!-- STEP 3 -->
+            <div class="card step-3">
+                <h2>
+                    <span class="step-num">3</span>
+                    Verify in Supabase
+                </h2>
+                <ul class="action-list">
+                    <li>Open Supabase SQL Editor</li>
+                    <li>Run verification query</li>
+                    <li>Confirm token exists</li>
+                    <li>Check is_active = true</li>
+                </ul>
+                
+                <div class="code-block">
+SELECT * FROM 
+  notification_device_tokens
+WHERE fcm_token = 'YOUR_TOKEN'
+                </div>
+                
+                <div class="expected">
+                    ✅ One row found with correct user_id
+                </div>
+            </div>
+            
+            <!-- STEP 4 -->
+            <div class="card step-4">
+                <h2>
+                    <span class="step-num">4</span>
+                    Send Test Notification
+                </h2>
+                <ul class="action-list">
+                    <li>Open Admin Dashboard</li>
+                    <li>Go to Notifications > Push</li>
+                    <li>Select topic (system/consumers)</li>
+                    <li>Click "Send Now"</li>
+                </ul>
+                
+                <div class="code-block">
+Config:
+- Topic: system
+- Country: gh
+- Title: Test Message
+                </div>
+                
+                <div class="expected">
+                    ✅ Status: Sent to 1 device
+                </div>
+            </div>
+            
+            <!-- STEP 5 -->
+            <div class="card step-5">
+                <h2>
+                    <span class="step-num">5</span>
+                    Receive on Device
+                </h2>
+                <ul class="action-list">
+                    <li>Watch for notification alert</li>
+                    <li>Check console for onMessage</li>
+                    <li>Tap notification</li>
+                    <li>Verify correct screen opens</li>
+                </ul>
+                
+                <div class="checklist">
+                    <label><input type="checkbox"> Received notification</label>
+                    <label><input type="checkbox"> onMessage fired</label>
+                    <label><input type="checkbox"> Tapped opens app</label>
+                    <label><input type="checkbox"> Routed correctly</label>
+                </div>
+            </div>
+            
+            <!-- STEP 6 -->
+            <div class="card step-6">
+                <h2>
+                    <span class="step-num">6</span>
+                    Test Rate-Limiting
+                </h2>
+                <ul class="action-list">
+                    <li>Send notification twice</li>
+                    <li>First: expect 200 OK</li>
+                    <li>Second: expect 429 Limited</li>
+                </ul>
+                
+                <div class="code-block">
+final test = 
+  PushRateLimitTest();
+await test.runRateLimitTest();
+                </div>
+                
+                <div class="expected">
+                    ✅ First OK, Second Limited (429)
+                </div>
+            </div>
+        </div>
+        
+        <!-- ARCHITECTURE TIMELINE -->
+        <div class="timeline">
+            <h3>📊 Complete Flow</h3>
+            
+            <div class="timeline-item">
+                <div class="timeline-marker">🚀</div>
+                <div class="timeline-content">
+                    <h4>Step 1: Token Collection</h4>
+                    <p>App collects Firebase ID Token, FCM Token, Device Info</p>
+                </div>
+            </div>
+            
+            <div class="timeline-item">
+                <div class="timeline-marker">📤</div>
+                <div class="timeline-content">
+                    <h4>Step 2: Backend Registration</h4>
+                    <p>Send token to backend API for storage</p>
+                </div>
+            </div>
+            
+            <div class="timeline-item">
+                <div class="timeline-marker">💾</div>
+                <div class="timeline-content">
+                    <h4>Step 3: Database Storage</h4>
+                    <p>Backend saves token to Supabase</p>
+                </div>
+            </div>
+            
+            <div class="timeline-item">
+                <div class="timeline-marker">🔍</div>
+                <div class="timeline-content">
+                    <h4>Step 3: Verification</h4>
+                    <p>Query Supabase to confirm token exists</p>
+                </div>
+            </div>
+            
+            <div class="timeline-item">
+                <div class="timeline-marker">📲</div>
+                <div class="timeline-content">
+                    <h4>Step 4-5: Send & Receive</h4>
+                    <p>Admin sends notification, device receives it</p>
+                </div>
+            </div>
+            
+            <div class="timeline-item">
+                <div class="timeline-marker">⚔️</div>
+                <div class="timeline-content">
+                    <h4>Step 6: Rate-Limiting</h4>
+                    <p>Verify duplicate prevention works</p>
+                </div>
+            </div>
+        </div>
+        
+        <!-- SUCCESS CRITERIA -->
+        <div style="background: white; border-radius: 12px; padding: 25px; box-shadow: 0 20px 60px rgba(0,0,0,0.3); margin-top: 30px;">
+            <h3 style="color: #333; margin-bottom: 20px;">✅ Success Criteria</h3>
+            <div class="checklist">
+                <label><input type="checkbox"> All 6 steps completed</label>
+                <label><input type="checkbox"> Token appears in Supabase</label>
+                <label><input type="checkbox"> Device received notification</label>
+                <label><input type="checkbox"> Tapping opens correct screen</label>
+                <label><input type="checkbox"> Rate-limiting prevented duplicate</label>
+                <label><input type="checkbox"> Console logs are clean (no errors)</label>
+            </div>
+            
+            <div style="background: #e8f5e9; border-left: 3px solid #4caf50; padding: 15px; border-radius: 6px; margin-top: 20px; color: #2e7d32;">
+                <strong>✅ When all items are checked:</strong><br>
+                Your push notification system is <strong>fully functional</strong> and <strong>production-ready!</strong>
+            </div>
+        </div>
+        
+        <div class="footer">
+            <p>🔔 WEAFRICA MUSIC - Push Notification Testing Guide</p>
+            <p>Created: January 28, 2025</p>
+        </div>
+    </div>
+</body>
+</html>

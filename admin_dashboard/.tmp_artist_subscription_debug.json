@@ -1,0 +1,98 @@
+{
+  "user_subscriptions": {
+    "error": null,
+    "data": [
+      {
+        "id": 15,
+        "user_id": "fLFUpiyAjiVL0YaCu0JGFn5cs6d2",
+        "plan_id": "platinum",
+        "status": "active",
+        "started_at": "2026-03-12T02:16:08.065+00:00",
+        "ends_at": "2026-07-12T02:16:08.065+00:00",
+        "auto_renew": true,
+        "source": "admin_dashboard",
+        "created_at": "2026-03-12T02:16:08.251142+00:00",
+        "updated_at": "2026-03-12T02:16:08.251142+00:00"
+      },
+      {
+        "id": 12,
+        "user_id": "fLFUpiyAjiVL0YaCu0JGFn5cs6d2",
+        "plan_id": "premium",
+        "status": "replaced",
+        "started_at": "2026-03-12T02:11:28.775+00:00",
+        "ends_at": "2026-07-12T02:11:28.775+00:00",
+        "auto_renew": true,
+        "source": "admin_dashboard",
+        "created_at": "2026-03-12T02:11:28.982379+00:00",
+        "updated_at": "2026-03-12T02:16:08.040482+00:00"
+      }
+    ],
+    "count": null,
+    "status": 200,
+    "statusText": "OK"
+  },
+  "creator_profiles": {
+    "error": null,
+    "data": [
+      {
+        "id": "ba54c972-5c39-4df4-a604-0b21d833ea50",
+        "user_id": "fLFUpiyAjiVL0YaCu0JGFn5cs6d2",
+        "display_name": "artist1",
+        "role": "artist",
+        "created_at": "2026-02-20T03:13:44.261436+00:00"
+      }
+    ],
+    "count": null,
+    "status": 200,
+    "statusText": "OK"
+  },
+  "artists": {
+    "error": null,
+    "data": [
+      {
+        "id": "018c30f4-7c74-45de-9b9e-3ae2bcd12e29",
+        "user_id": "fLFUpiyAjiVL0YaCu0JGFn5cs6d2",
+        "firebase_uid": "fLFUpiyAjiVL0YaCu0JGFn5cs6d2",
+        "stage_name": "artist1",
+        "created_at": "2026-03-10T19:27:19.459053+00:00"
+      }
+    ],
+    "count": null,
+    "status": 200,
+    "statusText": "OK"
+  },
+  "users": {
+    "error": {
+      "code": "22P02",
+      "details": null,
+      "hint": null,
+      "message": "invalid input syntax for type uuid: \"fLFUpiyAjiVL0YaCu0JGFn5cs6d2\""
+    },
+    "data": null,
+    "count": null,
+    "status": 400,
+    "statusText": "Bad Request"
+  },
+  "subscription_plans": {
+    "error": null,
+    "data": [
+      {
+        "plan_id": "platinum",
+        "name": "Platinum",
+        "audience": "consumer",
+        "is_active": true,
+        "active": true
+      },
+      {
+        "plan_id": "premium",
+        "name": "Premium",
+        "audience": "consumer",
+        "is_active": true,
+        "active": true
+      }
+    ],
+    "count": null,
+    "status": 200,
+    "statusText": "OK"
+  }
+}

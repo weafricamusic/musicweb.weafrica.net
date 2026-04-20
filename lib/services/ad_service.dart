@@ -1,0 +1,1 @@
+export '../features/ads/services/ad_service.dart';

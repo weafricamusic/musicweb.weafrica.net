@@ -1,0 +1,237 @@
+import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
+import '../../../app/theme/weafrica_colors.dart';
+import '../models/artist_dashboard_models.dart';
+
+class ArtistProfileMainView extends StatelessWidget {
+  const ArtistProfileMainView({
+    super.key,
+    required this.dashboardData,
+    required this.onEditProfile,
+  });
+
+  final ArtistDashboardHomeData dashboardData;
+  final VoidCallback onEditProfile;
+
+  @override
+  Widget build(BuildContext context) {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Header with Avatar and Name
+          Center(
+            child: Column(
+              children: [
+                Container(
+                  width: 100,
+                  height: 100,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    border: Border.all(color: WeAfricaColors.gold, width: 2),
+                  ),
+                  child: ClipOval(
+                    child: Icon(Icons.person, size: 50, color: WeAfricaColors.gold),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  'Artist Name',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 24,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: WeAfricaColors.gold.withOpacity(0.15),
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(color: WeAfricaColors.gold),
+                  ),
+                  child: const Text(
+                    'Verified Artist',
+                    style: TextStyle(
+                      color: WeAfricaColors.gold,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+          const SizedBox(height: 30),
+
+          // Stats Row - Clean and simple
+          Container(
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.05),
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: Colors.white.withOpacity(0.1)),
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceAround,
+              children: [
+                _statItem('Tracks', dashboardData.recentSongs.length.toString()),
+                _statItem('Followers', _formatNumber(dashboardData.followersCount)),
+                _statItem('Plays', _formatNumber(dashboardData.totalPlays)),
+                _statItem('Earnings', '${dashboardData.totalEarnings}'),
+              ],
+            ),
+          ),
+
+          const SizedBox(height: 24),
+
+          // Action Buttons
+          Row(
+            children: [
+              Expanded(
+                child: _actionButton(
+                  context,
+                  icon: Icons.edit,
+                  label: 'Edit Profile',
+                  onTap: onEditProfile,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: _actionButton(
+                  context,
+                  icon: Icons.settings,
+                  label: 'Settings',
+                  onTap: () {},
+                ),
+              ),
+            ],
+          ),
+
+          const SizedBox(height: 24),
+
+          // Recent Songs Section
+          if (dashboardData.recentSongs.isNotEmpty) ...[
+            const Text(
+              'Recent Tracks',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 12),
+            ...dashboardData.recentSongs.take(3).map((song) => _recentSongItem(song)),
+          ],
+
+          const SizedBox(height: 24),
+
+          // Sign Out Button
+          _actionButton(
+            context,
+            icon: Icons.logout,
+            label: 'Sign Out',
+            isDanger: true,
+            onTap: () async {
+              // Add sign out logic
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _statItem(String label, String value) {
+    return Column(
+      children: [
+        Text(
+          value,
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 20,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          label,
+          style: const TextStyle(
+            color: Colors.white70,
+            fontSize: 12,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _actionButton(
+    BuildContext context, {
+    required IconData icon,
+    required String label,
+    required VoidCallback onTap,
+    bool isDanger = false,
+  }) {
+    return ElevatedButton(
+      onPressed: onTap,
+      style: ElevatedButton.styleFrom(
+        backgroundColor: isDanger ? Colors.red : Colors.white.withOpacity(0.1),
+        foregroundColor: isDanger ? Colors.white : WeAfricaColors.gold,
+        padding: const EdgeInsets.symmetric(vertical: 12),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(12),
+          side: isDanger ? BorderSide.none : BorderSide(color: WeAfricaColors.gold.withOpacity(0.3)),
+        ),
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(icon, size: 18),
+          const SizedBox(width: 8),
+          Text(label, style: const TextStyle(fontWeight: FontWeight.w600)),
+        ],
+      ),
+    );
+  }
+
+  Widget _recentSongItem(dynamic song) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.05),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.music_note, color: WeAfricaColors.gold, size: 24),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  song.title ?? 'Untitled',
+                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
+                ),
+                Text(
+                  '${song.plays ?? 0} plays',
+                  style: const TextStyle(color: Colors.white54, fontSize: 12),
+                ),
+              ],
+            ),
+          ),
+          const Icon(Icons.play_arrow, color: WeAfricaColors.gold),
+        ],
+      ),
+    );
+  }
+
+  String _formatNumber(int number) {
+    if (number >= 1000000) return '${(number / 1000000).toStringAsFixed(1)}M';
+    if (number >= 1000) return '${(number / 1000).toStringAsFixed(1)}K';
+    return number.toString();
+  }
+}

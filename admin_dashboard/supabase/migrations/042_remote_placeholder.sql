@@ -1,0 +1,2 @@
+-- Placeholder migration to match remote migration history.
+-- Remote has version 042 applied; no-op locally.

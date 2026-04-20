@@ -1,0 +1,162 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Start Supabase local stack",
+			"type": "shell",
+			"command": "supabase",
+			"args": [
+				"start"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "Check Docker version",
+			"type": "shell",
+			"command": "docker",
+			"args": [
+				"version"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "Check Supabase CLI version",
+			"type": "shell",
+			"command": "supabase",
+			"args": [
+				"--version"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "Check Docker version retry",
+			"type": "shell",
+			"command": "docker",
+			"args": [
+				"version"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "Start Supabase with explicit Docker API",
+			"type": "shell",
+			"command": "env",
+			"args": [
+				"DOCKER_API_VERSION=1.54",
+				"supabase",
+				"start",
+				"--debug"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "Check Supabase status",
+			"type": "shell",
+			"command": "env",
+			"args": [
+				"DOCKER_API_VERSION=1.54",
+				"supabase",
+				"status"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "List Supabase containers",
+			"type": "shell",
+			"command": "docker",
+			"args": [
+				"ps",
+				"-a",
+				"--filter",
+				"label=com.supabase.cli.project=weafrica_music",
+				"--format",
+				"table {{.Names}}\t{{.Status}}"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "Logs pg_meta",
+			"type": "shell",
+			"command": "docker",
+			"args": [
+				"logs",
+				"--tail",
+				"80",
+				"supabase_pg_meta_weafrica_music"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "Logs storage",
+			"type": "shell",
+			"command": "docker",
+			"args": [
+				"logs",
+				"--tail",
+				"80",
+				"supabase_storage_weafrica_music"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "Logs realtime",
+			"type": "shell",
+			"command": "docker",
+			"args": [
+				"logs",
+				"--tail",
+				"80",
+				"supabase_realtime_weafrica_music"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "Recheck Supabase status",
+			"type": "shell",
+			"command": "env",
+			"args": [
+				"DOCKER_API_VERSION=1.54",
+				"supabase",
+				"status"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "Logs db",
+			"type": "shell",
+			"command": "docker",
+			"args": [
+				"logs",
+				"--tail",
+				"120",
+				"supabase_db_weafrica_music"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "Final Supabase container state",
+			"type": "shell",
+			"command": "docker",
+			"args": [
+				"ps",
+				"-a",
+				"--filter",
+				"label=com.supabase.cli.project=weafrica_music",
+				"--format",
+				"{{.Names}}|{{.Status}}"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "Flutter: run",
+			"type": "shell",
+			"command": "flutter",
+			"args": [
+				"run"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		}
+	]
+}

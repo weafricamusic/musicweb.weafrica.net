@@ -1,0 +1,2227 @@
+[  +99 ms] executing: sysctl hw.optional.arm64
+[  +22 ms] Exit code 1 from: sysctl hw.optional.arm64
+[        ] sysctl: unknown oid 'hw.optional.arm64'
+[  +36 ms] Artifact Instance of 'MaterialFonts' is not required, skipping update.
+[        ] Artifact Instance of 'GradleWrapper' is not required, skipping update.
+[        ] Artifact Instance of 'AndroidGenSnapshotArtifacts' is not required, skipping update.
+[        ] Artifact Instance of 'AndroidInternalBuildArtifacts' is not required, skipping update.
+[        ] Artifact Instance of 'IOSEngineArtifacts' is not required, skipping update.
+[        ] Artifact Instance of 'FlutterWebSdk' is not required, skipping update.
+[   +3 ms] Artifact Instance of 'LegacyCanvasKitRemover' is not required, skipping update.
+[        ] Artifact Instance of 'FlutterSdk' is not required, skipping update.
+[        ] Artifact Instance of 'WindowsEngineArtifacts' is not required, skipping update.
+[        ] Artifact Instance of 'MacOSEngineArtifacts' is not required, skipping update.
+[   +1 ms] Artifact Instance of 'LinuxEngineArtifacts' is not required, skipping update.
+[        ] Artifact Instance of 'LinuxFuchsiaSDKArtifacts' is not required, skipping update.
+[        ] Artifact Instance of 'MacOSFuchsiaSDKArtifacts' is not required, skipping update.
+[        ] Artifact Instance of 'FlutterRunnerSDKArtifacts' is not required, skipping update.
+[        ] Artifact Instance of 'FlutterRunnerDebugSymbols' is not required, skipping update.
+[        ] Artifact Instance of 'IosUsbArtifacts' is not required, skipping update.
+[        ] Artifact Instance of 'IosUsbArtifacts' is not required, skipping update.
+[        ] Artifact Instance of 'IosUsbArtifacts' is not required, skipping update.
+[        ] Artifact Instance of 'IosUsbArtifacts' is not required, skipping update.
+[        ] Artifact Instance of 'IosUsbArtifacts' is not required, skipping update.
+[        ] Artifact Instance of 'IosUsbArtifacts' is not required, skipping update.
+[        ] Artifact Instance of 'FontSubsetArtifacts' is not required, skipping update.
+[        ] Artifact Instance of 'PubDependencies' is not required, skipping update.
+[   +2 ms] executing: [/usr/local/share/flutter/] git -c log.showSignature=false log HEAD -n 1 --pretty=format:%ad --date=iso
+[ +226 ms] Exit code 0 from: git -c log.showSignature=false log HEAD -n 1 --pretty=format:%ad --date=iso
+[   +1 ms] 2026-03-03 16:03:22 -0800
+[ +276 ms] executing: sysctl hw.optional.arm64
+[  +24 ms] Exit code 1 from: sysctl hw.optional.arm64
+[        ] sysctl: unknown oid 'hw.optional.arm64'
+[        ] executing: xcrun xcodebuild -version
+[+1017 ms] Exit code 0 from: xcrun xcodebuild -version
+[   +1 ms] Xcode 16.1
+           Build version 16B40
+[  +10 ms] executing: xcrun xcdevice list --timeout 5
+[  +22 ms] Artifact Instance of 'AndroidGenSnapshotArtifacts' is not required, skipping update.
+[        ] Artifact Instance of 'AndroidInternalBuildArtifacts' is not required, skipping update.
+[        ] Artifact Instance of 'IOSEngineArtifacts' is not required, skipping update.
+[        ] Artifact Instance of 'FlutterWebSdk' is not required, skipping update.
+[        ] Artifact Instance of 'FlutterEngineStamp' is not required, skipping update.
+[        ] Artifact Instance of 'LegacyCanvasKitRemover' is not required, skipping update.
+[   +9 ms] Artifact Instance of 'WindowsEngineArtifacts' is not required, skipping update.
+[        ] Artifact Instance of 'MacOSEngineArtifacts' is not required, skipping update.
+[        ] Artifact Instance of 'LinuxEngineArtifacts' is not required, skipping update.
+[        ] Artifact Instance of 'LinuxFuchsiaSDKArtifacts' is not required, skipping update.
+[        ] Artifact Instance of 'MacOSFuchsiaSDKArtifacts' is not required, skipping update.
+[        ] Artifact Instance of 'FlutterRunnerSDKArtifacts' is not required, skipping update.
+[        ] Artifact Instance of 'FlutterRunnerDebugSymbols' is not required, skipping update.
+[ +234 ms] executing: /Users/weafrica/Library/Android/sdk/platform-tools/adb devices -l
+[   +1 ms] executing: xcrun xcdevice list --timeout 2
+[   +5 ms] executing: xcrun simctl list devices booted
+[+2516 ms] xcrun simctl list devices booted iOS --json
+[   +1 ms] executing: xcrun simctl list devices booted iOS --json
+[ +976 ms] {
+             "devices" : {
+               "com.apple.CoreSimulator.SimRuntime.iOS-16-0" : [
+
+               ],
+               "com.apple.CoreSimulator.SimRuntime.iOS-18-1" : [
+
+               ],
+               "com.apple.CoreSimulator.SimRuntime.iOS-15-0" : [
+
+               ]
+             }
+           }
+[ +236 ms] List of devices attached
+           RF8Y80QKZFK            device usb:20-1 product:a16nsxx model:SM_A165F device:a16 transport_id:2
+[+14969 ms] [
+              {
+                "simulator" : true,
+                "operatingSystemVersion" : "18.1 (22B81)",
+                "available" : true,
+                "platform" : "com.apple.platform.iphonesimulator",
+                "modelCode" : "iPad16,4",
+                "identifier" : "E520A279-E02F-4789-8ABC-1B071F0CCEC0",
+                "architecture" : "x86_64",
+                "modelUTI" : "com.apple.ipad-pro-m4-1",
+                "modelName" : "iPad Pro 11-inch (M4)",
+                "name" : "iPad Pro 11-inch (M4)",
+                "ignored" : false
+              },
+              {
+                "simulator" : true,
+                "operatingSystemVersion" : "15.0 (19A339)",
+                "available" : true,
+                "platform" : "com.apple.platform.iphonesimulator",
+                "modelCode" : "iPad6,4",
+                "identifier" : "B5C0E3D2-82CB-4100-84C8-10E08CEFBCB0",
+                "architecture" : "x86_64",
+                "modelUTI" : "com.apple.ipad-pro-9point7-a1674-b9b7ba",
+                "modelName" : "iPad Pro (9.7-inch)",
+                "name" : "iPad Pro (9.7-inch)",
+                "ignored" : false
+              },
+              {
+                "simulator" : true,
+                "operatingSystemVersion" : "16.0 (20A360)",
+                "available" : true,
+                "platform" : "com.apple.platform.iphonesimulator",
+                "modelCode" : "iPhone15,3",
+                "identifier" : "EC23232D-A822-40B5-9E9D-428043E7CF88",
+                "architecture" : "x86_64",
+                "modelUTI" : "com.apple.iphone-14-pro-max-1",
+                "modelName" : "iPhone 14 Pro Max",
+                "name" : "iPhone 14 Pro Max",
+                "ignored" : false
+              },
+              {
+                "simulator" : true,
+                "operatingSystemVersion" : "18.1 (22B81)",
+                "available" : true,
+                "platform" : "com.apple.platform.iphonesimulator",
+                "modelCode" : "iPad13,18",
+                "identifier" : "6D23B450-B42D-49CF-BB8E-B7ED3268573F",
+                "architecture" : "x86_64",
+                "modelUTI" : "com.apple.ipad-10-1",
+                "modelName" : "iPad (10th generation)",
+                "name" : "iPad (10th generation)",
+                "ignored" : false
+              },
+              {
+                "simulator" : true,
+                "operatingSystemVersion" : "18.1 (22B81)",
+                "available" : true,
+                "platform" : "com.apple.platform.iphonesimulator",
+                "modelCode" : "iPad16,6",
+                "identifier" : "B60379A9-FE58-4153-9743-370430DB7F1E",
+                "architecture" : "x86_64",
+                "modelUTI" : "com.apple.ipad-pro-m4-13-1",
+                "modelName" : "iPad Pro 13-inch (M4)",
+                "name" : "iPad Pro 13-inch (M4)",
+                "ignored" : false
+              },
+              {
+                "simulator" : true,
+                "operatingSystemVersion" : "18.1 (22B81)",
+                "available" : true,
+                "platform" : "com.apple.platform.iphonesimulator",
+                "modelCode" : "iPhone17,3",
+                "identifier" : "679CC396-F4D2-4CC5-830B-1E7114F9C266",
+                "architecture" : "x86_64",
+                "modelUTI" : "com.apple.iphone-16-1",
+                "modelName" : "iPhone 16",
+                "name" : "iPhone 16",
+                "ignored" : false
+              },
+              {
+                "simulator" : true,
+                "operatingSystemVersion" : "18.1 (22B81)",
+                "available" : true,
+                "platform" : "com.apple.platform.iphonesimulator",
+                "modelCode" : "iPad14,11",
+                "identifier" : "9C633882-1170-4F78-B168-127A7A42AC66",
+                "architecture" : "x86_64",
+                "modelUTI" : "com.apple.ipad-air-m2-13-1",
+                "modelName" : "iPad Air 13-inch (M2)",
+                "name" : "iPad Air 13-inch (M2)",
+                "ignored" : false
+              },
+              {
+                "simulator" : true,
+                "operatingSystemVersion" : "15.0 (19A339)",
+                "available" : true,
+                "platform" : "com.apple.platform.iphonesimulator",
+                "modelCode" : "iPad13,10",
+                "identifier" : "880A77BD-4646-4169-A7C1-FBA79B0AE4C2",
+                "architecture" : "x86_64",
+                "modelUTI" : "com.apple.ipad-pro-12point9-5th-1",
+                "modelName" : "iPad Pro (12.9-inch) (5th generation)",
+                "name" : "iPad Pro (12.9-inch) (5th generation)",
+                "ignored" : false
+              },
+              {
+                "ignored" : false,
+                "modelCode" : "MacBookAir6,2",
+                "simulator" : false,
+                "modelName" : "MacBook Air",
+                "operatingSystemVersion" : "14.8.2 (23J126)",
+                "identifier" : "D362DCB8-180A-55C5-A762-8AAEBFC435BA",
+                "platform" : "com.apple.platform.macosx",
+                "architecture" : "x86_64h",
+                "interface" : "usb",
+                "available" : true,
+                "name" : "My Mac",
+                "modelUTI" : "com.apple.macbookair-13-unibody"
+              },
+              {
+                "simulator" : true,
+                "operatingSystemVersion" : "15.0 (19A339)",
+                "available" : true,
+                "platform" : "com.apple.platform.iphonesimulator",
+                "modelCode" : "iPhone14,3",
+                "identifier" : "7878EF91-D1F3-4E82-906D-248091ACC11A",
+                "architecture" : "x86_64",
+                "modelUTI" : "com.apple.iphone-13-pro-max-1",
+                "modelName" : "iPhone 13 Pro Max",
+                "name" : "iPhone 13 Pro Max",
+                "ignored" : false
+              },
+              {
+                "simulator" : true,
+                "operatingSystemVersion" : "15.0 (19A339)",
+                "available" : true,
+                "platform" : "com.apple.platform.iphonesimulator",
+                "modelCode" : "iPad14,1",
+                "identifier" : "7A2A3FA1-09A8-4440-8A6A-071467E03E60",
+                "architecture" : "x86_64",
+                "modelUTI" : "com.apple.ipad-mini6-1",
+                "modelName" : "iPad mini (6th generation)",
+                "name" : "iPad mini (6th generation)",
+                "ignored" : false
+              },
+              {
+                "simulator" : true,
+                "operatingSystemVersion" : "16.0 (20A360)",
+                "available" : true,
+                "platform" : "com.apple.platform.iphonesimulator",
+                "modelCode" : "iPad13,17",
+                "identifier" : "F30CDD1E-A0B9-4911-9679-B3107B579583",
+                "architecture" : "x86_64",
+                "modelUTI" : "com.apple.ipad-air5-1",
+                "modelName" : "iPad Air (5th generation)",
+                "name" : "iPad Air (5th generation)",
+                "ignored" : false
+              },
+              {
+                "simulator" : true,
+                "operatingSystemVersion" : "15.0 (19A339)",
+                "available" : true,
+                "platform" : "com.apple.platform.iphonesimulator",
+                "modelCode" : "iPhone12,8",
+                "identifier" : "B6EC5CB1-0EAD-4888-AEB6-FF10A87E4C0D",
+                "architecture" : "x86_64",
+                "modelUTI" : "com.apple.iphone-se-1",
+                "modelName" : "iPhone SE (2nd generation)",
+                "name" : "iPhone SE (2nd generation)",
+                "ignored" : false
+              },
+              {
+                "simulator" : true,
+                "operatingSystemVersion" : "15.0 (19A339)",
+                "available" : true,
+                "platform" : "com.apple.platform.iphonesimulator",
+                "modelCode" : "iPod9,1",
+                "identifier" : "4A734F55-7605-413E-A8E8-54A56D3934F7",
+                "architecture" : "x86_64",
+                "modelUTI" : "com.apple.ipod-touch-7-2",
+                "modelName" : "iPod touch (7th generation)",
+                "name" : "iPod touch (7th generation)",
+                "ignored" : false
+              },
+              {
+                "simulator" : true,
+                "operatingSystemVersion" : "16.0 (20A360)",
+                "available" : true,
+                "platform" : "com.apple.platform.iphonesimulator",
+                "modelCode" : "iPhone14,6",
+                "identifier" : "5D335ADC-6946-413A-812A-BF74B401D98F",
+                "architecture" : "x86_64",
+                "modelUTI" : "com.apple.iphone-se3-1",
+                "modelName" : "iPhone SE (3rd generation)",
+                "name" : "iPhone SE (3rd generation)",
+                "ignored" : false
+              },
+              {
+                "simulator" : true,
+                "operatingSystemVersion" : "18.1 (22B81)",
+                "available" : true,
+                "platform" : "com.apple.platform.iphonesimulator",
+                "modelCode" : "iPhone17,4",
+                "identifier" : "99266EB4-668F-474E-9297-465512F8BEC4",
+                "architecture" : "x86_64",
+                "modelUTI" : "com.apple.iphone-16-plus-1",
+                "modelName" : "iPhone 16 Plus",
+                "name" : "iPhone 16 Plus",
+                "ignored" : false
+              },
+              {
+                "simulator" : true,
+                "operatingSystemVersion" : "18.1 (22B81)",
+                "available" : true,
+                "platform" : "com.apple.platform.iphonesimulator",
+                "modelCode" : "iPad14,9",
+                "identifier" : "48FED740-3E67-4F9C-A9B7-3F4C70AE7D20",
+                "architecture" : "x86_64",
+                "modelUTI" : "com.apple.ipad-air-m2-1",
+                "modelName" : "iPad Air 11-inch (M2)",
+                "name" : "iPad Air 11-inch (M2)",
+                "ignored" : false
+              },
+              {
+                "simulator" : true,
+                "operatingSystemVersion" : "15.0 (19A339)",
+                "available" : true,
+                "platform" : "com.apple.platform.iphonesimulator",
+                "modelCode" : "iPhone14,4",
+                "identifier" : "829F20AC-1AC8-447C-88C4-BF19117404B2",
+                "architecture" : "x86_64",
+                "modelUTI" : "com.apple.iphone-13-mini-1",
+                "modelName" : "iPhone 13 mini",
+                "name" : "iPhone 13 mini",
+                "ignored" : false
+              },
+              {
+                "simulator" : true,
+                "operatingSystemVersion" : "15.0 (19A339)",
+                "available" : true,
+                "platform" : "com.apple.platform.iphonesimulator",
+                "modelCode" : "iPad13,5",
+                "identifier" : "E21F7433-D6C8-404D-A315-4756EE9F821E",
+                "architecture" : "x86_64",
+                "modelUTI" : "com.apple.ipad-pro-11-3rd-1",
+                "modelName" : "iPad Pro (11-inch) (3rd generation)",
+                "name" : "iPad Pro (11-inch) (3rd generation)",
+                "ignored" : false
+              },
+              {
+                "simulator" : true,
+                "operatingSystemVersion" : "16.0 (20A360)",
+                "available" : true,
+                "platform" : "com.apple.platform.iphonesimulator",
+                "modelCode" : "iPad13,5",
+                "identifier" : "4A5B5506-DC5A-43A3-AA63-3FFD7FC85103",
+                "architecture" : "x86_64",
+                "modelUTI" : "com.apple.ipad-pro-11-3rd-1",
+                "modelName" : "iPad Pro (11-inch) (3rd generation)",
+                "name" : "iPad Pro (11-inch) (3rd generation)",
+                "ignored" : false
+              },
+              {
+                "simulator" : true,
+                "operatingSystemVersion" : "15.0 (19A339)",
+                "available" : true,
+                "platform" : "com.apple.platform.iphonesimulator",
+                "modelCode" : "iPad12,2",
+                "identifier" : "DAA78706-5F09-4AA6-9B52-BEE1779E0DE8",
+                "architecture" : "x86_64",
+                "modelUTI" : "com.apple.ipad-9-wwan-1",
+                "modelName" : "iPad (9th generation)",
+                "name" : "iPad (9th generation)",
+                "ignored" : false
+              },
+              {
+                "simulator" : true,
+                "operatingSystemVersion" : "18.1 (22B81)",
+                "available" : true,
+                "platform" : "com.apple.platform.iphonesimulator",
+                "modelCode" : "iPhone17,1",
+                "identifier" : "515A4DA9-51C1-4C99-9543-070568901306",
+                "architecture" : "x86_64",
+                "modelUTI" : "com.apple.iphone-16-pro-1",
+                "modelName" : "iPhone 16 Pro",
+                "name" : "iPhone 16 Pro",
+                "ignored" : false
+              },
+              {
+                "simulator" : true,
+                "operatingSystemVersion" : "16.0 (20A360)",
+                "available" : true,
+                "platform" : "com.apple.platform.iphonesimulator",
+                "modelCode" : "iPhone14,8",
+                "identifier" : "07E765E1-FD77-4B3A-BA8F-758B34BA7285",
+                "architecture" : "x86_64",
+                "modelUTI" : "com.apple.iphone-14-plus-1",
+                "modelName" : "iPhone 14 Plus",
+                "name" : "iPhone 14 Plus",
+                "ignored" : false
+              },
+              {
+                "simulator" : true,
+                "operatingSystemVersion" : "16.0 (20A360)",
+                "available" : true,
+                "platform" : "com.apple.platform.iphonesimulator",
+                "modelCode" : "iPad12,2",
+                "identifier" : "15669992-DD7F-4172-88A3-0C768456CF27",
+                "architecture" : "x86_64",
+                "modelUTI" : "com.apple.ipad-9-wwan-1",
+                "modelName" : "iPad (9th generation)",
+                "name" : "iPad (9th generation)",
+                "ignored" : false
+              },
+              {
+                "simulator" : true,
+                "operatingSystemVersion" : "15.0 (19A339)",
+                "available" : true,
+                "platform" : "com.apple.platform.iphonesimulator",
+                "modelCode" : "iPhone14,2",
+                "identifier" : "171B982F-4442-4B5B-9710-5BEF226A3BE0",
+                "architecture" : "x86_64",
+                "modelUTI" : "com.apple.iphone-13-pro-1",
+                "modelName" : "iPhone 13 Pro",
+                "name" : "iPhone 13 Pro",
+                "ignored" : false
+              },
+              {
+                "simulator" : true,
+                "operatingSystemVersion" : "18.1 (22B81)",
+                "available" : true,
+                "platform" : "com.apple.platform.iphonesimulator",
+                "modelCode" : "iPad16,2",
+                "identifier" : "ED1EBE96-6DE7-42EC-B09D-0D18424E8BF1",
+                "architecture" : "x86_64",
+                "modelUTI" : "com.apple.ipad-mini-a17-1",
+                "modelName" : "iPad mini (A17 Pro)",
+                "name" : "iPad mini (A17 Pro)",
+                "ignored" : false
+              },
+              {
+                "simulator" : true,
+                "operatingSystemVersion" : "16.0 (20A360)",
+                "available" : true,
+                "platform" : "com.apple.platform.iphonesimulator",
+                "modelCode" : "iPhone14,7",
+                "identifier" : "13A148E0-94D3-4F57-BE95-69ABD6B9E644",
+                "architecture" : "x86_64",
+                "modelUTI" : "com.apple.iphone-14-1",
+                "modelName" : "iPhone 14",
+                "name" : "iPhone 14",
+                "ignored" : false
+              },
+              {
+                "simulator" : true,
+                "operatingSystemVersion" : "15.0 (19A339)",
+                "available" : true,
+                "platform" : "com.apple.platform.iphonesimulator",
+                "modelCode" : "iPad13,2",
+                "identifier" : "843152D8-E362-4816-82C1-A63DE0D60D1E",
+                "architecture" : "x86_64",
+                "modelUTI" : "com.apple.ipad-air4-1",
+                "modelName" : "iPad Air (4th generation)",
+                "name" : "iPad Air (4th generation)",
+                "ignored" : false
+              },
+              {
+                "simulator" : true,
+                "operatingSystemVersion" : "15.0 (19A339)",
+                "available" : true,
+                "platform" : "com.apple.platform.iphonesimulator",
+                "modelCode" : "iPhone14,5",
+                "identifier" : "FC2689FC-9BE4-40C0-B4D2-F23A4FFAE20F",
+                "architecture" : "x86_64",
+                "modelUTI" : "com.apple.iphone-13-1",
+                "modelName" : "iPhone 13",
+                "name" : "iPhone 13",
+                "ignored" : false
+              },
+              {
+                "simulator" : true,
+                "operatingSystemVersion" : "18.1 (22B81)",
+                "available" : true,
+                "platform" : "com.apple.platform.iphonesimulator",
+                "modelCode" : "iPhone17,2",
+                "identifier" : "5A00BDD2-8D00-46A6-986D-23DC3340017E",
+                "architecture" : "x86_64",
+                "modelUTI" : "com.apple.iphone-16-pro-max-1",
+                "modelName" : "iPhone 16 Pro Max",
+                "name" : "iPhone 16 Pro Max",
+                "ignored" : false
+              },
+              {
+                "simulator" : true,
+                "operatingSystemVersion" : "16.0 (20A360)",
+                "available" : true,
+                "platform" : "com.apple.platform.iphonesimulator",
+                "modelCode" : "iPad13,10",
+                "identifier" : "E564F399-36EC-4699-9860-27DA8B07C924",
+                "architecture" : "x86_64",
+                "modelUTI" : "com.apple.ipad-pro-12point9-5th-1",
+                "modelName" : "iPad Pro (12.9-inch) (5th generation)",
+                "name" : "iPad Pro (12.9-inch) (5th generation)",
+                "ignored" : false
+              },
+              {
+                "simulator" : true,
+                "operatingSystemVersion" : "16.0 (20A360)",
+                "available" : true,
+                "platform" : "com.apple.platform.iphonesimulator",
+                "modelCode" : "iPhone15,2",
+                "identifier" : "9538E858-3CE4-4BA5-871C-34B01C9E7D0C",
+                "architecture" : "x86_64",
+                "modelUTI" : "com.apple.iphone-14-pro-1",
+                "modelName" : "iPhone 14 Pro",
+                "name" : "iPhone 14 Pro",
+                "ignored" : false
+              },
+              {
+                "simulator" : true,
+                "operatingSystemVersion" : "16.0 (20A360)",
+                "available" : true,
+                "platform" : "com.apple.platform.iphonesimulator",
+                "modelCode" : "iPad14,1",
+                "identifier" : "875C55CA-63A9-4287-99BD-2C4BE63A8909",
+                "architecture" : "x86_64",
+                "modelUTI" : "com.apple.ipad-mini6-1",
+                "modelName" : "iPad mini (6th generation)",
+                "name" : "iPad mini (6th generation)",
+                "ignored" : false
+              },
+              {
+                "simulator" : true,
+                "operatingSystemVersion" : "18.1 (22B81)",
+                "available" : true,
+                "platform" : "com.apple.platform.iphonesimulator",
+                "modelCode" : "iPhone14,6",
+                "identifier" : "C343A091-782D-4881-B7F2-BDD0991DFD8D",
+                "architecture" : "x86_64",
+                "modelUTI" : "com.apple.iphone-se3-1",
+                "modelName" : "iPhone SE (3rd generation)",
+                "name" : "iPhone SE (3rd generation)",
+                "ignored" : false
+              }
+            ]
+[  +22 ms] executing: xcrun devicectl --version
+[+2443 ms] executing: xcrun devicectl list devices --timeout 5 --json-output /var/folders/1p/_gtws4dx0sv1l223h85jmcl00000gn/T/flutter_tools.PlwBoi/core_devices.HvRaOE/core_device_list.json
+[ +628 ms] {
+             "info" : {
+               "arguments" : [
+                 "devicectl",
+                 "list",
+                 "devices",
+                 "--timeout",
+                 "5",
+                 "--json-output",
+                 "/var/folders/1p/_gtws4dx0sv1l223h85jmcl00000gn/T/flutter_tools.PlwBoi/core_devices.HvRaOE/core_device_list.json"
+               ],
+               "commandType" : "devicectl.list.devices",
+               "environment" : {
+                 "TERM" : "xterm-256color"
+               },
+               "jsonVersion" : 2,
+               "outcome" : "success",
+               "version" : "397.24"
+             },
+             "result" : {
+               "devices" : [
+
+               ]
+             }
+           }
+
+[  +31 ms] /Users/weafrica/Library/Android/sdk/platform-tools/adb -s RF8Y80QKZFK shell getprop
+[ +205 ms] Artifact Instance of 'AndroidInternalBuildArtifacts' is not required, skipping update.
+[   +4 ms] Artifact Instance of 'IOSEngineArtifacts' is not required, skipping update.
+[   +9 ms] Artifact Instance of 'FlutterEngineStamp' is not required, skipping update.
+[  +11 ms] Artifact Instance of 'WindowsEngineArtifacts' is not required, skipping update.
+[   +5 ms] Artifact Instance of 'LinuxEngineArtifacts' is not required, skipping update.
+[        ] Artifact Instance of 'LinuxFuchsiaSDKArtifacts' is not required, skipping update.
+[        ] Artifact Instance of 'MacOSFuchsiaSDKArtifacts' is not required, skipping update.
+[        ] Artifact Instance of 'FlutterRunnerSDKArtifacts' is not required, skipping update.
+[        ] Artifact Instance of 'FlutterRunnerDebugSymbols' is not required, skipping update.
+[+1456 ms] Skipping pub get: version match.
+[ +281 ms] [
+             {
+               "simulator" : true,
+               "operatingSystemVersion" : "18.1 (22B81)",
+               "available" : true,
+               "platform" : "com.apple.platform.iphonesimulator",
+               "modelCode" : "iPad16,4",
+               "identifier" : "E520A279-E02F-4789-8ABC-1B071F0CCEC0",
+               "architecture" : "x86_64",
+               "modelUTI" : "com.apple.ipad-pro-m4-1",
+               "modelName" : "iPad Pro 11-inch (M4)",
+               "name" : "iPad Pro 11-inch (M4)",
+               "ignored" : false
+             },
+             {
+               "simulator" : true,
+               "operatingSystemVersion" : "15.0 (19A339)",
+               "available" : true,
+               "platform" : "com.apple.platform.iphonesimulator",
+               "modelCode" : "iPad6,4",
+               "identifier" : "B5C0E3D2-82CB-4100-84C8-10E08CEFBCB0",
+               "architecture" : "x86_64",
+               "modelUTI" : "com.apple.ipad-pro-9point7-a1674-b9b7ba",
+               "modelName" : "iPad Pro (9.7-inch)",
+               "name" : "iPad Pro (9.7-inch)",
+               "ignored" : false
+             },
+             {
+               "simulator" : true,
+               "operatingSystemVersion" : "16.0 (20A360)",
+               "available" : true,
+               "platform" : "com.apple.platform.iphonesimulator",
+               "modelCode" : "iPhone15,3",
+               "identifier" : "EC23232D-A822-40B5-9E9D-428043E7CF88",
+               "architecture" : "x86_64",
+               "modelUTI" : "com.apple.iphone-14-pro-max-1",
+               "modelName" : "iPhone 14 Pro Max",
+               "name" : "iPhone 14 Pro Max",
+               "ignored" : false
+             },
+             {
+               "simulator" : true,
+               "operatingSystemVersion" : "18.1 (22B81)",
+               "available" : true,
+               "platform" : "com.apple.platform.iphonesimulator",
+               "modelCode" : "iPad13,18",
+               "identifier" : "6D23B450-B42D-49CF-BB8E-B7ED3268573F",
+               "architecture" : "x86_64",
+               "modelUTI" : "com.apple.ipad-10-1",
+               "modelName" : "iPad (10th generation)",
+               "name" : "iPad (10th generation)",
+               "ignored" : false
+             },
+             {
+               "simulator" : true,
+               "operatingSystemVersion" : "18.1 (22B81)",
+               "available" : true,
+               "platform" : "com.apple.platform.iphonesimulator",
+               "modelCode" : "iPad16,6",
+               "identifier" : "B60379A9-FE58-4153-9743-370430DB7F1E",
+               "architecture" : "x86_64",
+               "modelUTI" : "com.apple.ipad-pro-m4-13-1",
+               "modelName" : "iPad Pro 13-inch (M4)",
+               "name" : "iPad Pro 13-inch (M4)",
+               "ignored" : false
+             },
+             {
+               "simulator" : true,
+               "operatingSystemVersion" : "18.1 (22B81)",
+               "available" : true,
+               "platform" : "com.apple.platform.iphonesimulator",
+               "modelCode" : "iPhone17,3",
+               "identifier" : "679CC396-F4D2-4CC5-830B-1E7114F9C266",
+               "architecture" : "x86_64",
+               "modelUTI" : "com.apple.iphone-16-1",
+               "modelName" : "iPhone 16",
+               "name" : "iPhone 16",
+               "ignored" : false
+             },
+             {
+               "simulator" : true,
+               "operatingSystemVersion" : "18.1 (22B81)",
+               "available" : true,
+               "platform" : "com.apple.platform.iphonesimulator",
+               "modelCode" : "iPad14,11",
+               "identifier" : "9C633882-1170-4F78-B168-127A7A42AC66",
+               "architecture" : "x86_64",
+               "modelUTI" : "com.apple.ipad-air-m2-13-1",
+               "modelName" : "iPad Air 13-inch (M2)",
+               "name" : "iPad Air 13-inch (M2)",
+               "ignored" : false
+             },
+             {
+               "simulator" : true,
+               "operatingSystemVersion" : "15.0 (19A339)",
+               "available" : true,
+               "platform" : "com.apple.platform.iphonesimulator",
+               "modelCode" : "iPad13,10",
+               "identifier" : "880A77BD-4646-4169-A7C1-FBA79B0AE4C2",
+               "architecture" : "x86_64",
+               "modelUTI" : "com.apple.ipad-pro-12point9-5th-1",
+               "modelName" : "iPad Pro (12.9-inch) (5th generation)",
+               "name" : "iPad Pro (12.9-inch) (5th generation)",
+               "ignored" : false
+             },
+             {
+               "ignored" : false,
+               "modelCode" : "MacBookAir6,2",
+               "simulator" : false,
+               "modelName" : "MacBook Air",
+               "operatingSystemVersion" : "14.8.2 (23J126)",
+               "identifier" : "D362DCB8-180A-55C5-A762-8AAEBFC435BA",
+               "platform" : "com.apple.platform.macosx",
+               "architecture" : "x86_64h",
+               "interface" : "usb",
+               "available" : true,
+               "name" : "My Mac",
+               "modelUTI" : "com.apple.macbookair-13-unibody"
+             },
+             {
+               "simulator" : true,
+               "operatingSystemVersion" : "15.0 (19A339)",
+               "available" : true,
+               "platform" : "com.apple.platform.iphonesimulator",
+               "modelCode" : "iPhone14,3",
+               "identifier" : "7878EF91-D1F3-4E82-906D-248091ACC11A",
+               "architecture" : "x86_64",
+               "modelUTI" : "com.apple.iphone-13-pro-max-1",
+               "modelName" : "iPhone 13 Pro Max",
+               "name" : "iPhone 13 Pro Max",
+               "ignored" : false
+             },
+             {
+               "simulator" : true,
+               "operatingSystemVersion" : "15.0 (19A339)",
+               "available" : true,
+               "platform" : "com.apple.platform.iphonesimulator",
+               "modelCode" : "iPad14,1",
+               "identifier" : "7A2A3FA1-09A8-4440-8A6A-071467E03E60",
+               "architecture" : "x86_64",
+               "modelUTI" : "com.apple.ipad-mini6-1",
+               "modelName" : "iPad mini (6th generation)",
+               "name" : "iPad mini (6th generation)",
+               "ignored" : false
+             },
+             {
+               "simulator" : true,
+               "operatingSystemVersion" : "16.0 (20A360)",
+               "available" : true,
+               "platform" : "com.apple.platform.iphonesimulator",
+               "modelCode" : "iPad13,17",
+               "identifier" : "F30CDD1E-A0B9-4911-9679-B3107B579583",
+               "architecture" : "x86_64",
+               "modelUTI" : "com.apple.ipad-air5-1",
+               "modelName" : "iPad Air (5th generation)",
+               "name" : "iPad Air (5th generation)",
+               "ignored" : false
+             },
+             {
+               "simulator" : true,
+               "operatingSystemVersion" : "15.0 (19A339)",
+               "available" : true,
+               "platform" : "com.apple.platform.iphonesimulator",
+               "modelCode" : "iPhone12,8",
+               "identifier" : "B6EC5CB1-0EAD-4888-AEB6-FF10A87E4C0D",
+               "architecture" : "x86_64",
+               "modelUTI" : "com.apple.iphone-se-1",
+               "modelName" : "iPhone SE (2nd generation)",
+               "name" : "iPhone SE (2nd generation)",
+               "ignored" : false
+             },
+             {
+               "simulator" : true,
+               "operatingSystemVersion" : "15.0 (19A339)",
+               "available" : true,
+               "platform" : "com.apple.platform.iphonesimulator",
+               "modelCode" : "iPod9,1",
+               "identifier" : "4A734F55-7605-413E-A8E8-54A56D3934F7",
+               "architecture" : "x86_64",
+               "modelUTI" : "com.apple.ipod-touch-7-2",
+               "modelName" : "iPod touch (7th generation)",
+               "name" : "iPod touch (7th generation)",
+               "ignored" : false
+             },
+             {
+               "simulator" : true,
+               "operatingSystemVersion" : "16.0 (20A360)",
+               "available" : true,
+               "platform" : "com.apple.platform.iphonesimulator",
+               "modelCode" : "iPhone14,6",
+               "identifier" : "5D335ADC-6946-413A-812A-BF74B401D98F",
+               "architecture" : "x86_64",
+               "modelUTI" : "com.apple.iphone-se3-1",
+               "modelName" : "iPhone SE (3rd generation)",
+               "name" : "iPhone SE (3rd generation)",
+               "ignored" : false
+             },
+             {
+               "simulator" : true,
+               "operatingSystemVersion" : "18.1 (22B81)",
+               "available" : true,
+               "platform" : "com.apple.platform.iphonesimulator",
+               "modelCode" : "iPhone17,4",
+               "identifier" : "99266EB4-668F-474E-9297-465512F8BEC4",
+               "architecture" : "x86_64",
+               "modelUTI" : "com.apple.iphone-16-plus-1",
+               "modelName" : "iPhone 16 Plus",
+               "name" : "iPhone 16 Plus",
+               "ignored" : false
+             },
+             {
+               "simulator" : true,
+               "operatingSystemVersion" : "18.1 (22B81)",
+               "available" : true,
+               "platform" : "com.apple.platform.iphonesimulator",
+               "modelCode" : "iPad14,9",
+               "identifier" : "48FED740-3E67-4F9C-A9B7-3F4C70AE7D20",
+               "architecture" : "x86_64",
+               "modelUTI" : "com.apple.ipad-air-m2-1",
+               "modelName" : "iPad Air 11-inch (M2)",
+               "name" : "iPad Air 11-inch (M2)",
+               "ignored" : false
+             },
+             {
+               "simulator" : true,
+               "operatingSystemVersion" : "15.0 (19A339)",
+               "available" : true,
+               "platform" : "com.apple.platform.iphonesimulator",
+               "modelCode" : "iPhone14,4",
+               "identifier" : "829F20AC-1AC8-447C-88C4-BF19117404B2",
+               "architecture" : "x86_64",
+               "modelUTI" : "com.apple.iphone-13-mini-1",
+               "modelName" : "iPhone 13 mini",
+               "name" : "iPhone 13 mini",
+               "ignored" : false
+             },
+             {
+               "simulator" : true,
+               "operatingSystemVersion" : "15.0 (19A339)",
+               "available" : true,
+               "platform" : "com.apple.platform.iphonesimulator",
+               "modelCode" : "iPad13,5",
+               "identifier" : "E21F7433-D6C8-404D-A315-4756EE9F821E",
+               "architecture" : "x86_64",
+               "modelUTI" : "com.apple.ipad-pro-11-3rd-1",
+               "modelName" : "iPad Pro (11-inch) (3rd generation)",
+               "name" : "iPad Pro (11-inch) (3rd generation)",
+               "ignored" : false
+             },
+             {
+               "simulator" : true,
+               "operatingSystemVersion" : "16.0 (20A360)",
+               "available" : true,
+               "platform" : "com.apple.platform.iphonesimulator",
+               "modelCode" : "iPad13,5",
+               "identifier" : "4A5B5506-DC5A-43A3-AA63-3FFD7FC85103",
+               "architecture" : "x86_64",
+               "modelUTI" : "com.apple.ipad-pro-11-3rd-1",
+               "modelName" : "iPad Pro (11-inch) (3rd generation)",
+               "name" : "iPad Pro (11-inch) (3rd generation)",
+               "ignored" : false
+             },
+             {
+               "simulator" : true,
+               "operatingSystemVersion" : "15.0 (19A339)",
+               "available" : true,
+               "platform" : "com.apple.platform.iphonesimulator",
+               "modelCode" : "iPad12,2",
+               "identifier" : "DAA78706-5F09-4AA6-9B52-BEE1779E0DE8",
+               "architecture" : "x86_64",
+               "modelUTI" : "com.apple.ipad-9-wwan-1",
+               "modelName" : "iPad (9th generation)",
+               "name" : "iPad (9th generation)",
+               "ignored" : false
+             },
+             {
+               "simulator" : true,
+               "operatingSystemVersion" : "18.1 (22B81)",
+               "available" : true,
+               "platform" : "com.apple.platform.iphonesimulator",
+               "modelCode" : "iPhone17,1",
+               "identifier" : "515A4DA9-51C1-4C99-9543-070568901306",
+               "architecture" : "x86_64",
+               "modelUTI" : "com.apple.iphone-16-pro-1",
+               "modelName" : "iPhone 16 Pro",
+               "name" : "iPhone 16 Pro",
+               "ignored" : false
+             },
+             {
+               "simulator" : true,
+               "operatingSystemVersion" : "16.0 (20A360)",
+               "available" : true,
+               "platform" : "com.apple.platform.iphonesimulator",
+               "modelCode" : "iPhone14,8",
+               "identifier" : "07E765E1-FD77-4B3A-BA8F-758B34BA7285",
+               "architecture" : "x86_64",
+               "modelUTI" : "com.apple.iphone-14-plus-1",
+               "modelName" : "iPhone 14 Plus",
+               "name" : "iPhone 14 Plus",
+               "ignored" : false
+             },
+             {
+               "simulator" : true,
+               "operatingSystemVersion" : "16.0 (20A360)",
+               "available" : true,
+               "platform" : "com.apple.platform.iphonesimulator",
+               "modelCode" : "iPad12,2",
+               "identifier" : "15669992-DD7F-4172-88A3-0C768456CF27",
+               "architecture" : "x86_64",
+               "modelUTI" : "com.apple.ipad-9-wwan-1",
+               "modelName" : "iPad (9th generation)",
+               "name" : "iPad (9th generation)",
+               "ignored" : false
+             },
+             {
+               "simulator" : true,
+               "operatingSystemVersion" : "15.0 (19A339)",
+               "available" : true,
+               "platform" : "com.apple.platform.iphonesimulator",
+               "modelCode" : "iPhone14,2",
+               "identifier" : "171B982F-4442-4B5B-9710-5BEF226A3BE0",
+               "architecture" : "x86_64",
+               "modelUTI" : "com.apple.iphone-13-pro-1",
+               "modelName" : "iPhone 13 Pro",
+               "name" : "iPhone 13 Pro",
+               "ignored" : false
+             },
+             {
+               "simulator" : true,
+               "operatingSystemVersion" : "18.1 (22B81)",
+               "available" : true,
+               "platform" : "com.apple.platform.iphonesimulator",
+               "modelCode" : "iPad16,2",
+               "identifier" : "ED1EBE96-6DE7-42EC-B09D-0D18424E8BF1",
+               "architecture" : "x86_64",
+               "modelUTI" : "com.apple.ipad-mini-a17-1",
+               "modelName" : "iPad mini (A17 Pro)",
+               "name" : "iPad mini (A17 Pro)",
+               "ignored" : false
+             },
+             {
+               "simulator" : true,
+               "operatingSystemVersion" : "16.0 (20A360)",
+               "available" : true,
+               "platform" : "com.apple.platform.iphonesimulator",
+               "modelCode" : "iPhone14,7",
+               "identifier" : "13A148E0-94D3-4F57-BE95-69ABD6B9E644",
+               "architecture" : "x86_64",
+               "modelUTI" : "com.apple.iphone-14-1",
+               "modelName" : "iPhone 14",
+               "name" : "iPhone 14",
+               "ignored" : false
+             },
+             {
+               "simulator" : true,
+               "operatingSystemVersion" : "15.0 (19A339)",
+               "available" : true,
+               "platform" : "com.apple.platform.iphonesimulator",
+               "modelCode" : "iPad13,2",
+               "identifier" : "843152D8-E362-4816-82C1-A63DE0D60D1E",
+               "architecture" : "x86_64",
+               "modelUTI" : "com.apple.ipad-air4-1",
+               "modelName" : "iPad Air (4th generation)",
+               "name" : "iPad Air (4th generation)",
+               "ignored" : false
+             },
+             {
+               "simulator" : true,
+               "operatingSystemVersion" : "15.0 (19A339)",
+               "available" : true,
+               "platform" : "com.apple.platform.iphonesimulator",
+               "modelCode" : "iPhone14,5",
+               "identifier" : "FC2689FC-9BE4-40C0-B4D2-F23A4FFAE20F",
+               "architecture" : "x86_64",
+               "modelUTI" : "com.apple.iphone-13-1",
+               "modelName" : "iPhone 13",
+               "name" : "iPhone 13",
+               "ignored" : false
+             },
+             {
+               "simulator" : true,
+               "operatingSystemVersion" : "18.1 (22B81)",
+               "available" : true,
+               "platform" : "com.apple.platform.iphonesimulator",
+               "modelCode" : "iPhone17,2",
+               "identifier" : "5A00BDD2-8D00-46A6-986D-23DC3340017E",
+               "architecture" : "x86_64",
+               "modelUTI" : "com.apple.iphone-16-pro-max-1",
+               "modelName" : "iPhone 16 Pro Max",
+               "name" : "iPhone 16 Pro Max",
+               "ignored" : false
+             },
+             {
+               "simulator" : true,
+               "operatingSystemVersion" : "16.0 (20A360)",
+               "available" : true,
+               "platform" : "com.apple.platform.iphonesimulator",
+               "modelCode" : "iPad13,10",
+               "identifier" : "E564F399-36EC-4699-9860-27DA8B07C924",
+               "architecture" : "x86_64",
+               "modelUTI" : "com.apple.ipad-pro-12point9-5th-1",
+               "modelName" : "iPad Pro (12.9-inch) (5th generation)",
+               "name" : "iPad Pro (12.9-inch) (5th generation)",
+               "ignored" : false
+             },
+             {
+               "simulator" : true,
+               "operatingSystemVersion" : "16.0 (20A360)",
+               "available" : true,
+               "platform" : "com.apple.platform.iphonesimulator",
+               "modelCode" : "iPhone15,2",
+               "identifier" : "9538E858-3CE4-4BA5-871C-34B01C9E7D0C",
+               "architecture" : "x86_64",
+               "modelUTI" : "com.apple.iphone-14-pro-1",
+               "modelName" : "iPhone 14 Pro",
+               "name" : "iPhone 14 Pro",
+               "ignored" : false
+             },
+             {
+               "simulator" : true,
+               "operatingSystemVersion" : "16.0 (20A360)",
+               "available" : true,
+               "platform" : "com.apple.platform.iphonesimulator",
+               "modelCode" : "iPad14,1",
+               "identifier" : "875C55CA-63A9-4287-99BD-2C4BE63A8909",
+               "architecture" : "x86_64",
+               "modelUTI" : "com.apple.ipad-mini6-1",
+               "modelName" : "iPad mini (6th generation)",
+               "name" : "iPad mini (6th generation)",
+               "ignored" : false
+             },
+             {
+               "simulator" : true,
+               "operatingSystemVersion" : "18.1 (22B81)",
+               "available" : true,
+               "platform" : "com.apple.platform.iphonesimulator",
+               "modelCode" : "iPhone14,6",
+               "identifier" : "C343A091-782D-4881-B7F2-BDD0991DFD8D",
+               "architecture" : "x86_64",
+               "modelUTI" : "com.apple.iphone-se3-1",
+               "modelName" : "iPhone SE (3rd generation)",
+               "name" : "iPhone SE (3rd generation)",
+               "ignored" : false
+             }
+           ]
+[ +255 ms] Found plugin integration_test at /usr/local/share/flutter/packages/integration_test/
+[ +282 ms] Found plugin webview_flutter at /Users/weafrica/.pub-cache/hosted/pub.dev/webview_flutter-4.13.1/
+[  +14 ms] Found plugin webview_flutter_wkwebview at /Users/weafrica/.pub-cache/hosted/pub.dev/webview_flutter_wkwebview-3.23.8/
+[ +103 ms] Found plugin webview_flutter_android at /Users/weafrica/.pub-cache/hosted/pub.dev/webview_flutter_android-4.10.13/
+[  +14 ms] Found plugin wakelock_plus at /Users/weafrica/.pub-cache/hosted/pub.dev/wakelock_plus-1.3.3/
+[  +52 ms] Found plugin package_info_plus at /Users/weafrica/.pub-cache/hosted/pub.dev/package_info_plus-8.3.1/
+[ +138 ms] Found plugin video_player at /Users/weafrica/.pub-cache/hosted/pub.dev/video_player-2.11.1/
+[   +5 ms] Found plugin video_player_web at /Users/weafrica/.pub-cache/hosted/pub.dev/video_player_web-2.4.0/
+[  +22 ms] Found plugin video_player_avfoundation at /Users/weafrica/.pub-cache/hosted/pub.dev/video_player_avfoundation-2.9.4/
+[  +10 ms] Found plugin video_player_android at /Users/weafrica/.pub-cache/hosted/pub.dev/video_player_android-2.9.4/
+[  +29 ms] Found plugin url_launcher at /Users/weafrica/.pub-cache/hosted/pub.dev/url_launcher-6.3.2/
+[   +5 ms] Found plugin url_launcher_windows at /Users/weafrica/.pub-cache/hosted/pub.dev/url_launcher_windows-3.1.5/
+[   +9 ms] Found plugin url_launcher_web at /Users/weafrica/.pub-cache/hosted/pub.dev/url_launcher_web-2.4.2/
+[   +5 ms] Found plugin url_launcher_macos at /Users/weafrica/.pub-cache/hosted/pub.dev/url_launcher_macos-3.2.5/
+[   +5 ms] Found plugin url_launcher_linux at /Users/weafrica/.pub-cache/hosted/pub.dev/url_launcher_linux-3.2.2/
+[   +8 ms] Found plugin url_launcher_ios at /Users/weafrica/.pub-cache/hosted/pub.dev/url_launcher_ios-6.4.1/
+[   +5 ms] Found plugin url_launcher_android at /Users/weafrica/.pub-cache/hosted/pub.dev/url_launcher_android-6.3.28/
+[ +274 ms] Found plugin shared_preferences at /Users/weafrica/.pub-cache/hosted/pub.dev/shared_preferences-2.5.4/
+[  +15 ms] Found plugin shared_preferences_windows at /Users/weafrica/.pub-cache/hosted/pub.dev/shared_preferences_windows-2.4.1/
+[  +11 ms] Found plugin path_provider_windows at /Users/weafrica/.pub-cache/hosted/pub.dev/path_provider_windows-2.3.0/
+[   +7 ms] Found plugin shared_preferences_web at /Users/weafrica/.pub-cache/hosted/pub.dev/shared_preferences_web-2.4.3/
+[   +5 ms] Found plugin shared_preferences_linux at /Users/weafrica/.pub-cache/hosted/pub.dev/shared_preferences_linux-2.4.1/
+[   +5 ms] Found plugin path_provider_linux at /Users/weafrica/.pub-cache/hosted/pub.dev/path_provider_linux-2.2.1/
+[  +33 ms] Found plugin shared_preferences_foundation at /Users/weafrica/.pub-cache/hosted/pub.dev/shared_preferences_foundation-2.5.6/
+[   +4 ms] Found plugin shared_preferences_android at /Users/weafrica/.pub-cache/hosted/pub.dev/shared_preferences_android-2.4.21/
+[   +4 ms] Found plugin path_provider at /Users/weafrica/.pub-cache/hosted/pub.dev/path_provider-2.1.5/
+[   +9 ms] Found plugin path_provider_foundation at /Users/weafrica/.pub-cache/hosted/pub.dev/path_provider_foundation-2.6.0/
+[  +27 ms] Found plugin path_provider_android at /Users/weafrica/.pub-cache/hosted/pub.dev/path_provider_android-2.2.22/
+[  +19 ms] Found plugin app_links at /Users/weafrica/.pub-cache/hosted/pub.dev/app_links-6.4.1/
+[   +5 ms] Found plugin app_links_web at /Users/weafrica/.pub-cache/hosted/pub.dev/app_links_web-1.0.4/
+[   +7 ms] Found plugin app_links_linux at /Users/weafrica/.pub-cache/hosted/pub.dev/app_links_linux-1.0.3/
+[   +5 ms] Found plugin gtk at /Users/weafrica/.pub-cache/hosted/pub.dev/gtk-2.1.0/
+[  +21 ms] Found plugin share_plus at /Users/weafrica/.pub-cache/hosted/pub.dev/share_plus-10.1.4/
+[  +32 ms] Found plugin permission_handler at /Users/weafrica/.pub-cache/hosted/pub.dev/permission_handler-12.0.1/
+[   +7 ms] Found plugin permission_handler_windows at /Users/weafrica/.pub-cache/hosted/pub.dev/permission_handler_windows-0.2.1/
+[   +9 ms] Found plugin permission_handler_html at /Users/weafrica/.pub-cache/hosted/pub.dev/permission_handler_html-0.1.3+5/
+[   +3 ms] Found plugin permission_handler_apple at /Users/weafrica/.pub-cache/hosted/pub.dev/permission_handler_apple-9.4.7/
+[  +19 ms] Found plugin permission_handler_android at /Users/weafrica/.pub-cache/hosted/pub.dev/permission_handler_android-13.0.1/
+[   +8 ms] Found plugin just_audio at /Users/weafrica/.pub-cache/hosted/pub.dev/just_audio-0.10.5/
+[  +14 ms] Found plugin just_audio_web at /Users/weafrica/.pub-cache/hosted/pub.dev/just_audio_web-0.4.16/
+[  +20 ms] Found plugin audio_session at /Users/weafrica/.pub-cache/hosted/pub.dev/audio_session-0.1.25/
+[  +39 ms] Found plugin image_picker at /Users/weafrica/.pub-cache/hosted/pub.dev/image_picker-1.2.1/
+[   +8 ms] Found plugin image_picker_windows at /Users/weafrica/.pub-cache/hosted/pub.dev/image_picker_windows-0.2.2/
+[  +18 ms] Found plugin file_selector_windows at /Users/weafrica/.pub-cache/hosted/pub.dev/file_selector_windows-0.9.3+5/
+[  +17 ms] Found plugin image_picker_macos at /Users/weafrica/.pub-cache/hosted/pub.dev/image_picker_macos-0.2.2+1/
+[   +4 ms] Found plugin file_selector_macos at /Users/weafrica/.pub-cache/hosted/pub.dev/file_selector_macos-0.9.5/
+[   +7 ms] Found plugin image_picker_linux at /Users/weafrica/.pub-cache/hosted/pub.dev/image_picker_linux-0.2.2/
+[  +93 ms] Found plugin file_selector_linux at /Users/weafrica/.pub-cache/hosted/pub.dev/file_selector_linux-0.9.4/
+[  +61 ms] Found plugin image_picker_ios at /Users/weafrica/.pub-cache/hosted/pub.dev/image_picker_ios-0.8.13+6/
+[  +12 ms] Found plugin image_picker_for_web at /Users/weafrica/.pub-cache/hosted/pub.dev/image_picker_for_web-3.1.1/
+[  +10 ms] Found plugin image_picker_android at /Users/weafrica/.pub-cache/hosted/pub.dev/image_picker_android-0.8.13+14/
+[  +11 ms] Found plugin flutter_plugin_android_lifecycle at /Users/weafrica/.pub-cache/hosted/pub.dev/flutter_plugin_android_lifecycle-2.0.33/
+[  +37 ms] Found plugin google_sign_in at /Users/weafrica/.pub-cache/hosted/pub.dev/google_sign_in-7.2.0/
+[   +3 ms] Found plugin google_sign_in_web at /Users/weafrica/.pub-cache/hosted/pub.dev/google_sign_in_web-1.1.2/
+[  +18 ms] Found plugin google_sign_in_ios at /Users/weafrica/.pub-cache/hosted/pub.dev/google_sign_in_ios-6.3.0/
+[   +3 ms] Found plugin google_sign_in_android at /Users/weafrica/.pub-cache/hosted/pub.dev/google_sign_in_android-7.2.9/
+[   +8 ms] Found plugin google_mobile_ads at /Users/weafrica/.pub-cache/hosted/pub.dev/google_mobile_ads-7.0.0/
+[  +27 ms] Found plugin flutter_secure_storage at /Users/weafrica/.pub-cache/hosted/pub.dev/flutter_secure_storage-9.2.4/
+[   +6 ms] Found plugin flutter_secure_storage_windows at /Users/weafrica/.pub-cache/hosted/pub.dev/flutter_secure_storage_windows-3.1.2/
+[   +6 ms] Found plugin flutter_secure_storage_web at /Users/weafrica/.pub-cache/hosted/pub.dev/flutter_secure_storage_web-1.2.1/
+[   +5 ms] Found plugin flutter_secure_storage_macos at /Users/weafrica/.pub-cache/hosted/pub.dev/flutter_secure_storage_macos-3.1.3/
+[   +9 ms] Found plugin flutter_secure_storage_linux at /Users/weafrica/.pub-cache/hosted/pub.dev/flutter_secure_storage_linux-1.2.3/
+[   +5 ms] Found plugin flutter_local_notifications at /Users/weafrica/.pub-cache/hosted/pub.dev/flutter_local_notifications-17.2.4/
+[  +13 ms] Found plugin flutter_local_notifications_linux at /Users/weafrica/.pub-cache/hosted/pub.dev/flutter_local_notifications_linux-4.0.1/
+[  +10 ms] Found plugin sqflite at /Users/weafrica/.pub-cache/hosted/pub.dev/sqflite-2.4.2/
+[  +17 ms] Found plugin sqflite_darwin at /Users/weafrica/.pub-cache/hosted/pub.dev/sqflite_darwin-2.4.2/
+[   +4 ms] Found plugin sqflite_android at /Users/weafrica/.pub-cache/hosted/pub.dev/sqflite_android-2.4.2+2/
+[   +4 ms] Found plugin flutter_app_badger at /Users/weafrica/weafrica_music/packages/flutter_app_badger/
+[   +8 ms] Found plugin firebase_messaging at /Users/weafrica/.pub-cache/hosted/pub.dev/firebase_messaging-16.1.2/
+[   +5 ms] Found plugin firebase_messaging_web at /Users/weafrica/.pub-cache/hosted/pub.dev/firebase_messaging_web-4.1.3/
+[ +103 ms] Found plugin firebase_core at /Users/weafrica/.pub-cache/hosted/pub.dev/firebase_core-4.5.0/
+[  +10 ms] Found plugin firebase_core_web at /Users/weafrica/.pub-cache/hosted/pub.dev/firebase_core_web-3.5.0/
+[  +87 ms] Found plugin firebase_database at /Users/weafrica/.pub-cache/hosted/pub.dev/firebase_database-12.1.4/
+[   +9 ms] Found plugin firebase_database_web at /Users/weafrica/.pub-cache/hosted/pub.dev/firebase_database_web-0.2.7+4/
+[  +32 ms] Found plugin firebase_auth at /Users/weafrica/.pub-cache/hosted/pub.dev/firebase_auth-6.2.0/
+[  +11 ms] Found plugin firebase_auth_web at /Users/weafrica/.pub-cache/hosted/pub.dev/firebase_auth_web-6.1.3/
+[  +12 ms] Found plugin file_picker at /Users/weafrica/.pub-cache/hosted/pub.dev/file_picker-8.3.7/
+[  +10 ms] Found plugin ffmpeg_kit_flutter_new_min_gpl at /Users/weafrica/.pub-cache/hosted/pub.dev/ffmpeg_kit_flutter_new_min_gpl-2.1.1/
+[  +18 ms] Found plugin device_info_plus at /Users/weafrica/.pub-cache/hosted/pub.dev/device_info_plus-11.5.0/
+[  +24 ms] Found plugin connectivity_plus at /Users/weafrica/.pub-cache/hosted/pub.dev/connectivity_plus-6.1.5/
+[  +17 ms] Found plugin camera at /Users/weafrica/.pub-cache/hosted/pub.dev/camera-0.11.4/
+[   +3 ms] Found plugin camera_web at /Users/weafrica/.pub-cache/hosted/pub.dev/camera_web-0.3.5+3/
+[   +9 ms] Found plugin camera_avfoundation at /Users/weafrica/.pub-cache/hosted/pub.dev/camera_avfoundation-0.9.23+2/
+[   +4 ms] Found plugin camera_android_camerax at /Users/weafrica/.pub-cache/hosted/pub.dev/camera_android_camerax-0.6.30/
+[  +22 ms] Found plugin audio_service at /Users/weafrica/.pub-cache/hosted/pub.dev/audio_service-0.18.18/
+[   +3 ms] Found plugin audio_service_web at /Users/weafrica/.pub-cache/hosted/pub.dev/audio_service_web-0.1.4/
+[   +9 ms] Found plugin agora_rtm at /Users/weafrica/weafrica_music/packages/agora_rtm/
+[   +4 ms] Found plugin agora_rtc_engine at /Users/weafrica/.pub-cache/hosted/pub.dev/agora_rtc_engine-6.5.3/
+[   +9 ms] Found plugin iris_method_channel at /Users/weafrica/.pub-cache/hosted/pub.dev/iris_method_channel-2.2.4/
+[ +112 ms] Found plugin integration_test at /usr/local/share/flutter/packages/integration_test/
+[ +149 ms] Found plugin webview_flutter at /Users/weafrica/.pub-cache/hosted/pub.dev/webview_flutter-4.13.1/
+[   +5 ms] Found plugin webview_flutter_wkwebview at /Users/weafrica/.pub-cache/hosted/pub.dev/webview_flutter_wkwebview-3.23.8/
+[   +5 ms] Found plugin webview_flutter_android at /Users/weafrica/.pub-cache/hosted/pub.dev/webview_flutter_android-4.10.13/
+[   +5 ms] Found plugin wakelock_plus at /Users/weafrica/.pub-cache/hosted/pub.dev/wakelock_plus-1.3.3/
+[   +7 ms] Found plugin package_info_plus at /Users/weafrica/.pub-cache/hosted/pub.dev/package_info_plus-8.3.1/
+[  +18 ms] Found plugin video_player at /Users/weafrica/.pub-cache/hosted/pub.dev/video_player-2.11.1/
+[   +2 ms] Found plugin video_player_web at /Users/weafrica/.pub-cache/hosted/pub.dev/video_player_web-2.4.0/
+[   +3 ms] Found plugin video_player_avfoundation at /Users/weafrica/.pub-cache/hosted/pub.dev/video_player_avfoundation-2.9.4/
+[   +4 ms] Found plugin video_player_android at /Users/weafrica/.pub-cache/hosted/pub.dev/video_player_android-2.9.4/
+[   +7 ms] Found plugin url_launcher at /Users/weafrica/.pub-cache/hosted/pub.dev/url_launcher-6.3.2/
+[   +3 ms] Found plugin url_launcher_windows at /Users/weafrica/.pub-cache/hosted/pub.dev/url_launcher_windows-3.1.5/
+[   +7 ms] Found plugin url_launcher_web at /Users/weafrica/.pub-cache/hosted/pub.dev/url_launcher_web-2.4.2/
+[   +3 ms] Found plugin url_launcher_macos at /Users/weafrica/.pub-cache/hosted/pub.dev/url_launcher_macos-3.2.5/
+[   +2 ms] Found plugin url_launcher_linux at /Users/weafrica/.pub-cache/hosted/pub.dev/url_launcher_linux-3.2.2/
+[   +3 ms] Found plugin url_launcher_ios at /Users/weafrica/.pub-cache/hosted/pub.dev/url_launcher_ios-6.4.1/
+[   +2 ms] Found plugin url_launcher_android at /Users/weafrica/.pub-cache/hosted/pub.dev/url_launcher_android-6.3.28/
+[  +48 ms] Found plugin shared_preferences at /Users/weafrica/.pub-cache/hosted/pub.dev/shared_preferences-2.5.4/
+[   +2 ms] Found plugin shared_preferences_windows at /Users/weafrica/.pub-cache/hosted/pub.dev/shared_preferences_windows-2.4.1/
+[   +8 ms] Found plugin path_provider_windows at /Users/weafrica/.pub-cache/hosted/pub.dev/path_provider_windows-2.3.0/
+[   +5 ms] Found plugin shared_preferences_web at /Users/weafrica/.pub-cache/hosted/pub.dev/shared_preferences_web-2.4.3/
+[   +2 ms] Found plugin shared_preferences_linux at /Users/weafrica/.pub-cache/hosted/pub.dev/shared_preferences_linux-2.4.1/
+[   +6 ms] Found plugin path_provider_linux at /Users/weafrica/.pub-cache/hosted/pub.dev/path_provider_linux-2.2.1/
+[   +8 ms] Found plugin shared_preferences_foundation at /Users/weafrica/.pub-cache/hosted/pub.dev/shared_preferences_foundation-2.5.6/
+[  +19 ms] Found plugin shared_preferences_android at /Users/weafrica/.pub-cache/hosted/pub.dev/shared_preferences_android-2.4.21/
+[   +4 ms] Found plugin path_provider at /Users/weafrica/.pub-cache/hosted/pub.dev/path_provider-2.1.5/
+[   +3 ms] Found plugin path_provider_foundation at /Users/weafrica/.pub-cache/hosted/pub.dev/path_provider_foundation-2.6.0/
+[  +12 ms] Found plugin path_provider_android at /Users/weafrica/.pub-cache/hosted/pub.dev/path_provider_android-2.2.22/
+[   +2 ms] Found plugin app_links at /Users/weafrica/.pub-cache/hosted/pub.dev/app_links-6.4.1/
+[   +3 ms] Found plugin app_links_web at /Users/weafrica/.pub-cache/hosted/pub.dev/app_links_web-1.0.4/
+[   +5 ms] Found plugin app_links_linux at /Users/weafrica/.pub-cache/hosted/pub.dev/app_links_linux-1.0.3/
+[   +2 ms] Found plugin gtk at /Users/weafrica/.pub-cache/hosted/pub.dev/gtk-2.1.0/
+[  +37 ms] Found plugin share_plus at /Users/weafrica/.pub-cache/hosted/pub.dev/share_plus-10.1.4/
+[  +24 ms] Found plugin permission_handler at /Users/weafrica/.pub-cache/hosted/pub.dev/permission_handler-12.0.1/
+[   +1 ms] Found plugin permission_handler_windows at /Users/weafrica/.pub-cache/hosted/pub.dev/permission_handler_windows-0.2.1/
+[   +6 ms] Found plugin permission_handler_html at /Users/weafrica/.pub-cache/hosted/pub.dev/permission_handler_html-0.1.3+5/
+[   +2 ms] Found plugin permission_handler_apple at /Users/weafrica/.pub-cache/hosted/pub.dev/permission_handler_apple-9.4.7/
+[   +2 ms] Found plugin permission_handler_android at /Users/weafrica/.pub-cache/hosted/pub.dev/permission_handler_android-13.0.1/
+[   +3 ms] Found plugin just_audio at /Users/weafrica/.pub-cache/hosted/pub.dev/just_audio-0.10.5/
+[   +5 ms] Found plugin just_audio_web at /Users/weafrica/.pub-cache/hosted/pub.dev/just_audio_web-0.4.16/
+[   +3 ms] Found plugin audio_session at /Users/weafrica/.pub-cache/hosted/pub.dev/audio_session-0.1.25/
+[   +4 ms] Found plugin image_picker at /Users/weafrica/.pub-cache/hosted/pub.dev/image_picker-1.2.1/
+[   +2 ms] Found plugin image_picker_windows at /Users/weafrica/.pub-cache/hosted/pub.dev/image_picker_windows-0.2.2/
+[   +2 ms] Found plugin file_selector_windows at /Users/weafrica/.pub-cache/hosted/pub.dev/file_selector_windows-0.9.3+5/
+[   +6 ms] Found plugin image_picker_macos at /Users/weafrica/.pub-cache/hosted/pub.dev/image_picker_macos-0.2.2+1/
+[   +2 ms] Found plugin file_selector_macos at /Users/weafrica/.pub-cache/hosted/pub.dev/file_selector_macos-0.9.5/
+[   +2 ms] Found plugin image_picker_linux at /Users/weafrica/.pub-cache/hosted/pub.dev/image_picker_linux-0.2.2/
+[   +6 ms] Found plugin file_selector_linux at /Users/weafrica/.pub-cache/hosted/pub.dev/file_selector_linux-0.9.4/
+[   +3 ms] Found plugin image_picker_ios at /Users/weafrica/.pub-cache/hosted/pub.dev/image_picker_ios-0.8.13+6/
+[   +2 ms] Found plugin image_picker_for_web at /Users/weafrica/.pub-cache/hosted/pub.dev/image_picker_for_web-3.1.1/
+[   +6 ms] Found plugin image_picker_android at /Users/weafrica/.pub-cache/hosted/pub.dev/image_picker_android-0.8.13+14/
+[   +2 ms] Found plugin flutter_plugin_android_lifecycle at /Users/weafrica/.pub-cache/hosted/pub.dev/flutter_plugin_android_lifecycle-2.0.33/
+[  +17 ms] Found plugin google_sign_in at /Users/weafrica/.pub-cache/hosted/pub.dev/google_sign_in-7.2.0/
+[   +6 ms] Found plugin google_sign_in_web at /Users/weafrica/.pub-cache/hosted/pub.dev/google_sign_in_web-1.1.2/
+[  +11 ms] Found plugin google_sign_in_ios at /Users/weafrica/.pub-cache/hosted/pub.dev/google_sign_in_ios-6.3.0/
+[   +4 ms] Found plugin google_sign_in_android at /Users/weafrica/.pub-cache/hosted/pub.dev/google_sign_in_android-7.2.9/
+[   +2 ms] Found plugin google_mobile_ads at /Users/weafrica/.pub-cache/hosted/pub.dev/google_mobile_ads-7.0.0/
+[   +9 ms] Found plugin flutter_secure_storage at /Users/weafrica/.pub-cache/hosted/pub.dev/flutter_secure_storage-9.2.4/
+[   +2 ms] Found plugin flutter_secure_storage_windows at /Users/weafrica/.pub-cache/hosted/pub.dev/flutter_secure_storage_windows-3.1.2/
+[   +4 ms] Found plugin flutter_secure_storage_web at /Users/weafrica/.pub-cache/hosted/pub.dev/flutter_secure_storage_web-1.2.1/
+[   +3 ms] Found plugin flutter_secure_storage_macos at /Users/weafrica/.pub-cache/hosted/pub.dev/flutter_secure_storage_macos-3.1.3/
+[   +2 ms] Found plugin flutter_secure_storage_linux at /Users/weafrica/.pub-cache/hosted/pub.dev/flutter_secure_storage_linux-1.2.3/
+[   +2 ms] Found plugin flutter_local_notifications at /Users/weafrica/.pub-cache/hosted/pub.dev/flutter_local_notifications-17.2.4/
+[   +8 ms] Found plugin flutter_local_notifications_linux at /Users/weafrica/.pub-cache/hosted/pub.dev/flutter_local_notifications_linux-4.0.1/
+[   +4 ms] Found plugin sqflite at /Users/weafrica/.pub-cache/hosted/pub.dev/sqflite-2.4.2/
+[   +6 ms] Found plugin sqflite_darwin at /Users/weafrica/.pub-cache/hosted/pub.dev/sqflite_darwin-2.4.2/
+[   +2 ms] Found plugin sqflite_android at /Users/weafrica/.pub-cache/hosted/pub.dev/sqflite_android-2.4.2+2/
+[   +3 ms] Found plugin flutter_app_badger at /Users/weafrica/weafrica_music/packages/flutter_app_badger/
+[   +3 ms] Found plugin firebase_messaging at /Users/weafrica/.pub-cache/hosted/pub.dev/firebase_messaging-16.1.2/
+[   +3 ms] Found plugin firebase_messaging_web at /Users/weafrica/.pub-cache/hosted/pub.dev/firebase_messaging_web-4.1.3/
+[  +11 ms] Found plugin firebase_core at /Users/weafrica/.pub-cache/hosted/pub.dev/firebase_core-4.5.0/
+[   +1 ms] Found plugin firebase_core_web at /Users/weafrica/.pub-cache/hosted/pub.dev/firebase_core_web-3.5.0/
+[   +6 ms] Found plugin firebase_database at /Users/weafrica/.pub-cache/hosted/pub.dev/firebase_database-12.1.4/
+[  +19 ms] Found plugin firebase_database_web at /Users/weafrica/.pub-cache/hosted/pub.dev/firebase_database_web-0.2.7+4/
+[  +11 ms] Found plugin firebase_auth at /Users/weafrica/.pub-cache/hosted/pub.dev/firebase_auth-6.2.0/
+[   +5 ms] Found plugin firebase_auth_web at /Users/weafrica/.pub-cache/hosted/pub.dev/firebase_auth_web-6.1.3/
+[   +7 ms] Found plugin file_picker at /Users/weafrica/.pub-cache/hosted/pub.dev/file_picker-8.3.7/
+[   +2 ms] Found plugin ffmpeg_kit_flutter_new_min_gpl at /Users/weafrica/.pub-cache/hosted/pub.dev/ffmpeg_kit_flutter_new_min_gpl-2.1.1/
+[  +17 ms] Found plugin device_info_plus at /Users/weafrica/.pub-cache/hosted/pub.dev/device_info_plus-11.5.0/
+[  +13 ms] Found plugin connectivity_plus at /Users/weafrica/.pub-cache/hosted/pub.dev/connectivity_plus-6.1.5/
+[   +6 ms] Found plugin camera at /Users/weafrica/.pub-cache/hosted/pub.dev/camera-0.11.4/
+[   +2 ms] Found plugin camera_web at /Users/weafrica/.pub-cache/hosted/pub.dev/camera_web-0.3.5+3/
+[   +6 ms] Found plugin camera_avfoundation at /Users/weafrica/.pub-cache/hosted/pub.dev/camera_avfoundation-0.9.23+2/
+[   +2 ms] Found plugin camera_android_camerax at /Users/weafrica/.pub-cache/hosted/pub.dev/camera_android_camerax-0.6.30/
+[   +9 ms] Found plugin audio_service at /Users/weafrica/.pub-cache/hosted/pub.dev/audio_service-0.18.18/
+[   +2 ms] Found plugin audio_service_web at /Users/weafrica/.pub-cache/hosted/pub.dev/audio_service_web-0.1.4/
+[   +5 ms] Found plugin agora_rtm at /Users/weafrica/weafrica_music/packages/agora_rtm/
+[   +3 ms] Found plugin agora_rtc_engine at /Users/weafrica/.pub-cache/hosted/pub.dev/agora_rtc_engine-6.5.3/
+[   +2 ms] Found plugin iris_method_channel at /Users/weafrica/.pub-cache/hosted/pub.dev/iris_method_channel-2.2.4/
+[ +131 ms] Skipping generating web_plugin_registrant.dart because it is up-to-date.
+[  +37 ms] Found plugin integration_test at /usr/local/share/flutter/packages/integration_test/
+[ +190 ms] Found plugin webview_flutter at /Users/weafrica/.pub-cache/hosted/pub.dev/webview_flutter-4.13.1/
+[   +1 ms] Found plugin webview_flutter_wkwebview at /Users/weafrica/.pub-cache/hosted/pub.dev/webview_flutter_wkwebview-3.23.8/
+[   +3 ms] Found plugin webview_flutter_android at /Users/weafrica/.pub-cache/hosted/pub.dev/webview_flutter_android-4.10.13/
+[   +3 ms] Found plugin wakelock_plus at /Users/weafrica/.pub-cache/hosted/pub.dev/wakelock_plus-1.3.3/
+[   +8 ms] Found plugin package_info_plus at /Users/weafrica/.pub-cache/hosted/pub.dev/package_info_plus-8.3.1/
+[  +53 ms] Found plugin video_player at /Users/weafrica/.pub-cache/hosted/pub.dev/video_player-2.11.1/
+[   +2 ms] Found plugin video_player_web at /Users/weafrica/.pub-cache/hosted/pub.dev/video_player_web-2.4.0/
+[  +18 ms] Found plugin video_player_avfoundation at /Users/weafrica/.pub-cache/hosted/pub.dev/video_player_avfoundation-2.9.4/
+[  +18 ms] Found plugin video_player_android at /Users/weafrica/.pub-cache/hosted/pub.dev/video_player_android-2.9.4/
+[   +3 ms] Found plugin url_launcher at /Users/weafrica/.pub-cache/hosted/pub.dev/url_launcher-6.3.2/
+[   +1 ms] Found plugin url_launcher_windows at /Users/weafrica/.pub-cache/hosted/pub.dev/url_launcher_windows-3.1.5/
+[   +7 ms] Found plugin url_launcher_web at /Users/weafrica/.pub-cache/hosted/pub.dev/url_launcher_web-2.4.2/
+[   +2 ms] Found plugin url_launcher_macos at /Users/weafrica/.pub-cache/hosted/pub.dev/url_launcher_macos-3.2.5/
+[   +2 ms] Found plugin url_launcher_linux at /Users/weafrica/.pub-cache/hosted/pub.dev/url_launcher_linux-3.2.2/
+[   +2 ms] Found plugin url_launcher_ios at /Users/weafrica/.pub-cache/hosted/pub.dev/url_launcher_ios-6.4.1/
+[   +1 ms] Found plugin url_launcher_android at /Users/weafrica/.pub-cache/hosted/pub.dev/url_launcher_android-6.3.28/
+[  +38 ms] Found plugin shared_preferences at /Users/weafrica/.pub-cache/hosted/pub.dev/shared_preferences-2.5.4/
+[   +1 ms] Found plugin shared_preferences_windows at /Users/weafrica/.pub-cache/hosted/pub.dev/shared_preferences_windows-2.4.1/
+[   +2 ms] Found plugin path_provider_windows at /Users/weafrica/.pub-cache/hosted/pub.dev/path_provider_windows-2.3.0/
+[   +4 ms] Found plugin shared_preferences_web at /Users/weafrica/.pub-cache/hosted/pub.dev/shared_preferences_web-2.4.3/
+[   +1 ms] Found plugin shared_preferences_linux at /Users/weafrica/.pub-cache/hosted/pub.dev/shared_preferences_linux-2.4.1/
+[   +1 ms] Found plugin path_provider_linux at /Users/weafrica/.pub-cache/hosted/pub.dev/path_provider_linux-2.2.1/
+[   +3 ms] Found plugin shared_preferences_foundation at /Users/weafrica/.pub-cache/hosted/pub.dev/shared_preferences_foundation-2.5.6/
+[   +1 ms] Found plugin shared_preferences_android at /Users/weafrica/.pub-cache/hosted/pub.dev/shared_preferences_android-2.4.21/
+[   +1 ms] Found plugin path_provider at /Users/weafrica/.pub-cache/hosted/pub.dev/path_provider-2.1.5/
+[   +2 ms] Found plugin path_provider_foundation at /Users/weafrica/.pub-cache/hosted/pub.dev/path_provider_foundation-2.6.0/
+[   +7 ms] Found plugin path_provider_android at /Users/weafrica/.pub-cache/hosted/pub.dev/path_provider_android-2.2.22/
+[   +1 ms] Found plugin app_links at /Users/weafrica/.pub-cache/hosted/pub.dev/app_links-6.4.1/
+[   +2 ms] Found plugin app_links_web at /Users/weafrica/.pub-cache/hosted/pub.dev/app_links_web-1.0.4/
+[   +4 ms] Found plugin app_links_linux at /Users/weafrica/.pub-cache/hosted/pub.dev/app_links_linux-1.0.3/
+[   +3 ms] Found plugin gtk at /Users/weafrica/.pub-cache/hosted/pub.dev/gtk-2.1.0/
+[   +5 ms] Found plugin share_plus at /Users/weafrica/.pub-cache/hosted/pub.dev/share_plus-10.1.4/
+[  +16 ms] Found plugin permission_handler at /Users/weafrica/.pub-cache/hosted/pub.dev/permission_handler-12.0.1/
+[   +2 ms] Found plugin permission_handler_windows at /Users/weafrica/.pub-cache/hosted/pub.dev/permission_handler_windows-0.2.1/
+[   +3 ms] Found plugin permission_handler_html at /Users/weafrica/.pub-cache/hosted/pub.dev/permission_handler_html-0.1.3+5/
+[   +3 ms] Found plugin permission_handler_apple at /Users/weafrica/.pub-cache/hosted/pub.dev/permission_handler_apple-9.4.7/
+[   +1 ms] Found plugin permission_handler_android at /Users/weafrica/.pub-cache/hosted/pub.dev/permission_handler_android-13.0.1/
+[   +2 ms] Found plugin just_audio at /Users/weafrica/.pub-cache/hosted/pub.dev/just_audio-0.10.5/
+[   +2 ms] Found plugin just_audio_web at /Users/weafrica/.pub-cache/hosted/pub.dev/just_audio_web-0.4.16/
+[   +4 ms] Found plugin audio_session at /Users/weafrica/.pub-cache/hosted/pub.dev/audio_session-0.1.25/
+[   +2 ms] Found plugin image_picker at /Users/weafrica/.pub-cache/hosted/pub.dev/image_picker-1.2.1/
+[   +4 ms] Found plugin image_picker_windows at /Users/weafrica/.pub-cache/hosted/pub.dev/image_picker_windows-0.2.2/
+[   +3 ms] Found plugin file_selector_windows at /Users/weafrica/.pub-cache/hosted/pub.dev/file_selector_windows-0.9.3+5/
+[   +3 ms] Found plugin image_picker_macos at /Users/weafrica/.pub-cache/hosted/pub.dev/image_picker_macos-0.2.2+1/
+[   +3 ms] Found plugin file_selector_macos at /Users/weafrica/.pub-cache/hosted/pub.dev/file_selector_macos-0.9.5/
+[   +3 ms] Found plugin image_picker_linux at /Users/weafrica/.pub-cache/hosted/pub.dev/image_picker_linux-0.2.2/
+[   +1 ms] Found plugin file_selector_linux at /Users/weafrica/.pub-cache/hosted/pub.dev/file_selector_linux-0.9.4/
+[   +1 ms] Found plugin image_picker_ios at /Users/weafrica/.pub-cache/hosted/pub.dev/image_picker_ios-0.8.13+6/
+[   +1 ms] Found plugin image_picker_for_web at /Users/weafrica/.pub-cache/hosted/pub.dev/image_picker_for_web-3.1.1/
+[   +5 ms] Found plugin image_picker_android at /Users/weafrica/.pub-cache/hosted/pub.dev/image_picker_android-0.8.13+14/
+[   +3 ms] Found plugin flutter_plugin_android_lifecycle at /Users/weafrica/.pub-cache/hosted/pub.dev/flutter_plugin_android_lifecycle-2.0.33/
+[   +2 ms] Found plugin google_sign_in at /Users/weafrica/.pub-cache/hosted/pub.dev/google_sign_in-7.2.0/
+[   +1 ms] Found plugin google_sign_in_web at /Users/weafrica/.pub-cache/hosted/pub.dev/google_sign_in_web-1.1.2/
+[   +6 ms] Found plugin google_sign_in_ios at /Users/weafrica/.pub-cache/hosted/pub.dev/google_sign_in_ios-6.3.0/
+[   +2 ms] Found plugin google_sign_in_android at /Users/weafrica/.pub-cache/hosted/pub.dev/google_sign_in_android-7.2.9/
+[   +1 ms] Found plugin google_mobile_ads at /Users/weafrica/.pub-cache/hosted/pub.dev/google_mobile_ads-7.0.0/
+[   +7 ms] Found plugin flutter_secure_storage at /Users/weafrica/.pub-cache/hosted/pub.dev/flutter_secure_storage-9.2.4/
+[   +1 ms] Found plugin flutter_secure_storage_windows at /Users/weafrica/.pub-cache/hosted/pub.dev/flutter_secure_storage_windows-3.1.2/
+[   +4 ms] Found plugin flutter_secure_storage_web at /Users/weafrica/.pub-cache/hosted/pub.dev/flutter_secure_storage_web-1.2.1/
+[   +1 ms] Found plugin flutter_secure_storage_macos at /Users/weafrica/.pub-cache/hosted/pub.dev/flutter_secure_storage_macos-3.1.3/
+[   +5 ms] Found plugin flutter_secure_storage_linux at /Users/weafrica/.pub-cache/hosted/pub.dev/flutter_secure_storage_linux-1.2.3/
+[   +1 ms] Found plugin flutter_local_notifications at /Users/weafrica/.pub-cache/hosted/pub.dev/flutter_local_notifications-17.2.4/
+[   +7 ms] Found plugin flutter_local_notifications_linux at /Users/weafrica/.pub-cache/hosted/pub.dev/flutter_local_notifications_linux-4.0.1/
+[   +2 ms] Found plugin sqflite at /Users/weafrica/.pub-cache/hosted/pub.dev/sqflite-2.4.2/
+[   +3 ms] Found plugin sqflite_darwin at /Users/weafrica/.pub-cache/hosted/pub.dev/sqflite_darwin-2.4.2/
+[   +1 ms] Found plugin sqflite_android at /Users/weafrica/.pub-cache/hosted/pub.dev/sqflite_android-2.4.2+2/
+[   +3 ms] Found plugin flutter_app_badger at /Users/weafrica/weafrica_music/packages/flutter_app_badger/
+[   +1 ms] Found plugin firebase_messaging at /Users/weafrica/.pub-cache/hosted/pub.dev/firebase_messaging-16.1.2/
+[   +1 ms] Found plugin firebase_messaging_web at /Users/weafrica/.pub-cache/hosted/pub.dev/firebase_messaging_web-4.1.3/
+[   +4 ms] Found plugin firebase_core at /Users/weafrica/.pub-cache/hosted/pub.dev/firebase_core-4.5.0/
+[   +1 ms] Found plugin firebase_core_web at /Users/weafrica/.pub-cache/hosted/pub.dev/firebase_core_web-3.5.0/
+[   +3 ms] Found plugin firebase_database at /Users/weafrica/.pub-cache/hosted/pub.dev/firebase_database-12.1.4/
+[   +1 ms] Found plugin firebase_database_web at /Users/weafrica/.pub-cache/hosted/pub.dev/firebase_database_web-0.2.7+4/
+[   +2 ms] Found plugin firebase_auth at /Users/weafrica/.pub-cache/hosted/pub.dev/firebase_auth-6.2.0/
+[   +1 ms] Found plugin firebase_auth_web at /Users/weafrica/.pub-cache/hosted/pub.dev/firebase_auth_web-6.1.3/
+[   +3 ms] Found plugin file_picker at /Users/weafrica/.pub-cache/hosted/pub.dev/file_picker-8.3.7/
+[   +1 ms] Found plugin ffmpeg_kit_flutter_new_min_gpl at /Users/weafrica/.pub-cache/hosted/pub.dev/ffmpeg_kit_flutter_new_min_gpl-2.1.1/
+[   +6 ms] Found plugin device_info_plus at /Users/weafrica/.pub-cache/hosted/pub.dev/device_info_plus-11.5.0/
+[   +3 ms] Found plugin connectivity_plus at /Users/weafrica/.pub-cache/hosted/pub.dev/connectivity_plus-6.1.5/
+[   +4 ms] Found plugin camera at /Users/weafrica/.pub-cache/hosted/pub.dev/camera-0.11.4/
+[   +1 ms] Found plugin camera_web at /Users/weafrica/.pub-cache/hosted/pub.dev/camera_web-0.3.5+3/
+[   +3 ms] Found plugin camera_avfoundation at /Users/weafrica/.pub-cache/hosted/pub.dev/camera_avfoundation-0.9.23+2/
+[   +1 ms] Found plugin camera_android_camerax at /Users/weafrica/.pub-cache/hosted/pub.dev/camera_android_camerax-0.6.30/
+[  +39 ms] Found plugin audio_service at /Users/weafrica/.pub-cache/hosted/pub.dev/audio_service-0.18.18/
+[   +1 ms] Found plugin audio_service_web at /Users/weafrica/.pub-cache/hosted/pub.dev/audio_service_web-0.1.4/
+[   +3 ms] Found plugin agora_rtm at /Users/weafrica/weafrica_music/packages/agora_rtm/
+[   +2 ms] Found plugin agora_rtc_engine at /Users/weafrica/.pub-cache/hosted/pub.dev/agora_rtc_engine-6.5.3/
+[   +1 ms] Found plugin iris_method_channel at /Users/weafrica/.pub-cache/hosted/pub.dev/iris_method_channel-2.2.4/
+[ +164 ms] Generating /Users/weafrica/weafrica_music/android/app/src/main/java/io/flutter/plugins/GeneratedPluginRegistrant.java
+[   +5 ms] Skipping generating GeneratedPluginRegistrant.java because it is up-to-date.
+[   +6 ms] Skipping generating GeneratedPluginRegistrant.h because it is up-to-date.
+[   +5 ms] Skipping generating GeneratedPluginRegistrant.m because it is up-to-date.
+[   +4 ms] Skipping generating GeneratedPluginRegistrant.swift because it is up-to-date.
+[ +384 ms] ro.hardware = mt6789
+[        ] ro.build.characteristics = phone
+[ +232 ms] Initializing file store
+[   +3 ms] Done initializing file store
+[  +27 ms] Skipping target: gen_localizations
+[   +6 ms] gen_dart_plugin_registrant: Starting due to {InvalidatedReasonKind.inputChanged: The following inputs have updated contents: /Users/weafrica/weafrica_music/.dart_tool/package_config.json,/Users/weafrica/weafrica_music/.dart_tool/flutter_build/dart_plugin_registrant.dart}
+[  +34 ms] Found plugin integration_test at /usr/local/share/flutter/packages/integration_test/
+[  +87 ms] Found plugin webview_flutter at /Users/weafrica/.pub-cache/hosted/pub.dev/webview_flutter-4.13.1/
+[   +2 ms] Found plugin webview_flutter_wkwebview at /Users/weafrica/.pub-cache/hosted/pub.dev/webview_flutter_wkwebview-3.23.8/
+[  +20 ms] Found plugin webview_flutter_android at /Users/weafrica/.pub-cache/hosted/pub.dev/webview_flutter_android-4.10.13/
+[   +4 ms] Found plugin wakelock_plus at /Users/weafrica/.pub-cache/hosted/pub.dev/wakelock_plus-1.3.3/
+[   +7 ms] Found plugin package_info_plus at /Users/weafrica/.pub-cache/hosted/pub.dev/package_info_plus-8.3.1/
+[  +19 ms] Found plugin video_player at /Users/weafrica/.pub-cache/hosted/pub.dev/video_player-2.11.1/
+[   +2 ms] Found plugin video_player_web at /Users/weafrica/.pub-cache/hosted/pub.dev/video_player_web-2.4.0/
+[   +3 ms] Found plugin video_player_avfoundation at /Users/weafrica/.pub-cache/hosted/pub.dev/video_player_avfoundation-2.9.4/
+[   +2 ms] Found plugin video_player_android at /Users/weafrica/.pub-cache/hosted/pub.dev/video_player_android-2.9.4/
+[   +8 ms] Found plugin url_launcher at /Users/weafrica/.pub-cache/hosted/pub.dev/url_launcher-6.3.2/
+[   +2 ms] Found plugin url_launcher_windows at /Users/weafrica/.pub-cache/hosted/pub.dev/url_launcher_windows-3.1.5/
+[   +4 ms] Found plugin url_launcher_web at /Users/weafrica/.pub-cache/hosted/pub.dev/url_launcher_web-2.4.2/
+[   +3 ms] Found plugin url_launcher_macos at /Users/weafrica/.pub-cache/hosted/pub.dev/url_launcher_macos-3.2.5/
+[   +3 ms] Found plugin url_launcher_linux at /Users/weafrica/.pub-cache/hosted/pub.dev/url_launcher_linux-3.2.2/
+[   +2 ms] Found plugin url_launcher_ios at /Users/weafrica/.pub-cache/hosted/pub.dev/url_launcher_ios-6.4.1/
+[   +1 ms] Found plugin url_launcher_android at /Users/weafrica/.pub-cache/hosted/pub.dev/url_launcher_android-6.3.28/
+[  +43 ms] Found plugin shared_preferences at /Users/weafrica/.pub-cache/hosted/pub.dev/shared_preferences-2.5.4/
+[   +4 ms] Found plugin shared_preferences_windows at /Users/weafrica/.pub-cache/hosted/pub.dev/shared_preferences_windows-2.4.1/
+[   +3 ms] Found plugin path_provider_windows at /Users/weafrica/.pub-cache/hosted/pub.dev/path_provider_windows-2.3.0/
+[   +3 ms] Found plugin shared_preferences_web at /Users/weafrica/.pub-cache/hosted/pub.dev/shared_preferences_web-2.4.3/
+[   +1 ms] Found plugin shared_preferences_linux at /Users/weafrica/.pub-cache/hosted/pub.dev/shared_preferences_linux-2.4.1/
+[   +2 ms] Found plugin path_provider_linux at /Users/weafrica/.pub-cache/hosted/pub.dev/path_provider_linux-2.2.1/
+[   +2 ms] Found plugin shared_preferences_foundation at /Users/weafrica/.pub-cache/hosted/pub.dev/shared_preferences_foundation-2.5.6/
+[   +1 ms] Found plugin shared_preferences_android at /Users/weafrica/.pub-cache/hosted/pub.dev/shared_preferences_android-2.4.21/
+[   +1 ms] Found plugin path_provider at /Users/weafrica/.pub-cache/hosted/pub.dev/path_provider-2.1.5/
+[   +2 ms] Found plugin path_provider_foundation at /Users/weafrica/.pub-cache/hosted/pub.dev/path_provider_foundation-2.6.0/
+[   +9 ms] Found plugin path_provider_android at /Users/weafrica/.pub-cache/hosted/pub.dev/path_provider_android-2.2.22/
+[   +1 ms] Found plugin app_links at /Users/weafrica/.pub-cache/hosted/pub.dev/app_links-6.4.1/
+[   +1 ms] Found plugin app_links_web at /Users/weafrica/.pub-cache/hosted/pub.dev/app_links_web-1.0.4/
+[   +4 ms] Found plugin app_links_linux at /Users/weafrica/.pub-cache/hosted/pub.dev/app_links_linux-1.0.3/
+[   +2 ms] Found plugin gtk at /Users/weafrica/.pub-cache/hosted/pub.dev/gtk-2.1.0/
+[   +8 ms] Found plugin share_plus at /Users/weafrica/.pub-cache/hosted/pub.dev/share_plus-10.1.4/
+[  +13 ms] Found plugin permission_handler at /Users/weafrica/.pub-cache/hosted/pub.dev/permission_handler-12.0.1/
+[   +2 ms] Found plugin permission_handler_windows at /Users/weafrica/.pub-cache/hosted/pub.dev/permission_handler_windows-0.2.1/
+[   +3 ms] Found plugin permission_handler_html at /Users/weafrica/.pub-cache/hosted/pub.dev/permission_handler_html-0.1.3+5/
+[   +2 ms] Found plugin permission_handler_apple at /Users/weafrica/.pub-cache/hosted/pub.dev/permission_handler_apple-9.4.7/
+[   +1 ms] Found plugin permission_handler_android at /Users/weafrica/.pub-cache/hosted/pub.dev/permission_handler_android-13.0.1/
+[   +2 ms] Found plugin just_audio at /Users/weafrica/.pub-cache/hosted/pub.dev/just_audio-0.10.5/
+[   +2 ms] Found plugin just_audio_web at /Users/weafrica/.pub-cache/hosted/pub.dev/just_audio_web-0.4.16/
+[   +2 ms] Found plugin audio_session at /Users/weafrica/.pub-cache/hosted/pub.dev/audio_session-0.1.25/
+[   +3 ms] Found plugin image_picker at /Users/weafrica/.pub-cache/hosted/pub.dev/image_picker-1.2.1/
+[   +1 ms] Found plugin image_picker_windows at /Users/weafrica/.pub-cache/hosted/pub.dev/image_picker_windows-0.2.2/
+[   +2 ms] Found plugin file_selector_windows at /Users/weafrica/.pub-cache/hosted/pub.dev/file_selector_windows-0.9.3+5/
+[   +3 ms] Found plugin image_picker_macos at /Users/weafrica/.pub-cache/hosted/pub.dev/image_picker_macos-0.2.2+1/
+[   +3 ms] Found plugin file_selector_macos at /Users/weafrica/.pub-cache/hosted/pub.dev/file_selector_macos-0.9.5/
+[   +1 ms] Found plugin image_picker_linux at /Users/weafrica/.pub-cache/hosted/pub.dev/image_picker_linux-0.2.2/
+[   +2 ms] Found plugin file_selector_linux at /Users/weafrica/.pub-cache/hosted/pub.dev/file_selector_linux-0.9.4/
+[   +2 ms] Found plugin image_picker_ios at /Users/weafrica/.pub-cache/hosted/pub.dev/image_picker_ios-0.8.13+6/
+[   +2 ms] Found plugin image_picker_for_web at /Users/weafrica/.pub-cache/hosted/pub.dev/image_picker_for_web-3.1.1/
+[   +2 ms] Found plugin image_picker_android at /Users/weafrica/.pub-cache/hosted/pub.dev/image_picker_android-0.8.13+14/
+[   +1 ms] Found plugin flutter_plugin_android_lifecycle at /Users/weafrica/.pub-cache/hosted/pub.dev/flutter_plugin_android_lifecycle-2.0.33/
+[   +7 ms] Found plugin google_sign_in at /Users/weafrica/.pub-cache/hosted/pub.dev/google_sign_in-7.2.0/
+[   +2 ms] Found plugin google_sign_in_web at /Users/weafrica/.pub-cache/hosted/pub.dev/google_sign_in_web-1.1.2/
+[  +13 ms] Found plugin google_sign_in_ios at /Users/weafrica/.pub-cache/hosted/pub.dev/google_sign_in_ios-6.3.0/
+[   +3 ms] Found plugin google_sign_in_android at /Users/weafrica/.pub-cache/hosted/pub.dev/google_sign_in_android-7.2.9/
+[   +1 ms] Found plugin google_mobile_ads at /Users/weafrica/.pub-cache/hosted/pub.dev/google_mobile_ads-7.0.0/
+[   +6 ms] Found plugin flutter_secure_storage at /Users/weafrica/.pub-cache/hosted/pub.dev/flutter_secure_storage-9.2.4/
+[   +2 ms] Found plugin flutter_secure_storage_windows at /Users/weafrica/.pub-cache/hosted/pub.dev/flutter_secure_storage_windows-3.1.2/
+[   +2 ms] Found plugin flutter_secure_storage_web at /Users/weafrica/.pub-cache/hosted/pub.dev/flutter_secure_storage_web-1.2.1/
+[   +2 ms] Found plugin flutter_secure_storage_macos at /Users/weafrica/.pub-cache/hosted/pub.dev/flutter_secure_storage_macos-3.1.3/
+[   +2 ms] Found plugin flutter_secure_storage_linux at /Users/weafrica/.pub-cache/hosted/pub.dev/flutter_secure_storage_linux-1.2.3/
+[   +2 ms] Found plugin flutter_local_notifications at /Users/weafrica/.pub-cache/hosted/pub.dev/flutter_local_notifications-17.2.4/
+[   +3 ms] Found plugin flutter_local_notifications_linux at /Users/weafrica/.pub-cache/hosted/pub.dev/flutter_local_notifications_linux-4.0.1/
+[   +2 ms] Found plugin sqflite at /Users/weafrica/.pub-cache/hosted/pub.dev/sqflite-2.4.2/
+[   +3 ms] Found plugin sqflite_darwin at /Users/weafrica/.pub-cache/hosted/pub.dev/sqflite_darwin-2.4.2/
+[   +2 ms] Found plugin sqflite_android at /Users/weafrica/.pub-cache/hosted/pub.dev/sqflite_android-2.4.2+2/
+[   +2 ms] Found plugin flutter_app_badger at /Users/weafrica/weafrica_music/packages/flutter_app_badger/
+[   +1 ms] Found plugin firebase_messaging at /Users/weafrica/.pub-cache/hosted/pub.dev/firebase_messaging-16.1.2/
+[   +2 ms] Found plugin firebase_messaging_web at /Users/weafrica/.pub-cache/hosted/pub.dev/firebase_messaging_web-4.1.3/
+[   +4 ms] Found plugin firebase_core at /Users/weafrica/.pub-cache/hosted/pub.dev/firebase_core-4.5.0/
+[   +2 ms] Found plugin firebase_core_web at /Users/weafrica/.pub-cache/hosted/pub.dev/firebase_core_web-3.5.0/
+[   +6 ms] Found plugin firebase_database at /Users/weafrica/.pub-cache/hosted/pub.dev/firebase_database-12.1.4/
+[   +3 ms] Found plugin firebase_database_web at /Users/weafrica/.pub-cache/hosted/pub.dev/firebase_database_web-0.2.7+4/
+[   +2 ms] Found plugin firebase_auth at /Users/weafrica/.pub-cache/hosted/pub.dev/firebase_auth-6.2.0/
+[   +1 ms] Found plugin firebase_auth_web at /Users/weafrica/.pub-cache/hosted/pub.dev/firebase_auth_web-6.1.3/
+[   +2 ms] Found plugin file_picker at /Users/weafrica/.pub-cache/hosted/pub.dev/file_picker-8.3.7/
+[   +1 ms] Found plugin ffmpeg_kit_flutter_new_min_gpl at /Users/weafrica/.pub-cache/hosted/pub.dev/ffmpeg_kit_flutter_new_min_gpl-2.1.1/
+[   +4 ms] Found plugin device_info_plus at /Users/weafrica/.pub-cache/hosted/pub.dev/device_info_plus-11.5.0/
+[   +7 ms] Found plugin connectivity_plus at /Users/weafrica/.pub-cache/hosted/pub.dev/connectivity_plus-6.1.5/
+[   +3 ms] Found plugin camera at /Users/weafrica/.pub-cache/hosted/pub.dev/camera-0.11.4/
+[   +1 ms] Found plugin camera_web at /Users/weafrica/.pub-cache/hosted/pub.dev/camera_web-0.3.5+3/
+[   +3 ms] Found plugin camera_avfoundation at /Users/weafrica/.pub-cache/hosted/pub.dev/camera_avfoundation-0.9.23+2/
+[   +1 ms] Found plugin camera_android_camerax at /Users/weafrica/.pub-cache/hosted/pub.dev/camera_android_camerax-0.6.30/
+[   +6 ms] Found plugin audio_service at /Users/weafrica/.pub-cache/hosted/pub.dev/audio_service-0.18.18/
+[   +1 ms] Found plugin audio_service_web at /Users/weafrica/.pub-cache/hosted/pub.dev/audio_service_web-0.1.4/
+[   +2 ms] Found plugin agora_rtm at /Users/weafrica/weafrica_music/packages/agora_rtm/
+[   +1 ms] Found plugin agora_rtc_engine at /Users/weafrica/.pub-cache/hosted/pub.dev/agora_rtc_engine-6.5.3/
+[   +1 ms] Found plugin iris_method_channel at /Users/weafrica/.pub-cache/hosted/pub.dev/iris_method_channel-2.2.4/
+[  +26 ms] Skipping generating dart_plugin_registrant.dart because it is up-to-date.
+[        ] gen_dart_plugin_registrant: Complete
+[   +3 ms] Skipping target: _composite
+[   +4 ms] complete
+[  +10 ms] Launching lib/main.dart on SM A165F in debug mode...
+[  +14 ms] /usr/local/share/flutter/bin/cache/dart-sdk/bin/dartaotruntime /usr/local/share/flutter/bin/cache/dart-sdk/bin/snapshots/frontend_server_aot.dart.snapshot --sdk-root /usr/local/share/flutter/bin/cache/artifacts/engine/common/flutter_patched_sdk/ --incremental --target=flutter --experimental-emit-debug-metadata -DFLUTTER_VERSION=3.41.4 -DFLUTTER_CHANNEL=stable -DFLUTTER_GIT_URL=https://github.com/flutter/flutter.git -DFLUTTER_FRAMEWORK_REVISION=ff37bef603 -DFLUTTER_ENGINE_REVISION=e4b8dca3f1 -DFLUTTER_DART_VERSION=3.11.1 --output-dill /var/folders/1p/_gtws4dx0sv1l223h85jmcl00000gn/T/flutter_tools.PlwBoi/flutter_tool.3vsWOo/app.dill --packages /Users/weafrica/weafrica_music/.dart_tool/package_config.json -Ddart.vm.profile=false -Ddart.vm.product=false --enable-asserts --track-widget-creation --filesystem-scheme org-dartlang-root --initialize-from-dill build/8730b13ca0249799964d0a71255a8f3b.cache.dill.track.dill --source file:///Users/weafrica/weafrica_music/.dart_tool/flutter_build/dart_plugin_registrant.dart --source package:flutter/src/dart_plugin_registrant.dart -Dflutter.dart_plugin_registrant=file:///Users/weafrica/weafrica_music/.dart_tool/flutter_build/dart_plugin_registrant.dart --verbosity=error --enable-experiment=alternative-invalidation-strategy
+[  +18 ms] executing: /Users/weafrica/Library/Android/sdk/build-tools/36.1.0/aapt dump xmltree /Users/weafrica/weafrica_music/build/app/outputs/flutter-apk/app-debug.apk AndroidManifest.xml
+[  +98 ms] Exit code 0 from: /Users/weafrica/Library/Android/sdk/build-tools/36.1.0/aapt dump xmltree /Users/weafrica/weafrica_music/build/app/outputs/flutter-apk/app-debug.apk AndroidManifest.xml
+[   +3 ms] N: android=http://schemas.android.com/apk/res/android
+             E: manifest (line=2)
+               A: android:versionCode(0x0101021b)=(type 0x10)0x1
+               A: android:versionName(0x0101021c)="1.0.0" (Raw: "1.0.0")
+               A: android:compileSdkVersion(0x01010572)=(type 0x10)0x24
+               A: android:compileSdkVersionCodename(0x01010573)="16" (Raw: "16")
+               A: package="com.weafrica_music" (Raw: "com.weafrica_music")
+               A: platformBuildVersionCode=(type 0x10)0x24
+               A: platformBuildVersionName=(type 0x10)0x10
+               E: uses-sdk (line=7)
+                 A: android:minSdkVersion(0x0101020c)=(type 0x10)0x18
+                 A: android:targetSdkVersion(0x01010270)=(type 0x10)0x24
+               E: uses-permission (line=15)
+                 A: android:name(0x01010003)="android.permission.INTERNET" (Raw: "android.permission.INTERNET")
+               E: uses-permission (line=16)
+                 A: android:name(0x01010003)="android.permission.CAMERA" (Raw: "android.permission.CAMERA")
+               E: uses-permission (line=17)
+                 A: android:name(0x01010003)="android.permission.RECORD_AUDIO" (Raw: "android.permission.RECORD_AUDIO")
+               E: uses-permission (line=18)
+                 A: android:name(0x01010003)="android.permission.MODIFY_AUDIO_SETTINGS" (Raw: "android.permission.MODIFY_AUDIO_SETTINGS")
+               E: uses-permission (line=19)
+                 A: android:name(0x01010003)="android.permission.FOREGROUND_SERVICE" (Raw: "android.permission.FOREGROUND_SERVICE")
+               E: uses-permission (line=20)
+                 A: android:name(0x01010003)="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" (Raw: "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK")
+               E: uses-permission (line=21)
+                 A: android:name(0x01010003)="android.permission.WAKE_LOCK" (Raw: "android.permission.WAKE_LOCK")
+               E: uses-permission (line=22)
+                 A: android:name(0x01010003)="android.permission.POST_NOTIFICATIONS" (Raw: "android.permission.POST_NOTIFICATIONS")
+               E: uses-permission (line=23)
+                 A: android:name(0x01010003)="android.permission.RECEIVE_BOOT_COMPLETED" (Raw: "android.permission.RECEIVE_BOOT_COMPLETED")
+               E: uses-permission (line=24)
+                 A: android:name(0x01010003)="android.permission.VIBRATE" (Raw: "android.permission.VIBRATE")
+               E: queries (line=32)
+                 E: intent (line=33)
+                   E: action (line=34)
+                     A: android:name(0x01010003)="android.intent.action.PROCESS_TEXT" (Raw: "android.intent.action.PROCESS_TEXT")
+                   E: data (line=36)
+                     A: android:mimeType(0x01010026)="text/plain" (Raw: "text/plain")
+                 E: intent (line=38)
+                   E: action (line=39)
+                     A: android:name(0x01010003)="android.intent.action.GET_CONTENT" (Raw: "android.intent.action.GET_CONTENT")
+                   E: data (line=41)
+                     A: android:mimeType(0x01010026)="*/*" (Raw: "*/*")
+                 E: intent (line=43)
+                   E: action (line=44)
+                     A: android:name(0x01010003)="android.intent.action.VIEW" (Raw: "android.intent.action.VIEW")
+                   E: category (line=46)
+                     A: android:name(0x01010003)="android.intent.category.BROWSABLE" (Raw: "android.intent.category.BROWSABLE")
+                   E: data (line=48)
+                     A: android:scheme(0x01010027)="https" (Raw: "https")
+                 E: intent (line=51)
+                   E: action (line=52)
+                     A: android:name(0x01010003)="android.support.customtabs.action.CustomTabsService" (Raw: "android.support.customtabs.action.CustomTabsService")
+                 E: intent (line=55)
+                   E: action (line=56)
+                     A: android:name(0x01010003)="android.intent.action.INSERT" (Raw: "android.intent.action.INSERT")
+                   E: data (line=58)
+                     A: android:mimeType(0x01010026)="vnd.android.cursor.dir/event" (Raw: "vnd.android.cursor.dir/event")
+                 E: intent (line=60)
+                   E: action (line=61)
+                     A: android:name(0x01010003)="android.intent.action.VIEW" (Raw: "android.intent.action.VIEW")
+                   E: data (line=63)
+                     A: android:scheme(0x01010027)="sms" (Raw: "sms")
+                 E: intent (line=65)
+                   E: action (line=66)
+                     A: android:name(0x01010003)="android.intent.action.DIAL" (Raw: "android.intent.action.DIAL")
+                   E: data (line=68)
+                     A: android:path(0x0101002a)="tel:" (Raw: "tel:")
+               E: uses-feature (line=72)
+                 A: android:name(0x01010003)="android.hardware.camera.any" (Raw: "android.hardware.camera.any")
+               E: uses-permission (line=74)
+                 A: android:name(0x01010003)="android.permission.WRITE_EXTERNAL_STORAGE" (Raw: "android.permission.WRITE_EXTERNAL_STORAGE")
+                 A: android:maxSdkVersion(0x01010271)=(type 0x10)0x1c
+               E: uses-permission (line=77)
+                 A: android:name(0x01010003)="android.permission.READ_EXTERNAL_STORAGE" (Raw: "android.permission.READ_EXTERNAL_STORAGE")
+               E: uses-permission (line=78)
+                 A: android:name(0x01010003)="android.permission.ACCESS_NETWORK_STATE" (Raw: "android.permission.ACCESS_NETWORK_STATE")
+               E: uses-permission (line=79)
+                 A: android:name(0x01010003)="com.google.android.c2dm.permission.RECEIVE" (Raw: "com.google.android.c2dm.permission.RECEIVE")
+               E: uses-permission (line=80)
+                 A: android:name(0x01010003)="android.permission.READ_PHONE_STATE" (Raw: "android.permission.READ_PHONE_STATE")
+               E: uses-permission (line=81)
+                 A: android:name(0x01010003)="android.permission.ACCESS_WIFI_STATE" (Raw: "android.permission.ACCESS_WIFI_STATE")
+               E: uses-permission (line=82)
+                 A: android:name(0x01010003)="android.permission.BLUETOOTH" (Raw: "android.permission.BLUETOOTH")
+               E: uses-permission (line=83)
+                 A: android:name(0x01010003)="android.permission.BLUETOOTH_CONNECT" (Raw: "android.permission.BLUETOOTH_CONNECT")
+               E: uses-permission (line=84)
+                 A: android:name(0x01010003)="com.google.android.gms.permission.AD_ID" (Raw: "com.google.android.gms.permission.AD_ID")
+               E: uses-permission (line=85)
+                 A: android:name(0x01010003)="android.permission.ACCESS_ADSERVICES_AD_ID" (Raw: "android.permission.ACCESS_ADSERVICES_AD_ID")
+               E: uses-permission (line=86)
+                 A: android:name(0x01010003)="android.permission.ACCESS_ADSERVICES_ATTRIBUTION" (Raw: "android.permission.ACCESS_ADSERVICES_ATTRIBUTION")
+               E: uses-permission (line=87)
+                 A: android:name(0x01010003)="android.permission.ACCESS_ADSERVICES_TOPICS" (Raw: "android.permission.ACCESS_ADSERVICES_TOPICS")
+               E: uses-permission (line=88)
+                 A: android:name(0x01010003)="com.google.android.providers.gsf.permission.READ_GSERVICES" (Raw: "com.google.android.providers.gsf.permission.READ_GSERVICES")
+               E: uses-permission (line=89)
+                 A: android:name(0x01010003)="android.permission.USE_BIOMETRIC" (Raw: "android.permission.USE_BIOMETRIC")
+               E: uses-permission (line=90)
+                 A: android:name(0x01010003)="android.permission.USE_FINGERPRINT" (Raw: "android.permission.USE_FINGERPRINT")
+               E: permission (line=92)
+                 A: android:name(0x01010003)="com.weafrica_music.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION" (Raw: "com.weafrica_music.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION")
+                 A: android:protectionLevel(0x01010009)=(type 0x11)0x2
+               E: uses-permission (line=96)
+                 A: android:name(0x01010003)="com.weafrica_music.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION" (Raw: "com.weafrica_music.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION")
+               E: uses-permission (line=97)
+                 A: android:name(0x01010003)="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" (Raw: "android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION")
+               E: application (line=99)
+                 A: android:label(0x01010001)=@0x7f0f001e
+                 A: android:icon(0x01010002)=@0x7f0d0001
+                 A: android:name(0x01010003)="android.app.Application" (Raw: "android.app.Application")
+                 A: android:debuggable(0x0101000f)=(type 0x12)0xffffffff
+                 A: android:extractNativeLibs(0x010104ea)=(type 0x12)0x0
+                 A: android:usesCleartextTraffic(0x010104ec)=(type 0x12)0xffffffff
+                 A: android:appComponentFactory(0x0101057a)="androidx.core.app.CoreComponentFactory" (Raw: "androidx.core.app.CoreComponentFactory")
+                 E: activity (line=107)
+                   A: android:theme(0x01010000)=@0x7f1000a2
+                   A: android:name(0x01010003)="com.weafrica_music.MainActivity" (Raw: "com.weafrica_music.MainActivity")
+                   A: android:exported(0x01010010)=(type 0x12)0xffffffff
+                   A: android:taskAffinity(0x01010012)="" (Raw: "")
+                   A: android:launchMode(0x0101001d)=(type 0x10)0x1
+                   A: android:configChanges(0x0101001f)=(type 0x11)0x40003fb4
+                   A: android:windowSoftInputMode(0x0101022b)=(type 0x11)0x10
+                   A: android:hardwareAccelerated(0x010102d3)=(type 0x12)0xffffffff
+                   E: meta-data (line=123)
+                     A: android:name(0x01010003)="io.flutter.embedding.android.NormalTheme" (Raw: "io.flutter.embedding.android.NormalTheme")
+                     A: android:resource(0x01010025)=@0x7f1000a3
+                   E: intent-filter (line=127)
+                     E: action (line=128)
+                       A: android:name(0x01010003)="android.intent.action.MAIN" (Raw: "android.intent.action.MAIN")
+                     E: category (line=130)
+                       A: android:name(0x01010003)="android.intent.category.LAUNCHER" (Raw: "android.intent.category.LAUNCHER")
+                 E: meta-data (line=137)
+                   A: android:name(0x01010003)="flutterEmbedding" (Raw: "flutterEmbedding")
+                   A: android:value(0x01010024)=(type 0x10)0x2
+                 E: meta-data (line=140)
+                   A: android:name(0x01010003)="com.google.android.gms.ads.APPLICATION_ID" (Raw: "com.google.android.gms.ads.APPLICATION_ID")
+                   A: android:value(0x01010024)="ca-app-pub-5041738275497275~8120931338" (Raw: "ca-app-pub-5041738275497275~8120931338")
+                 E: meta-data (line=143)
+                   A: android:name(0x01010003)="com.google.firebase.messaging.default_notification_channel_id" (Raw: "com.google.firebase.messaging.default_notification_channel_id")
+                   A: android:value(0x01010024)="battle_challenges" (Raw: "battle_challenges")
+                 E: service (line=147)
+                   A: android:name(0x01010003)="com.ryanheise.audioservice.AudioService" (Raw: "com.ryanheise.audioservice.AudioService")
+                   A: android:exported(0x01010010)=(type 0x12)0x0
+                   A: android:foregroundServiceType(0x01010599)=(type 0x11)0x2
+                   E: intent-filter (line=151)
+                     E: action (line=152)
+                       A: android:name(0x01010003)="android.media.browse.MediaBrowserService" (Raw: "android.media.browse.MediaBrowserService")
+                 E: meta-data (line=156)
+                   A: android:name(0x01010003)="com.ryanheise.audioservice.foreground_service_type" (Raw: "com.ryanheise.audioservice.foreground_service_type")
+                   A: android:value(0x01010024)="mediaPlayback" (Raw: "mediaPlayback")
+                 E: service (line=160)
+                   A: android:name(0x01010003)="com.google.firebase.components.ComponentDiscoveryService" (Raw: "com.google.firebase.components.ComponentDiscoveryService")
+                   A: android:exported(0x01010010)=(type 0x12)0x0
+                   A: android:directBootAware(0x01010505)=(type 0x12)0xffffffff
+                   E: meta-data (line=164)
+                     A: android:name(0x01010003)="com.google.firebase.components:io.flutter.plugins.firebase.database.FlutterFirebaseAppRegistrar" (Raw: "com.google.firebase.components:io.flutter.plugins.firebase.database.FlutterFirebaseAppRegistrar")
+                     A: android:value(0x01010024)="com.google.firebase.components.ComponentRegistrar" (Raw: "com.google.firebase.components.ComponentRegistrar")
+                   E: meta-data (line=167)
+                     A: android:name(0x01010003)="com.google.firebase.components:io.flutter.plugins.firebase.auth.FlutterFirebaseAuthRegistrar" (Raw: "com.google.firebase.components:io.flutter.plugins.firebase.auth.FlutterFirebaseAuthRegistrar")
+                     A: android:value(0x01010024)="com.google.firebase.components.ComponentRegistrar" (Raw: "com.google.firebase.components.ComponentRegistrar")
+                   E: meta-data (line=170)
+                     A: android:name(0x01010003)="com.google.firebase.components:io.flutter.plugins.firebase.messaging.FlutterFirebaseAppRegistrar" (Raw: "com.google.firebase.components:io.flutter.plugins.firebase.messaging.FlutterFirebaseAppRegistrar")
+                     A: android:value(0x01010024)="com.google.firebase.components.ComponentRegistrar" (Raw: "com.google.firebase.components.ComponentRegistrar")
+                   E: meta-data (line=173)
+                     A: android:name(0x01010003)="com.google.firebase.components:io.flutter.plugins.firebase.core.FlutterFirebaseCoreRegistrar" (Raw: "com.google.firebase.components:io.flutter.plugins.firebase.core.FlutterFirebaseCoreRegistrar")
+                     A: android:value(0x01010024)="com.google.firebase.components.ComponentRegistrar" (Raw: "com.google.firebase.components.ComponentRegistrar")
+                   E: meta-data (line=176)
+                     A: android:name(0x01010003)="com.google.firebase.components:com.google.firebase.messaging.FirebaseMessagingKtxRegistrar" (Raw: "com.google.firebase.components:com.google.firebase.messaging.FirebaseMessagingKtxRegistrar")
+                     A: android:value(0x01010024)="com.google.firebase.components.ComponentRegistrar" (Raw: "com.google.firebase.components.ComponentRegistrar")
+                   E: meta-data (line=179)
+                     A: android:name(0x01010003)="com.google.firebase.components:com.google.firebase.messaging.FirebaseMessagingRegistrar" (Raw: "com.google.firebase.components:com.google.firebase.messaging.FirebaseMessagingRegistrar")
+                     A: android:value(0x01010024)="com.google.firebase.components.ComponentRegistrar" (Raw: "com.google.firebase.components.ComponentRegistrar")
+                   E: meta-data (line=182)
+                     A: android:name(0x01010003)="com.google.firebase.components:com.google.firebase.auth.FirebaseAuthRegistrar" (Raw: "com.google.firebase.components:com.google.firebase.auth.FirebaseAuthRegistrar")
+                     A: android:value(0x01010024)="com.google.firebase.components.ComponentRegistrar" (Raw: "com.google.firebase.components.ComponentRegistrar")
+                   E: meta-data (line=185)
+                     A: android:name(0x01010003)="com.google.firebase.components:com.google.firebase.database.FirebaseDatabaseKtxRegistrar" (Raw: "com.google.firebase.components:com.google.firebase.database.FirebaseDatabaseKtxRegistrar")
+                     A: android:value(0x01010024)="com.google.firebase.components.ComponentRegistrar" (Raw: "com.google.firebase.components.ComponentRegistrar")
+                   E: meta-data (line=188)
+                     A: android:name(0x01010003)="com.google.firebase.components:com.google.firebase.database.DatabaseRegistrar" (Raw: "com.google.firebase.components:com.google.firebase.database.DatabaseRegistrar")
+                     A: android:value(0x01010024)="com.google.firebase.components.ComponentRegistrar" (Raw: "com.google.firebase.components.ComponentRegistrar")
+                   E: meta-data (line=191)
+                     A: android:name(0x01010003)="com.google.firebase.components:com.google.firebase.installations.FirebaseInstallationsKtxRegistrar" (Raw: "com.google.firebase.components:com.google.firebase.installations.FirebaseInstallationsKtxRegistrar")
+                     A: android:value(0x01010024)="com.google.firebase.components.ComponentRegistrar" (Raw: "com.google.firebase.components.ComponentRegistrar")
+                   E: meta-data (line=194)
+                     A: android:name(0x01010003)="com.google.firebase.components:com.google.firebase.installations.FirebaseInstallationsRegistrar" (Raw: "com.google.firebase.components:com.google.firebase.installations.FirebaseInstallationsRegistrar")
+                     A: android:value(0x01010024)="com.google.firebase.components.ComponentRegistrar" (Raw: "com.google.firebase.components.ComponentRegistrar")
+                   E: meta-data (line=197)
+                     A: android:name(0x01010003)="com.google.firebase.components:com.google.firebase.FirebaseCommonKtxRegistrar" (Raw: "com.google.firebase.components:com.google.firebase.FirebaseCommonKtxRegistrar")
+                     A: android:value(0x01010024)="com.google.firebase.components.ComponentRegistrar" (Raw: "com.google.firebase.components.ComponentRegistrar")
+                   E: meta-data (line=200)
+                     A: android:name(0x01010003)="com.google.firebase.components:com.google.firebase.datatransport.TransportRegistrar" (Raw: "com.google.firebase.components:com.google.firebase.datatransport.TransportRegistrar")
+                     A: android:value(0x01010024)="com.google.firebase.components.ComponentRegistrar" (Raw: "com.google.firebase.components.ComponentRegistrar")
+                 E: provider (line=208)
+                   A: android:name(0x01010003)="dev.fluttercommunity.plus.share.ShareFileProvider" (Raw: "dev.fluttercommunity.plus.share.ShareFileProvider")
+                   A: android:exported(0x01010010)=(type 0x12)0x0
+                   A: android:authorities(0x01010018)="com.weafrica_music.flutter.share_provider" (Raw: "com.weafrica_music.flutter.share_provider")
+                   A: android:grantUriPermissions(0x0101001b)=(type 0x12)0xffffffff
+                   E: meta-data (line=213)
+                     A: android:name(0x01010003)="android.support.FILE_PROVIDER_PATHS" (Raw: "android.support.FILE_PROVIDER_PATHS")
+                     A: android:resource(0x01010025)=@0x7f120001
+                 E: receiver (line=221)
+                   A: android:name(0x01010003)="dev.fluttercommunity.plus.share.SharePlusPendingIntent" (Raw: "dev.fluttercommunity.plus.share.SharePlusPendingIntent")
+                   A: android:exported(0x01010010)=(type 0x12)0x0
+                   E: intent-filter (line=224)
+                     E: action (line=225)
+                       A: android:name(0x01010003)="EXTRA_CHOSEN_COMPONENT" (Raw: "EXTRA_CHOSEN_COMPONENT")
+                 E: meta-data (line=229)
+                   A: android:name(0x01010003)="io.flutter.embedded_views_preview" (Raw: "io.flutter.embedded_views_preview")
+                   A: android:value(0x01010024)=(type 0x12)0xffffffff
+                 E: service (line=233)
+                   A: android:name(0x01010003)="io.flutter.plugins.firebase.messaging.FlutterFirebaseMessagingBackgroundService" (Raw: "io.flutter.plugins.firebase.messaging.FlutterFirebaseMessagingBackgroundService")
+                   A: android:permission(0x01010006)="android.permission.BIND_JOB_SERVICE" (Raw: "android.permission.BIND_JOB_SERVICE")
+                   A: android:exported(0x01010010)=(type 0x12)0x0
+                 E: service (line=237)
+                   A: android:name(0x01010003)="io.flutter.plugins.firebase.messaging.FlutterFirebaseMessagingService" (Raw: "io.flutter.plugins.firebase.messaging.FlutterFirebaseMessagingService")
+                   A: android:exported(0x01010010)=(type 0x12)0x0
+                   E: intent-filter (line=240)
+                     E: action (line=241)
+                       A: android:name(0x01010003)="com.google.firebase.MESSAGING_EVENT" (Raw: "com.google.firebase.MESSAGING_EVENT")
+                 E: receiver (line=245)
+                   A: android:name(0x01010003)="io.flutter.plugins.firebase.messaging.FlutterFirebaseMessagingReceiver" (Raw: "io.flutter.plugins.firebase.messaging.FlutterFirebaseMessagingReceiver")
+                   A: android:permission(0x01010006)="com.google.android.c2dm.permission.SEND" (Raw: "com.google.android.c2dm.permission.SEND")
+                   A: android:exported(0x01010010)=(type 0x12)0xffffffff
+                   E: intent-filter (line=249)
+                     E: action (line=250)
+                       A: android:name(0x01010003)="com.google.android.c2dm.intent.RECEIVE" (Raw: "com.google.android.c2dm.intent.RECEIVE")
+                 E: provider (line=254)
+                   A: android:name(0x01010003)="io.flutter.plugins.firebase.messaging.FlutterFirebaseMessagingInitProvider" (Raw: "io.flutter.plugins.firebase.messaging.FlutterFirebaseMessagingInitProvider")
+                   A: android:exported(0x01010010)=(type 0x12)0x0
+                   A: android:authorities(0x01010018)="com.weafrica_music.flutterfirebasemessaginginitprovider" (Raw: "com.weafrica_music.flutterfirebasemessaginginitprovider")
+                   A: android:initOrder(0x0101001a)=(type 0x10)0x63
+                 E: receiver (line=260)
+                   A: android:name(0x01010003)="com.google.firebase.iid.FirebaseInstanceIdReceiver" (Raw: "com.google.firebase.iid.FirebaseInstanceIdReceiver")
+                   A: android:permission(0x01010006)="com.google.android.c2dm.permission.SEND" (Raw: "com.google.android.c2dm.permission.SEND")
+                   A: android:exported(0x01010010)=(type 0x12)0xffffffff
+                   E: intent-filter (line=264)
+                     E: action (line=265)
+                       A: android:name(0x01010003)="com.google.android.c2dm.intent.RECEIVE" (Raw: "com.google.android.c2dm.intent.RECEIVE")
+                   E: meta-data (line=268)
+                     A: android:name(0x01010003)="com.google.android.gms.cloudmessaging.FINISHED_AFTER_HANDLED" (Raw: "com.google.android.gms.cloudmessaging.FINISHED_AFTER_HANDLED")
+                     A: android:value(0x01010024)=(type 0x12)0xffffffff
+                 E: service (line=276)
+                   A: android:name(0x01010003)="com.google.firebase.messaging.FirebaseMessagingService" (Raw: "com.google.firebase.messaging.FirebaseMessagingService")
+                   A: android:exported(0x01010010)=(type 0x12)0x0
+                   A: android:directBootAware(0x01010505)=(type 0x12)0xffffffff
+                   E: intent-filter (line=280)
+                     A: android:priority(0x0101001c)=(type 0x10)0xfffffe0c
+                     E: action (line=281)
+                       A: android:name(0x01010003)="com.google.firebase.MESSAGING_EVENT" (Raw: "com.google.firebase.MESSAGING_EVENT")
+                 E: service (line=284)
+                   A: android:name(0x01010003)="androidx.camera.core.impl.MetadataHolderService" (Raw: "androidx.camera.core.impl.MetadataHolderService")
+                   A: android:enabled(0x0101000e)=(type 0x12)0x0
+                   A: android:exported(0x01010010)=(type 0x12)0x0
+                   E: meta-data (line=288)
+                     A: android:name(0x01010003)="androidx.camera.core.impl.MetadataHolderService.DEFAULT_CONFIG_PROVIDER" (Raw: "androidx.camera.core.impl.MetadataHolderService.DEFAULT_CONFIG_PROVIDER")
+                     A: android:value(0x01010024)="androidx.camera.camera2.Camera2Config$DefaultProvider" (Raw: "androidx.camera.camera2.Camera2Config$DefaultProvider")
+                 E: activity (line=293)
+                   A: android:theme(0x01010000)=@0x01030010
+                   A: android:name(0x01010003)="com.google.firebase.auth.internal.GenericIdpActivity" (Raw: "com.google.firebase.auth.internal.GenericIdpActivity")
+                   A: android:exported(0x01010010)=(type 0x12)0xffffffff
+                   A: android:excludeFromRecents(0x01010017)=(type 0x12)0xffffffff
+                   A: android:launchMode(0x0101001d)=(type 0x10)0x2
+                   E: intent-filter (line=299)
+                     E: action (line=300)
+                       A: android:name(0x01010003)="android.intent.action.VIEW" (Raw: "android.intent.action.VIEW")
+                     E: category (line=302)
+                       A: android:name(0x01010003)="android.intent.category.DEFAULT" (Raw: "android.intent.category.DEFAULT")
+                     E: category (line=303)
+                       A: android:name(0x01010003)="android.intent.category.BROWSABLE" (Raw: "android.intent.category.BROWSABLE")
+                     E: data (line=305)
+                       A: android:scheme(0x01010027)="genericidp" (Raw: "genericidp")
+                       A: android:host(0x01010028)="firebase.auth" (Raw: "firebase.auth")
+                       A: android:path(0x0101002a)="/" (Raw: "/")
+                 E: activity (line=311)
+                   A: android:theme(0x01010000)=@0x01030010
+                   A: android:name(0x01010003)="com.google.firebase.auth.internal.RecaptchaActivity" (Raw: "com.google.firebase.auth.internal.RecaptchaActivity")
+                   A: android:exported(0x01010010)=(type 0x12)0xffffffff
+                   A: android:excludeFromRecents(0x01010017)=(type 0x12)0xffffffff
+                   A: android:launchMode(0x0101001d)=(type 0x10)0x2
+                   E: intent-filter (line=317)
+                     E: action (line=318)
+                       A: android:name(0x01010003)="android.intent.action.VIEW" (Raw: "android.intent.action.VIEW")
+                     E: category (line=320)
+                       A: android:name(0x01010003)="android.intent.category.DEFAULT" (Raw: "android.intent.category.DEFAULT")
+                     E: category (line=321)
+                       A: android:name(0x01010003)="android.intent.category.BROWSABLE" (Raw: "android.intent.category.BROWSABLE")
+                     E: data (line=323)
+                       A: android:scheme(0x01010027)="recaptcha" (Raw: "recaptcha")
+                       A: android:host(0x01010028)="firebase.auth" (Raw: "firebase.auth")
+                       A: android:path(0x0101002a)="/" (Raw: "/")
+                 E: provider (line=330)
+                   A: android:name(0x01010003)="com.google.firebase.provider.FirebaseInitProvider" (Raw: "com.google.firebase.provider.FirebaseInitProvider")
+                   A: android:exported(0x01010010)=(type 0x12)0x0
+                   A: android:authorities(0x01010018)="com.weafrica_music.firebaseinitprovider" (Raw: "com.weafrica_music.firebaseinitprovider")
+                   A: android:initOrder(0x0101001a)=(type 0x10)0x64
+                   A: android:directBootAware(0x01010505)=(type 0x12)0xffffffff
+                 E: provider (line=336)
+                   A: android:name(0x01010003)="io.flutter.plugins.imagepicker.ImagePickerFileProvider" (Raw: "io.flutter.plugins.imagepicker.ImagePickerFileProvider")
+                   A: android:exported(0x01010010)=(type 0x12)0x0
+                   A: android:authorities(0x01010018)="com.weafrica_music.flutter.image_provider" (Raw: "com.weafrica_music.flutter.image_provider")
+                   A: android:grantUriPermissions(0x0101001b)=(type 0x12)0xffffffff
+                   E: meta-data (line=341)
+                     A: android:name(0x01010003)="android.support.FILE_PROVIDER_PATHS" (Raw: "android.support.FILE_PROVIDER_PATHS")
+                     A: android:resource(0x01010025)=@0x7f120000
+                 E: service (line=345)
+                   A: android:name(0x01010003)="com.google.android.gms.metadata.ModuleDependencies" (Raw: "com.google.android.gms.metadata.ModuleDependencies")
+                   A: android:enabled(0x0101000e)=(type 0x12)0x0
+                   A: android:exported(0x01010010)=(type 0x12)0x0
+                   E: intent-filter (line=349)
+                     E: action (line=350)
+                       A: android:name(0x01010003)="com.google.android.gms.metadata.MODULE_DEPENDENCIES" (Raw: "com.google.android.gms.metadata.MODULE_DEPENDENCIES")
+                   E: meta-data (line=353)
+                     A: android:name(0x01010003)="photopicker_activity:0:required" (Raw: "photopicker_activity:0:required")
+                     A: android:value(0x01010024)="" (Raw: "")
+                 E: activity (line=358)
+                   A: android:theme(0x01010000)=@0x01030007
+                   A: android:name(0x01010003)="io.flutter.plugins.urllauncher.WebViewActivity" (Raw: "io.flutter.plugins.urllauncher.WebViewActivity")
+                   A: android:exported(0x01010010)=(type 0x12)0x0
+                 E: service (line=363)
+                   A: android:name(0x01010003)="androidx.credentials.playservices.CredentialProviderMetadataHolder" (Raw: "androidx.credentials.playservices.CredentialProviderMetadataHolder")
+                   A: android:enabled(0x0101000e)=(type 0x12)0xffffffff
+                   A: android:exported(0x01010010)=(type 0x12)0x0
+                   E: meta-data (line=367)
+                     A: android:name(0x01010003)="androidx.credentials.CREDENTIAL_PROVIDER_KEY" (Raw: "androidx.credentials.CREDENTIAL_PROVIDER_KEY")
+                     A: android:value(0x01010024)="androidx.credentials.playservices.CredentialProviderPlayServicesImpl" (Raw: "androidx.credentials.playservices.CredentialProviderPlayServicesImpl")
+                 E: activity (line=372)
+                   A: android:theme(0x01010000)=@0x7f100131
+                   A: android:name(0x01010003)="androidx.credentials.playservices.HiddenActivity" (Raw: "androidx.credentials.playservices.HiddenActivity")
+                   A: android:enabled(0x0101000e)=(type 0x12)0xffffffff
+                   A: android:exported(0x01010010)=(type 0x12)0x0
+                   A: android:configChanges(0x0101001f)=(type 0x11)0x5a0
+                   A: android:fitsSystemWindows(0x010100dd)=(type 0x12)0xffffffff
+                 E: activity (line=380)
+                   A: android:theme(0x01010000)=@0x7f100131
+                   A: android:name(0x01010003)="androidx.credentials.playservices.IdentityCredentialApiHiddenActivity" (Raw: "androidx.credentials.playservices.IdentityCredentialApiHiddenActivity")
+                   A: android:enabled(0x0101000e)=(type 0x12)0xffffffff
+                   A: android:exported(0x01010010)=(type 0x12)0x0
+                   A: android:configChanges(0x0101001f)=(type 0x11)0x5a0
+                   A: android:fitsSystemWindows(0x010100dd)=(type 0x12)0xffffffff
+                 E: activity (line=388)
+                   A: android:theme(0x01010000)=@0x01030010
+                   A: android:name(0x01010003)="com.google.android.gms.auth.api.signin.internal.SignInHubActivity" (Raw: "com.google.android.gms.auth.api.signin.internal.SignInHubActivity")
+                   A: android:exported(0x01010010)=(type 0x12)0x0
+                   A: android:excludeFromRecents(0x01010017)=(type 0x12)0xffffffff
+                 E: service (line=397)
+                   A: android:name(0x01010003)="com.google.android.gms.auth.api.signin.RevocationBoundService" (Raw: "com.google.android.gms.auth.api.signin.RevocationBoundService")
+                   A: android:permission(0x01010006)="com.google.android.gms.auth.api.signin.permission.REVOCATION_NOTIFICATION" (Raw: "com.google.android.gms.auth.api.signin.permission.REVOCATION_NOTIFICATION")
+                   A: android:exported(0x01010010)=(type 0x12)0xffffffff
+                   A: android:visibleToInstantApps(0x01010531)=(type 0x12)0xffffffff
+                 E: activity (line=402)
+                   A: android:theme(0x01010000)=@0x0103000f
+                   A: android:name(0x01010003)="com.google.android.gms.ads.AdActivity" (Raw: "com.google.android.gms.ads.AdActivity")
+                   A: android:exported(0x01010010)=(type 0x12)0x0
+                   A: android:configChanges(0x0101001f)=(type 0x11)0xfb0
+                   A: android:enableOnBackInvokedCallback(0x0101066c)=(type 0x12)0x0
+                 E: provider (line=409)
+                   A: android:name(0x01010003)="com.google.android.gms.ads.MobileAdsInitProvider" (Raw: "com.google.android.gms.ads.MobileAdsInitProvider")
+                   A: android:exported(0x01010010)=(type 0x12)0x0
+                   A: android:authorities(0x01010018)="com.weafrica_music.mobileadsinitprovider" (Raw: "com.weafrica_music.mobileadsinitprovider")
+                   A: android:initOrder(0x0101001a)=(type 0x10)0x64
+                 E: service (line=415)
+                   A: android:name(0x01010003)="com.google.android.gms.ads.AdService" (Raw: "com.google.android.gms.ads.AdService")
+                   A: android:enabled(0x0101000e)=(type 0x12)0xffffffff
+                   A: android:exported(0x01010010)=(type 0x12)0x0
+                 E: activity (line=420)
+                   A: android:name(0x01010003)="com.google.android.gms.ads.OutOfContextTestingActivity" (Raw: "com.google.android.gms.ads.OutOfContextTestingActivity")
+                   A: android:exported(0x01010010)=(type 0x12)0x0
+                   A: android:configChanges(0x0101001f)=(type 0x11)0xfb0
+                 E: activity (line=424)
+                   A: android:theme(0x01010000)=@0x01030010
+                   A: android:name(0x01010003)="com.google.android.gms.ads.NotificationHandlerActivity" (Raw: "com.google.android.gms.ads.NotificationHandlerActivity")
+                   A: android:exported(0x01010010)=(type 0x12)0x0
+                   A: android:taskAffinity(0x01010012)="" (Raw: "")
+                   A: android:excludeFromRecents(0x01010017)=(type 0x12)0xffffffff
+                   A: android:launchMode(0x0101001d)=(type 0x10)0x2
+                 E: meta-data (line=432)
+                   A: android:name(0x01010003)="com.google.android.gms.ads.flag.OPTIMIZE_AD_LOADING" (Raw: "com.google.android.gms.ads.flag.OPTIMIZE_AD_LOADING")
+                   A: android:value(0x01010024)=(type 0x12)0xffffffff
+                 E: meta-data (line=435)
+                   A: android:name(0x01010003)="com.google.android.gms.ads.flag.OPTIMIZE_INITIALIZATION" (Raw: "com.google.android.gms.ads.flag.OPTIMIZE_INITIALIZATION")
+                   A: android:value(0x01010024)=(type 0x12)0xffffffff
+                 E: uses-library (line=439)
+                   A: android:name(0x01010003)="androidx.window.extensions" (Raw: "androidx.window.extensions")
+                   A: android:required(0x0101028e)=(type 0x12)0x0
+                 E: uses-library (line=442)
+                   A: android:name(0x01010003)="androidx.window.sidecar" (Raw: "androidx.window.sidecar")
+                   A: android:required(0x0101028e)=(type 0x12)0x0
+                 E: activity (line=446)
+                   A: android:theme(0x01010000)=@0x01030010
+                   A: android:name(0x01010003)="com.google.android.gms.common.api.GoogleApiActivity" (Raw: "com.google.android.gms.common.api.GoogleApiActivity")
+                   A: android:exported(0x01010010)=(type 0x12)0x0
+                 E: uses-library (line=451)
+                   A: android:name(0x01010003)="android.ext.adservices" (Raw: "android.ext.adservices")
+                   A: android:required(0x0101028e)=(type 0x12)0x0
+                 E: provider (line=455)
+                   A: android:name(0x01010003)="androidx.startup.InitializationProvider" (Raw: "androidx.startup.InitializationProvider")
+                   A: android:exported(0x01010010)=(type 0x12)0x0
+                   A: android:authorities(0x01010018)="com.weafrica_music.androidx-startup" (Raw: "com.weafrica_music.androidx-startup")
+                   E: meta-data (line=459)
+                     A: android:name(0x01010003)="androidx.work.WorkManagerInitializer" (Raw: "androidx.work.WorkManagerInitializer")
+                     A: android:value(0x01010024)="androidx.startup" (Raw: "androidx.startup")
+                   E: meta-data (line=462)
+                     A: android:name(0x01010003)="androidx.lifecycle.ProcessLifecycleInitializer" (Raw: "androidx.lifecycle.ProcessLifecycleInitializer")
+                     A: android:value(0x01010024)="androidx.startup" (Raw: "androidx.startup")
+                   E: meta-data (line=465)
+                     A: android:name(0x01010003)="androidx.profileinstaller.ProfileInstallerInitializer" (Raw: "androidx.profileinstaller.ProfileInstallerInitializer")
+                     A: android:value(0x01010024)="androidx.startup" (Raw: "androidx.startup")
+                 E: service (line=470)
+                   A: android:name(0x01010003)="androidx.work.impl.background.systemalarm.SystemAlarmService" (Raw: "androidx.work.impl.background.systemalarm.SystemAlarmService")
+                   A: android:enabled(0x0101000e)=@0x7f050004
+                   A: android:exported(0x01010010)=(type 0x12)0x0
+                   A: android:directBootAware(0x01010505)=(type 0x12)0x0
+                 E: service (line=475)
+                   A: android:name(0x01010003)="androidx.work.impl.background.systemjob.SystemJobService" (Raw: "androidx.work.impl.background.systemjob.SystemJobService")
+                   A: android:permission(0x01010006)="android.permission.BIND_JOB_SERVICE" (Raw: "android.permission.BIND_JOB_SERVICE")
+                   A: android:enabled(0x0101000e)=@0x7f050006
+                   A: android:exported(0x01010010)=(type 0x12)0xffffffff
+                   A: android:directBootAware(0x01010505)=(type 0x12)0x0
+                 E: service (line=481)
+                   A: android:name(0x01010003)="androidx.work.impl.foreground.SystemForegroundService" (Raw: "androidx.work.impl.foreground.SystemForegroundService")
+                   A: android:enabled(0x0101000e)=@0x7f050005
+                   A: android:exported(0x01010010)=(type 0x12)0x0
+                   A: android:directBootAware(0x01010505)=(type 0x12)0x0
+                 E: receiver (line=487)
+                   A: android:name(0x01010003)="androidx.work.impl.utils.ForceStopRunnable$BroadcastReceiver" (Raw: "androidx.work.impl.utils.ForceStopRunnable$BroadcastReceiver")
+                   A: android:enabled(0x0101000e)=(type 0x12)0xffffffff
+                   A: android:exported(0x01010010)=(type 0x12)0x0
+                   A: android:directBootAware(0x01010505)=(type 0x12)0x0
+                 E: receiver (line=492)
+                   A: android:name(0x01010003)="androidx.work.impl.background.systemalarm.ConstraintProxy$BatteryChargingProxy" (Raw: "androidx.work.impl.background.systemalarm.ConstraintProxy$BatteryChargingProxy")
+                   A: android:enabled(0x0101000e)=(type 0x12)0x0
+                   A: android:exported(0x01010010)=(type 0x12)0x0
+                   A: android:directBootAware(0x01010505)=(type 0x12)0x0
+                   E: intent-filter (line=497)
+                     E: action (line=498)
+                       A: android:name(0x01010003)="android.intent.action.ACTION_POWER_CONNECTED" (Raw: "android.intent.action.ACTION_POWER_CONNECTED")
+                     E: action (line=499)
+                       A: android:name(0x01010003)="android.intent.action.ACTION_POWER_DISCONNECTED" (Raw: "android.intent.action.ACTION_POWER_DISCONNECTED")
+                 E: receiver (line=502)
+                   A: android:name(0x01010003)="androidx.work.impl.background.systemalarm.ConstraintProxy$BatteryNotLowProxy" (Raw: "androidx.work.impl.background.systemalarm.ConstraintProxy$BatteryNotLowProxy")
+                   A: android:enabled(0x0101000e)=(type 0x12)0x0
+                   A: android:exported(0x01010010)=(type 0x12)0x0
+                   A: android:directBootAware(0x01010505)=(type 0x12)0x0
+                   E: intent-filter (line=507)
+                     E: action (line=508)
+                       A: android:name(0x01010003)="android.intent.action.BATTERY_OKAY" (Raw: "android.intent.action.BATTERY_OKAY")
+                     E: action (line=509)
+                       A: android:name(0x01010003)="android.intent.action.BATTERY_LOW" (Raw: "android.intent.action.BATTERY_LOW")
+                 E: receiver (line=512)
+                   A: android:name(0x01010003)="androidx.work.impl.background.systemalarm.ConstraintProxy$StorageNotLowProxy" (Raw: "androidx.work.impl.background.systemalarm.ConstraintProxy$StorageNotLowProxy")
+                   A: android:enabled(0x0101000e)=(type 0x12)0x0
+                   A: android:exported(0x01010010)=(type 0x12)0x0
+                   A: android:directBootAware(0x01010505)=(type 0x12)0x0
+                   E: intent-filter (line=517)
+                     E: action (line=518)
+                       A: android:name(0x01010003)="android.intent.action.DEVICE_STORAGE_LOW" (Raw: "android.intent.action.DEVICE_STORAGE_LOW")
+                     E: action (line=519)
+                       A: android:name(0x01010003)="android.intent.action.DEVICE_STORAGE_OK" (Raw: "android.intent.action.DEVICE_STORAGE_OK")
+                 E: receiver (line=522)
+                   A: android:name(0x01010003)="androidx.work.impl.background.systemalarm.ConstraintProxy$NetworkStateProxy" (Raw: "androidx.work.impl.background.systemalarm.ConstraintProxy$NetworkStateProxy")
+                   A: android:enabled(0x0101000e)=(type 0x12)0x0
+                   A: android:exported(0x01010010)=(type 0x12)0x0
+                   A: android:directBootAware(0x01010505)=(type 0x12)0x0
+                   E: intent-filter (line=527)
+                     E: action (line=528)
+                       A: android:name(0x01010003)="android.net.conn.CONNECTIVITY_CHANGE" (Raw: "android.net.conn.CONNECTIVITY_CHANGE")
+                 E: receiver (line=531)
+                   A: android:name(0x01010003)="androidx.work.impl.background.systemalarm.RescheduleReceiver" (Raw: "androidx.work.impl.background.systemalarm.RescheduleReceiver")
+                   A: android:enabled(0x0101000e)=(type 0x12)0x0
+                   A: android:exported(0x01010010)=(type 0x12)0x0
+                   A: android:directBootAware(0x01010505)=(type 0x12)0x0
+                   E: intent-filter (line=536)
+                     E: action (line=537)
+                       A: android:name(0x01010003)="android.intent.action.BOOT_COMPLETED" (Raw: "android.intent.action.BOOT_COMPLETED")
+                     E: action (line=538)
+                       A: android:name(0x01010003)="android.intent.action.TIME_SET" (Raw: "android.intent.action.TIME_SET")
+                     E: action (line=539)
+                       A: android:name(0x01010003)="android.intent.action.TIMEZONE_CHANGED" (Raw: "android.intent.action.TIMEZONE_CHANGED")
+                 E: receiver (line=542)
+                   A: android:name(0x01010003)="androidx.work.impl.background.systemalarm.ConstraintProxyUpdateReceiver" (Raw: "androidx.work.impl.background.systemalarm.ConstraintProxyUpdateReceiver")
+                   A: android:enabled(0x0101000e)=@0x7f050004
+                   A: android:exported(0x01010010)=(type 0x12)0x0
+                   A: android:directBootAware(0x01010505)=(type 0x12)0x0
+                   E: intent-filter (line=547)
+                     E: action (line=548)
+                       A: android:name(0x01010003)="androidx.work.impl.background.systemalarm.UpdateProxies" (Raw: "androidx.work.impl.background.systemalarm.UpdateProxies")
+                 E: receiver (line=551)
+                   A: android:name(0x01010003)="androidx.work.impl.diagnostics.DiagnosticsReceiver" (Raw: "androidx.work.impl.diagnostics.DiagnosticsReceiver")
+                   A: android:permission(0x01010006)="android.permission.DUMP" (Raw: "android.permission.DUMP")
+                   A: android:enabled(0x0101000e)=(type 0x12)0xffffffff
+                   A: android:exported(0x01010010)=(type 0x12)0xffffffff
+                   A: android:directBootAware(0x01010505)=(type 0x12)0x0
+                   E: intent-filter (line=557)
+                     E: action (line=558)
+                       A: android:name(0x01010003)="androidx.work.diagnostics.REQUEST_DIAGNOSTICS" (Raw: "androidx.work.diagnostics.REQUEST_DIAGNOSTICS")
+                 E: meta-data (line=562)
+                   A: android:name(0x01010003)="com.google.android.gms.version" (Raw: "com.google.android.gms.version")
+                   A: android:value(0x01010024)=@0x7f0a0004
+                 E: service (line=566)
+                   A: android:name(0x01010003)="com.google.android.datatransport.runtime.backends.TransportBackendDiscovery" (Raw: "com.google.android.datatransport.runtime.backends.TransportBackendDiscovery")
+                   A: android:exported(0x01010010)=(type 0x12)0x0
+                   E: meta-data (line=569)
+                     A: android:name(0x01010003)="backend:com.google.android.datatransport.cct.CctBackendFactory" (Raw: "backend:com.google.android.datatransport.cct.CctBackendFactory")
+                     A: android:value(0x01010024)="cct" (Raw: "cct")
+                 E: service (line=573)
+                   A: android:name(0x01010003)="com.google.android.datatransport.runtime.scheduling.jobscheduling.JobInfoSchedulerService" (Raw: "com.google.android.datatransport.runtime.scheduling.jobscheduling.JobInfoSchedulerService")
+                   A: android:permission(0x01010006)="android.permission.BIND_JOB_SERVICE" (Raw: "android.permission.BIND_JOB_SERVICE")
+                   A: android:exported(0x01010010)=(type 0x12)0x0
+                 E: receiver (line=579)
+                   A: android:name(0x01010003)="com.google.android.datatransport.runtime.scheduling.jobscheduling.AlarmManagerSchedulerBroadcastReceiver" (Raw: "com.google.android.datatransport.runtime.scheduling.jobscheduling.AlarmManagerSchedulerBroadcastReceiver")
+                   A: android:exported(0x01010010)=(type 0x12)0x0
+                 E: receiver (line=582)
+                   A: android:name(0x01010003)="androidx.profileinstaller.ProfileInstallReceiver" (Raw: "androidx.profileinstaller.ProfileInstallReceiver")
+                   A: android:permission(0x01010006)="android.permission.DUMP" (Raw: "android.permission.DUMP")
+                   A: android:enabled(0x0101000e)=(type 0x12)0xffffffff
+                   A: android:exported(0x01010010)=(type 0x12)0xffffffff
+                   A: android:directBootAware(0x01010505)=(type 0x12)0x0
+                   E: intent-filter (line=588)
+                     E: action (line=589)
+                       A: android:name(0x01010003)="androidx.profileinstaller.action.INSTALL_PROFILE" (Raw: "androidx.profileinstaller.action.INSTALL_PROFILE")
+                   E: intent-filter (line=591)
+                     E: action (line=592)
+                       A: android:name(0x01010003)="androidx.profileinstaller.action.SKIP_FILE" (Raw: "androidx.profileinstaller.action.SKIP_FILE")
+                   E: intent-filter (line=594)
+                     E: action (line=595)
+                       A: android:name(0x01010003)="androidx.profileinstaller.action.SAVE_PROFILE" (Raw: "androidx.profileinstaller.action.SAVE_PROFILE")
+                   E: intent-filter (line=597)
+                     E: action (line=598)
+                       A: android:name(0x01010003)="androidx.profileinstaller.action.BENCHMARK_OPERATION" (Raw: "androidx.profileinstaller.action.BENCHMARK_OPERATION")
+                 E: service (line=602)
+                   A: android:name(0x01010003)="androidx.room.MultiInstanceInvalidationService" (Raw: "androidx.room.MultiInstanceInvalidationService")
+                   A: android:exported(0x01010010)=(type 0x12)0x0
+                   A: android:directBootAware(0x01010505)=(type 0x12)0xffffffff
+                 E: activity (line=607)
+                   A: android:theme(0x01010000)=@0x0103000f
+                   A: android:name(0x01010003)="io.agora.rtc2.extensions.MediaProjectionMgr$LocalScreenCaptureAssistantActivity" (Raw: "io.agora.rtc2.extensions.MediaProjectionMgr$LocalScreenCaptureAssistantActivity")
+                   A: android:screenOrientation(0x0101001e)=(type 0x10)0xffffffff
+                   A: android:configChanges(0x0101001f)=(type 0x11)0x480
+                 E: service (line=613)
+                   A: android:name(0x01010003)="io.agora.rtc2.extensions.MediaProjectionMgr$LocalScreenSharingService" (Raw: "io.agora.rtc2.extensions.MediaProjectionMgr$LocalScreenSharingService")
+                   A: android:foregroundServiceType(0x01010599)=(type 0x11)0x20
+                 E: activity (line=617)
+                   A: android:theme(0x01010000)=@0x7f100133
+                   A: android:name(0x01010003)="com.google.android.play.core.common.PlayCoreDialogWrapperActivity" (Raw: "com.google.android.play.core.common.PlayCoreDialogWrapperActivity")
+                   A: android:exported(0x01010010)=(type 0x12)0x0
+                   A: android:stateNotNeeded(0x01010016)=(type 0x12)0xffffffff
+[  +38 ms] executing: /Users/weafrica/Library/Android/sdk/platform-tools/adb -s RF8Y80QKZFK shell -x logcat -v time -t 1
+[  +55 ms] <- compile package:weafrica_music/main.dart
+[ +615 ms] --------- beginning of main
+           04-16 13:23:34.575 D/AALLightSensor( 1363): oldLux=148 [SA:-1 LA:-1] newLux=148 (oriLux: 147)
+[ +308 ms] executing: /Users/weafrica/Library/Android/sdk/platform-tools/adb version
+[ +129 ms] Android Debug Bridge version 1.0.41
+           Version 36.0.0-13206524
+           Installed as /Users/weafrica/Library/Android/sdk/platform-tools/adb
+           Running on Darwin 23.6.0 (x86_64)
+[  +25 ms] executing: /Users/weafrica/Library/Android/sdk/platform-tools/adb start-server
+[ +246 ms] Building APK
+[+1474 ms] Top-level Gradle build file not found, skipping migration of task "clean".
+[   +2 ms] Android Studio version could not be detected, skipping Gradle-Java version compatibility check.
+[  +46 ms] CMake project not found, skipping support Android 15 16k page size migration.
+[  +11 ms] Using gradle from /Users/weafrica/weafrica_music/android/gradlew.
+[ +178 ms] LocalFile: '/Users/weafrica/weafrica_music/android/build.gradle.kts' doesn't provide an AGP version. Checking settings.
+[   +7 ms] LocalFile: '/Users/weafrica/weafrica_music/android/settings.gradle.kts' provides AGP version: 8.11.1
+[ +434 ms] Running Gradle task 'assembleDebug'...
+[  +39 ms] executing: [/Users/weafrica/weafrica_music/android/] /Users/weafrica/weafrica_music/android/gradlew --full-stacktrace --info -Pverbose=true -Ptarget-platform=android-arm64 -Ptarget=/Users/weafrica/weafrica_music/lib/main.dart -Pbase-application-name=android.app.Application -Pdart-defines=RkxVVFRFUl9WRVJTSU9OPTMuNDEuNA==,RkxVVFRFUl9DSEFOTkVMPXN0YWJsZQ==,RkxVVFRFUl9HSVRfVVJMPWh0dHBzOi8vZ2l0aHViLmNvbS9mbHV0dGVyL2ZsdXR0ZXIuZ2l0,RkxVVFRFUl9GUkFNRVdPUktfUkVWSVNJT049ZmYzN2JlZjYwMw==,RkxVVFRFUl9FTkdJTkVfUkVWSVNJT049ZTRiOGRjYTNmMQ==,RkxVVFRFUl9EQVJUX1ZFUlNJT049My4xMS4x -Pdart-obfuscation=false -Ptrack-widget-creation=true -Ptree-shake-icons=false -Pfilesystem-scheme=org-dartlang-root assembleDebug
+[+3473 ms] Initialized native services in: /Users/weafrica/.gradle/native
+[   +3 ms] Initialized jansi services in: /Users/weafrica/.gradle/native
+[+10582 ms] The client will now receive all logging from the daemon (pid: 1702). The daemon log file: /Users/weafrica/.gradle/daemon/8.14/daemon-1702.out.log
+[   +2 ms] Starting 3rd build in daemon [uptime: 38 mins 59.346 secs, performance: 97%, GC rate: 0.00/s, heap usage: 0% of 4 GiB, non-heap usage: 12% of 1 GiB]
+[        ] Using 2 worker leases.
+[+1286 ms] Now considering [/Users/weafrica/weafrica_music/android, /usr/local/share/flutter/packages/flutter_tools/gradle] as hierarchies to watch
+[ +304 ms] Watching the file system is configured to be enabled
+[ +798 ms] File system watching is active
+[ +397 ms] Starting Build
+[ +999 ms] Now considering [/usr/local/share/flutter/packages/flutter_tools/gradle, /Users/weafrica/weafrica_music/android] as hierarchies to watch
+[ +203 ms] Using local directory build cache for build ':gradle' (location = /Users/weafrica/.gradle/caches/build-cache-1, remove unused entries = after 7 days).
+[+2130 ms] > Configure project :gradle
+[        ] Evaluating project ':gradle' using build file '/usr/local/share/flutter/packages/flutter_tools/gradle/build.gradle.kts'.
+[        ] Resolved plugin [id: 'org.gradle.java-gradle-plugin']
+[        ] Resolved plugin [id: 'org.gradle.groovy']
+[        ] Resolved plugin [id: 'org.gradle.kotlin.kotlin-dsl', version: '5.2.0']
+[        ] Resolved plugin [id: 'org.jetbrains.kotlin.jvm', version: '1.9.20']
+[+14888 ms] Using Kotlin Gradle Plugin gradle85 variant
+[+1477 ms] kotlin scripting plugin: created the scripting discovery configuration: kotlinScriptDef
+[   +1 ms] kotlin scripting plugin: created the scripting discovery configuration: testKotlinScriptDef
+[+1995 ms] file or directory '/usr/local/share/flutter/packages/flutter_tools/gradle/src/main/java', not found
+[+2400 ms] Resolved plugin [id: 'dev.flutter.flutter-plugin-loader', version: '1.0.0']
+[+1002 ms] Resolved plugin [id: 'com.android.application', version: '8.11.1', apply: false]
+[ +197 ms] Resolved plugin [id: 'org.jetbrains.kotlin.android', version: '2.2.20', apply: false]
+[ +199 ms] Resolved plugin [id: 'com.google.gms.google-services', version: '4.4.2', apply: false]
+[+2201 ms] Resolve mutations for :gradle:checkKotlinGradlePluginConfigurationErrors (Thread[Execution worker,5,main]) started.
+[ +113 ms] :gradle:checkKotlinGradlePluginConfigurationErrors (Thread[Execution worker,5,main]) started.
+[  +15 ms] > Task :gradle:checkKotlinGradlePluginConfigurationErrors SKIPPED
+[   +1 ms] Skipping task ':gradle:checkKotlinGradlePluginConfigurationErrors' as task onlyIf 'errorDiagnostics are present' is false.
+[        ] Resolve mutations for :gradle:compileKotlin (Thread[Execution worker,5,main]) started.
+[   +1 ms] :gradle:compileKotlin (Thread[Execution worker,5,main]) started.
+[ +666 ms] > Task :gradle:compileKotlin UP-TO-DATE
+[        ] Build cache key for task ':gradle:compileKotlin' is f27d55cddba8907241b93c6e1e261e41
+[        ] Skipping task ':gradle:compileKotlin' as it is up-to-date.
+[   +1 ms] Resolve mutations for :gradle:compileJava (Thread[Execution worker,5,main]) started.
+[        ] :gradle:compileJava (Thread[Execution worker,5,main]) started.
+[  +97 ms] > Task :gradle:compileJava NO-SOURCE
+[   +1 ms] Skipping task ':gradle:compileJava' as it has no source files and no previous output files.
+[        ] Resolve mutations for :gradle:compileGroovy (Thread[Execution worker,5,main]) started.
+[        ] :gradle:compileGroovy (Thread[Execution worker,5,main]) started.
+[   +2 ms] > Task :gradle:compileGroovy NO-SOURCE
+[        ] Skipping task ':gradle:compileGroovy' as it has no source files and no previous output files.
+[   +1 ms] Resolve mutations for :gradle:pluginDescriptors (Thread[Execution worker,5,main]) started.
+[        ] :gradle:pluginDescriptors (Thread[Execution worker,5,main]) started.
+[        ] > Task :gradle:pluginDescriptors UP-TO-DATE
+[   +4 ms] Caching disabled for task ':gradle:pluginDescriptors' because:
+[   +2 ms]   Not worth caching
+[   +1 ms] Skipping task ':gradle:pluginDescriptors' as it is up-to-date.
+[        ] Resolve mutations for :gradle:processResources (Thread[included builds,5,main]) started.
+[        ] :gradle:processResources (Thread[included builds,5,main]) started.
+[   +4 ms] > Task :gradle:processResources UP-TO-DATE
+[   +2 ms] Caching disabled for task ':gradle:processResources' because:
+[        ]   Not worth caching
+[        ] Skipping task ':gradle:processResources' as it is up-to-date.
+[        ] Resolve mutations for :gradle:classes (Thread[included builds,5,main]) started.
+[        ] :gradle:classes (Thread[included builds,5,main]) started.
+[   +7 ms] > Task :gradle:classes UP-TO-DATE
+[        ] Skipping task ':gradle:classes' as it has no actions.
+[        ] Resolve mutations for :gradle:jar (Thread[included builds,5,main]) started.
+[        ] :gradle:jar (Thread[included builds,5,main]) started.
+[        ] > Task :gradle:jar UP-TO-DATE
+[        ] Caching disabled for task ':gradle:jar' because:
+[        ]   Not worth caching
+[        ] Skipping task ':gradle:jar' as it is up-to-date.
+[+4073 ms] Settings evaluated using settings file '/Users/weafrica/weafrica_music/android/settings.gradle.kts'.
+[  +89 ms] Using local directory build cache for the root build (location = /Users/weafrica/.gradle/caches/build-cache-1, remove unused entries = after 7 days).
+[ +603 ms] Projects loaded. Root project using build file '/Users/weafrica/weafrica_music/android/build.gradle.kts'.
+[   +2 ms] Included projects: [root project 'android', project ':agora_rtc_engine', project ':agora_rtm', project ':app', project ':app_links', project ':audio_service', project ':audio_session', project ':camera_android_camerax', project ':connectivity_plus', project ':device_info_plus', project ':ffmpeg_kit_flutter_new_min_gpl', project ':file_picker', project ':firebase_auth', project ':firebase_core', project ':firebase_database', project ':firebase_messaging', project ':flutter_app_badger', project ':flutter_local_notifications', project ':flutter_plugin_android_lifecycle', project ':flutter_secure_storage', project ':google_mobile_ads', project ':google_sign_in_android', project ':image_picker_android', project ':integration_test', project ':iris_method_channel', project ':just_audio', project ':package_info_plus', project ':path_provider_android', project ':permission_handler_android', project ':share_plus', project ':shared_preferences_android', project ':sqflite_android', project ':url_launcher_android', project ':video_player_android', project ':wakelock_plus', project ':webview_flutter_android']
+[+1994 ms] > Configure project :
+[        ] Evaluating root project 'android' using build file '/Users/weafrica/weafrica_music/android/build.gradle.kts'.
+[+11309 ms] > Configure project :app
+[  +17 ms] Evaluating project ':app' using build file '/Users/weafrica/weafrica_music/android/app/build.gradle.kts'.
+[  +14 ms] Resolved plugin [id: 'com.android.application']
+[   +4 ms] Resolved plugin [id: 'kotlin-android']
+[        ] Resolved plugin [id: 'dev.flutter.flutter-gradle-plugin']
+[        ] Using default execution profile
+[        ] Build f8892026-4b65-4c47-88dc-8956a2a46ed7 is started
+[        ] Using Kotlin Gradle Plugin gradle813 variant
+[        ] key.properties not found; release builds will be signed with debug keys (NOT Play Store ready).
+[        ] C/C++: android.ndkVersion from module build.gradle is [28.2.13676358]
+[        ] C/C++: android.ndkPath from module build.gradle is not set
+[        ] C/C++: ndk.dir in local.properties is not set
+[   +1 ms] C/C++: Not considering ANDROID_NDK_HOME because support was removed after deprecation period.
+[        ] C/C++: sdkFolder is /Users/weafrica/Library/Android/sdk
+[        ] C/C++: android.ndkVersion from module build.gradle is [28.2.13676358]
+[   +1 ms] C/C++: android.ndkPath from module build.gradle is not set
+[        ] C/C++: ndk.dir in local.properties is not set
+[        ] C/C++: Not considering ANDROID_NDK_HOME because support was removed after deprecation period.
+[        ] C/C++: sdkFolder is /Users/weafrica/Library/Android/sdk
+[   +4 ms] C/C++: android.ndkVersion from module build.gradle is [28.2.13676358]
+[   +1 ms] C/C++: android.ndkPath from module build.gradle is not set
+[        ] C/C++: ndk.dir in local.properties is not set
+[        ] C/C++: Not considering ANDROID_NDK_HOME because support was removed after deprecation period.
+[        ] C/C++: sdkFolder is /Users/weafrica/Library/Android/sdk
+[        ] C/C++: android.ndkVersion from module build.gradle is [28.2.13676358]
+[        ] C/C++: android.ndkPath from module build.gradle is not set
+[   +1 ms] C/C++: ndk.dir in local.properties is not set
+[   +1 ms] C/C++: Not considering ANDROID_NDK_HOME because support was removed after deprecation period.
+[        ] C/C++: sdkFolder is /Users/weafrica/Library/Android/sdk
+[        ] C/C++: android.ndkVersion from module build.gradle is [28.2.13676358]
+[        ] C/C++: android.ndkPath from module build.gradle is not set
+[        ] C/C++: ndk.dir in local.properties is not set
+[        ] C/C++: Not considering ANDROID_NDK_HOME because support was removed after deprecation period.
+[   +2 ms] C/C++: sdkFolder is /Users/weafrica/Library/Android/sdk
+[   +5 ms] C/C++: android.ndkVersion from module build.gradle is [28.2.13676358]
+[        ] C/C++: android.ndkPath from module build.gradle is not set
+[        ] C/C++: ndk.dir in local.properties is not set
+[        ] C/C++: Not considering ANDROID_NDK_HOME because support was removed after deprecation period.
+[        ] C/C++: sdkFolder is /Users/weafrica/Library/Android/sdk
+[        ] C/C++: android.ndkVersion from module build.gradle is [28.2.13676358]
+[        ] C/C++: android.ndkPath from module build.gradle is not set
+[        ] C/C++: ndk.dir in local.properties is not set
+[        ] C/C++: Not considering ANDROID_NDK_HOME because support was removed after deprecation period.
+[        ] C/C++: sdkFolder is /Users/weafrica/Library/Android/sdk
+[        ] C/C++: android.ndkVersion from module build.gradle is [28.2.13676358]
+[        ] C/C++: android.ndkPath from module build.gradle is not set
+[        ] C/C++: ndk.dir in local.properties is not set
+[        ] C/C++: Not considering ANDROID_NDK_HOME because support was removed after deprecation period.
+[        ] C/C++: sdkFolder is /Users/weafrica/Library/Android/sdk
+[        ] C/C++: android.ndkVersion from module build.gradle is [28.2.13676358]
+[        ] C/C++: android.ndkPath from module build.gradle is not set
+[        ] C/C++: ndk.dir in local.properties is not set
+[        ] C/C++: Not considering ANDROID_NDK_HOME because support was removed after deprecation period.
+[        ] C/C++: sdkFolder is /Users/weafrica/Library/Android/sdk
+[        ] C/C++: android.ndkVersion from module build.gradle is [28.2.13676358]
+[        ] C/C++: android.ndkPath from module build.gradle is not set
+[        ] C/C++: ndk.dir in local.properties is not set
+[        ] C/C++: Not considering ANDROID_NDK_HOME because support was removed after deprecation period.
+[        ] C/C++: sdkFolder is /Users/weafrica/Library/Android/sdk
+[        ] C/C++: android.ndkVersion from module build.gradle is [28.2.13676358]
+[        ] C/C++: android.ndkPath from module build.gradle is not set
+[        ] C/C++: ndk.dir in local.properties is not set
+[        ] C/C++: Not considering ANDROID_NDK_HOME because support was removed after deprecation period.
+[        ] C/C++: sdkFolder is /Users/weafrica/Library/Android/sdk
+[        ] C/C++: android.ndkVersion from module build.gradle is [28.2.13676358]
+[   +1 ms] C/C++: android.ndkPath from module build.gradle is not set
+[        ] C/C++: ndk.dir in local.properties is not set
+[        ] C/C++: Not considering ANDROID_NDK_HOME because support was removed after deprecation period.
+[   +7 ms] C/C++: sdkFolder is /Users/weafrica/Library/Android/sdk
+[        ] C/C++: android.ndkVersion from module build.gradle is [28.2.13676358]
+[        ] C/C++: android.ndkPath from module build.gradle is not set
+[        ] C/C++: ndk.dir in local.properties is not set
+[   +2 ms] C/C++: Not considering ANDROID_NDK_HOME because support was removed after deprecation period.
+[   +1 ms] C/C++: sdkFolder is /Users/weafrica/Library/Android/sdk
+[        ] C/C++: android.ndkVersion from module build.gradle is [28.2.13676358]
+[        ] C/C++: android.ndkPath from module build.gradle is not set
+[        ] C/C++: ndk.dir in local.properties is not set
+[   +1 ms] C/C++: Not considering ANDROID_NDK_HOME because support was removed after deprecation period.
+[        ] C/C++: sdkFolder is /Users/weafrica/Library/Android/sdk
+[        ] C/C++: android.ndkVersion from module build.gradle is [28.2.13676358]
+[   +1 ms] C/C++: android.ndkPath from module build.gradle is not set
+[        ] C/C++: ndk.dir in local.properties is not set
+[        ] C/C++: Not considering ANDROID_NDK_HOME because support was removed after deprecation period.
+[        ] C/C++: sdkFolder is /Users/weafrica/Library/Android/sdk
+[   +1 ms] C/C++: android.ndkVersion from module build.gradle is [28.2.13676358]
+[   +2 ms] C/C++: android.ndkPath from module build.gradle is not set
+[   +5 ms] C/C++: ndk.dir in local.properties is not set
+[   +1 ms] C/C++: Not considering ANDROID_NDK_HOME because support was removed after deprecation period.
+[        ] C/C++: sdkFolder is /Users/weafrica/Library/Android/sdk
+[        ] C/C++: android.ndkVersion from module build.gradle is [28.2.13676358]
+[        ] C/C++: android.ndkPath from module build.gradle is not set
+[        ] C/C++: ndk.dir in local.properties is not set
+[        ] C/C++: Not considering ANDROID_NDK_HOME because support was removed after deprecation period.
+[        ] C/C++: sdkFolder is /Users/weafrica/Library/Android/sdk
+[        ] C/C++: android.ndkVersion from module build.gradle is [28.2.13676358]
+[        ] C/C++: android.ndkPath from module build.gradle is not set
+[        ] C/C++: ndk.dir in local.properties is not set
+[        ] C/C++: Not considering ANDROID_NDK_HOME because support was removed after deprecation period.
+[        ] C/C++: sdkFolder is /Users/weafrica/Library/Android/sdk
+[        ] C/C++: android.ndkVersion from module build.gradle is [28.2.13676358]
+[        ] C/C++: android.ndkPath from module build.gradle is not set
+[        ] C/C++: ndk.dir in local.properties is not set
+[        ] C/C++: Not considering ANDROID_NDK_HOME because support was removed after deprecation period.
+[        ] C/C++: sdkFolder is /Users/weafrica/Library/Android/sdk
+[+2090 ms] > Configure project :agora_rtc_engine
+[        ] Evaluating project ':agora_rtc_engine' using build file '/Users/weafrica/.pub-cache/hosted/pub.dev/agora_rtc_engine-6.5.3/android/build.gradle'.
+[ +384 ms] Using default execution profile
+[+1007 ms] C/C++: android.ndkVersion from module build.gradle is [27.0.12077973]
+[  +23 ms] C/C++: android.ndkPath from module build.gradle is not set
+[        ] C/C++: ndk.dir in local.properties is not set
+[        ] C/C++: Not considering ANDROID_NDK_HOME because support was removed after deprecation period.
+[        ] C/C++: sdkFolder is /Users/weafrica/Library/Android/sdk
+[        ] C/C++: android.ndkVersion from module build.gradle is [27.0.12077973]
+[        ] C/C++: android.ndkPath from module build.gradle is not set
+[        ] C/C++: ndk.dir in local.properties is not set
+[        ] C/C++: Not considering ANDROID_NDK_HOME because support was removed after deprecation period.
+[        ] C/C++: sdkFolder is /Users/weafrica/Library/Android/sdk
+[  +64 ms] C/C++: android.ndkVersion from module build.gradle is [27.0.12077973]
+[   +1 ms] C/C++: android.ndkPath from module build.gradle is not set
+[        ] C/C++: ndk.dir in local.properties is not set
+[        ] C/C++: Not considering ANDROID_NDK_HOME because support was removed after deprecation period.
+[        ] C/C++: sdkFolder is /Users/weafrica/Library/Android/sdk
+[ +294 ms] C/C++: android.ndkVersion from module build.gradle is [27.0.12077973]
+[        ] C/C++: android.ndkPath from module build.gradle is not set
+[        ] C/C++: ndk.dir in local.properties is not set
+[        ] C/C++: Not considering ANDROID_NDK_HOME because support was removed after deprecation period.
+[        ] C/C++: sdkFolder is /Users/weafrica/Library/Android/sdk
+[   +1 ms] C/C++: android.ndkVersion from module build.gradle is [27.0.12077973]
+[        ] C/C++: android.ndkPath from module build.gradle is not set
+[        ] C/C++: ndk.dir in local.properties is not set
+[        ] C/C++: Not considering ANDROID_NDK_HOME because support was removed after deprecation period.
+[   +5 ms] C/C++: sdkFolder is /Users/weafrica/Library/Android/sdk
+[ +694 ms] C/C++: android.ndkVersion from module build.gradle is [27.0.12077973]
+[   +1 ms] C/C++: android.ndkPath from module build.gradle is not set
+[        ] C/C++: ndk.dir in local.properties is not set
+[        ] C/C++: Not considering ANDROID_NDK_HOME because support was removed after deprecation period.
+[        ] C/C++: sdkFolder is /Users/weafrica/Library/Android/sdk
+[ +993 ms] C/C++: android.ndkVersion from module build.gradle is [27.0.12077973]
+[        ] C/C++: android.ndkPath from module build.gradle is not set
+[        ] C/C++: ndk.dir in local.properties is not set
+[        ] C/C++: Not considering ANDROID_NDK_HOME because support was removed after deprecation period.
+[        ] C/C++: sdkFolder is /Users/weafrica/Library/Android/sdk
+[        ] C/C++: android.ndkVersion from module build.gradle is [27.0.12077973]
+[        ] C/C++: android.ndkPath from module build.gradle is not set
+[        ] C/C++: ndk.dir in local.properties is not set
+[        ] C/C++: Not considering ANDROID_NDK_HOME because support was removed after deprecation period.
+[        ] C/C++: sdkFolder is /Users/weafrica/Library/Android/sdk
+[ +107 ms] C/C++: android.ndkVersion from module build.gradle is [27.0.12077973]
+[        ] C/C++: android.ndkPath from module build.gradle is not set
+[        ] C/C++: ndk.dir in local.properties is not set
+[        ] C/C++: Not considering ANDROID_NDK_HOME because support was removed after deprecation period.
+[        ] C/C++: sdkFolder is /Users/weafrica/Library/Android/sdk
+[ +498 ms] C/C++: android.ndkVersion from module build.gradle is [27.0.12077973]
+[  +13 ms] C/C++: android.ndkPath from module build.gradle is not set
+[        ] C/C++: ndk.dir in local.properties is not set
+[        ] C/C++: Not considering ANDROID_NDK_HOME because support was removed after deprecation period.
+[        ] C/C++: sdkFolder is /Users/weafrica/Library/Android/sdk
+[  +71 ms] C/C++: android.ndkVersion from module build.gradle is [27.0.12077973]
+[        ] C/C++: android.ndkPath from module build.gradle is not set
+[        ] C/C++: ndk.dir in local.properties is not set
+[        ] C/C++: Not considering ANDROID_NDK_HOME because support was removed after deprecation period.
+[        ] C/C++: sdkFolder is /Users/weafrica/Library/Android/sdk
+[        ] C/C++: android.ndkVersion from module build.gradle is [27.0.12077973]
+[        ] C/C++: android.ndkPath from module build.gradle is not set
+[        ] C/C++: ndk.dir in local.properties is not set
+[        ] C/C++: Not considering ANDROID_NDK_HOME because support was removed after deprecation period.
+[        ] C/C++: sdkFolder is /Users/weafrica/Library/Android/sdk
+[  +93 ms] C/C++: android.ndkVersion from module build.gradle is [27.0.12077973]
+[   +1 ms] C/C++: android.ndkPath from module build.gradle is not set
+[        ] C/C++: ndk.dir in local.properties is not set
+[        ] C/C++: Not considering ANDROID_NDK_HOME because support was removed after deprecation period.
+[        ] C/C++: sdkFolder is /Users/weafrica/Library/Android/sdk
+[ +166 ms] C/C++: android.ndkVersion from module build.gradle is [27.0.12077973]
+[        ] C/C++: android.ndkPath from module build.gradle is not set
+[        ] C/C++: ndk.dir in local.properties is not set
+[        ] C/C++: Not considering ANDROID_NDK_HOME because support was removed after deprecation period.
+[        ] C/C++: sdkFolder is /Users/weafrica/Library/Android/sdk
+[  +29 ms] C/C++: android.ndkVersion from module build.gradle is [27.0.12077973]
+[ +161 ms] C/C++: android.ndkPath from module build.gradle is not set
+[        ] C/C++: ndk.dir in local.properties is not set
+[        ] C/C++: Not considering ANDROID_NDK_HOME because support was removed after deprecation period.
+[        ] C/C++: sdkFolder is /Users/weafrica/Library/Android/sdk
+[ +641 ms] C/C++: android.ndkVersion from module build.gradle is [27.0.12077973]
+[        ] C/C++: android.ndkPath from module build.gradle is not set
+[        ] C/C++: ndk.dir in local.properties is not set
+[        ] C/C++: Not considering ANDROID_NDK_HOME because support was removed after deprecation period.
+[        ] C/C++: sdkFolder is /Users/weafrica/Library/Android/sdk
+[ +293 ms] C/C++: android.ndkVersion from module build.gradle is [27.0.12077973]
+[        ] C/C++: android.ndkPath from module build.gradle is not set
+[        ] C/C++: ndk.dir in local.properties is not set
+[        ] C/C++: Not considering ANDROID_NDK_HOME because support was removed after deprecation period.
+[        ] C/C++: sdkFolder is /Users/weafrica/Library/Android/sdk
+[ +101 ms] C/C++: android.ndkVersion from module build.gradle is [27.0.12077973]
+[        ] C/C++: android.ndkPath from module build.gradle is not set
+[        ] C/C++: ndk.dir in local.properties is not set
+[        ] C/C++: Not considering ANDROID_NDK_HOME because support was removed after deprecation period.
+[        ] C/C++: sdkFolder is /Users/weafrica/Library/Android/sdk
+[        ] C/C++: android.ndkVersion from module build.gradle is [27.0.12077973]
+[        ] C/C++: android.ndkPath from module build.gradle is not set
+[        ] C/C++: ndk.dir in local.properties is not set
+[        ] C/C++: Not considering ANDROID_NDK_HOME because support was removed after deprecation period.
+[        ] C/C++: sdkFolder is /Users/weafrica/Library/Android/sdk
+[+2104 ms] > Configure project :agora_rtm
+[   +3 ms] Evaluating project ':agora_rtm' using build file '/Users/weafrica/weafrica_music/packages/agora_rtm/android/build.gradle'.
+[ +587 ms] Using default execution profile
+[ +500 ms] Using Kotlin Gradle Plugin gradle813 variant
+[+2608 ms] > Configure project :app_links
+[   +8 ms] Evaluating project ':app_links' using build file '/Users/weafrica/.pub-cache/hosted/pub.dev/app_links-6.4.1/android/build.gradle'.
+[+1181 ms] Using default execution profile
+[+2814 ms] > Configure project :audio_service
+[   +5 ms] Evaluating project ':audio_service' using build file '/Users/weafrica/.pub-cache/hosted/pub.dev/audio_service-0.18.18/android/build.gradle'.
+[        ] Using default execution profile
+[+2281 ms] > Configure project :audio_session
+[        ] Evaluating project ':audio_session' using build file '/Users/weafrica/.pub-cache/hosted/pub.dev/audio_session-0.1.25/android/build.gradle'.

@@ -1,0 +1,642 @@
+import 'dart:async';
+import 'dart:developer' as developer;
+
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/foundation.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+
+import '../../../app/utils/app_result.dart';
+import '../../../app/utils/connectivity_wrapper.dart';
+import '../../../services/journey_service.dart';
+import '../../../services/live_priority_access_gate.dart';
+import '../../creators/creator_profile.dart';
+import '../../creators/creators_repository.dart';
+import '../services/agora_token_api.dart';
+import '../services/live_sessions_api.dart';
+import '../models/active_live_session_info.dart';
+import '../models/live_session_model.dart';
+import 'live_session_exceptions.dart';
+
+/// Artists/DJs call this. They NEVER see:
+/// - Database errors
+/// - Network failures
+/// - Token errors
+/// - Channel names
+class LiveSessionService {
+  bool canJoinAsBroadcaster(String role) {
+    return role == 'artist' || role == 'dj';
+  }
+
+  static final LiveSessionService _instance = LiveSessionService._internal();
+  static final RegExp _uuidRegex = RegExp(
+    r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$',
+    caseSensitive: false,
+  );
+
+  factory LiveSessionService() => _instance;
+  LiveSessionService._internal();
+
+  final SupabaseClient _supabase = Supabase.instance.client;
+  final FirebaseAuth _auth = FirebaseAuth.instance;
+  final AgoraTokenApi _agoraTokenApi = const AgoraTokenApi();
+  final LiveSessionsApi _liveSessionsApi = const LiveSessionsApi();
+
+  String _friendlySessionStartError(Object error) {
+    if (error is LiveSessionConflictException) {
+      return error.message;
+    }
+
+    final text = error.toString().toLowerCase();
+    if (text.contains('network-request-failed') ||
+        text.contains('a network error')) {
+      return 'Network error talking to Firebase. Check internet access, disable VPN/proxy, and verify device date/time.';
+    }
+    if (text.contains('timed out') || text.contains('timeout')) {
+      return 'Network is slow right now. Please try again.';
+    }
+    if (text.contains('not signed in') ||
+        text.contains('missing firebase id token')) {
+      return 'Please sign in again and try.';
+    }
+    if (text.contains('no internet') ||
+        text.contains('socket') ||
+        text.contains('network')) {
+      return 'No internet connection. Check your network and try again.';
+    }
+    return 'Failed to start live session. Please try again.';
+  }
+
+  String _friendlySessionJoinError(Object error) {
+    final text = error.toString().toLowerCase();
+    if (text.contains('agora token api failed')) {
+      if (text.contains('401') || text.contains('unauthorized')) {
+        return 'Live access authorization failed. Please sign out and sign in again.';
+      }
+      if (text.contains('403') || text.contains('forbidden')) {
+        return 'Live access is not allowed for this stream right now.';
+      }
+      if (text.contains('404')) {
+        return 'Live channel was not found. The stream may have ended.';
+      }
+      return 'Could not get live access token. Please try again.';
+    }
+    if (text.contains('followers only') || text.contains('followers_only')) {
+      return 'This live is for followers only. Follow this creator and try again.';
+    }
+    if (text.contains('sign in') || text.contains('unauthorized')) {
+      return 'Please sign in and try again.';
+    }
+    if (text.contains('network-request-failed') || text.contains('network')) {
+      return 'Network issue while opening live. Please try again.';
+    }
+    return 'Could not open live right now. Please try again.';
+  }
+
+  /// Prevents creators from starting multiple concurrent lives.
+  ///
+  /// The server also enforces this constraint; client checks must be strict.
+  Future<void> validateCanGoLive(String userId) async {
+    final uid = userId.trim();
+    if (uid.isEmpty) return;
+
+    final info = await getActiveLiveSessionInfo(uid);
+    if (info == null) return;
+
+    final title = (info.title ?? '').trim();
+    final label = title.isNotEmpty ? '"$title"' : 'your current live';
+
+    throw LiveSessionConflictException(
+      'You are already live with $label. End that stream first.',
+      existingChannelId: info.channelId,
+      existingTitle: title.isNotEmpty ? title : null,
+      existingStartedAt: info.startedAt,
+    );
+  }
+
+  /// Looks up the creator's currently active live session.
+  ///
+  /// This is used to power user-friendly conflict handling ("Already live")
+  /// and to support UX actions like "Go to live" / "End & create new".
+  ///
+  /// Returns null only when no active session exists.
+  Future<ActiveLiveSessionInfo?> getActiveLiveSessionInfo(String hostId) async {
+    final uid = hostId.trim();
+    if (uid.isEmpty) return null;
+
+    final row = await _supabase
+        .from('live_sessions')
+        .select('channel_id,title,started_at')
+        .eq('host_id', uid)
+        .eq('is_live', true)
+        .order('started_at', ascending: false)
+        .limit(1)
+        .maybeSingle()
+        .timeout(const Duration(seconds: 8));
+
+    if (row == null) return null;
+
+    final channelId = (row['channel_id'] ?? '').toString().trim();
+    if (channelId.isEmpty) {
+      throw StateError('Active live session payload missing channel_id');
+    }
+
+    final title = (row['title'] ?? '').toString().trim();
+
+    DateTime? startedAt;
+    final rawStartedAt = row['started_at'];
+    if (rawStartedAt is DateTime) {
+      startedAt = rawStartedAt;
+    } else {
+      final s = (rawStartedAt ?? '').toString().trim();
+      startedAt = s.isEmpty ? null : DateTime.tryParse(s);
+    }
+
+    return ActiveLiveSessionInfo(
+      channelId: channelId,
+      title: title.isNotEmpty ? title : null,
+      startedAt: startedAt,
+    );
+  }
+
+  /// Ends the creator's live presence row (consumer Live tab discovery).
+  Future<void> endLive({required String channelId}) async {
+    final ch = channelId.trim();
+    if (ch.isEmpty) return;
+
+    final idToken = (await _auth.currentUser?.getIdToken())?.trim() ?? '';
+    if (idToken.isEmpty) {
+      throw StateError('Authentication token unavailable');
+    }
+    await _liveSessionsApi.endSession(channelId: ch, idToken: idToken);
+  }
+
+  /// Ends a live session and wait briefly until the DB no longer reports it as live.
+  ///
+  /// This avoids a common race where the user ends a stream and immediately
+  /// starts another, but the follow-up `validateCanGoLive()` query still sees
+  /// the previous row as `is_live=true` for a moment.
+  Future<void> endLiveAndEnsureCleared({
+    required String hostId,
+    required String channelId,
+    Duration timeout = const Duration(seconds: 8),
+  }) async {
+    final uid = hostId.trim();
+    final ch = channelId.trim();
+    if (uid.isEmpty || ch.isEmpty) return;
+
+    await endLive(channelId: ch);
+
+    final deadline = DateTime.now().add(timeout);
+    while (DateTime.now().isBefore(deadline)) {
+      final info = await getActiveLiveSessionInfo(uid);
+      if (info == null) return;
+
+      // If the active session changed, the old one is effectively cleared.
+      if (info.channelId.trim() != ch) return;
+
+      await Future<void>.delayed(const Duration(milliseconds: 500));
+    }
+
+    throw StateError('Could not end your live stream. Please try again.');
+  }
+
+  /// Keeps the creator's live presence row fresh (prevents "ghost lives").
+  Future<void> heartbeat({required String channelId}) async {
+    final ch = channelId.trim();
+    if (ch.isEmpty) return;
+
+    final idToken = (await _auth.currentUser?.getIdToken())?.trim() ?? '';
+    if (idToken.isEmpty) {
+      throw StateError('Authentication token unavailable');
+    }
+    await _liveSessionsApi.heartbeat(channelId: ch, idToken: idToken);
+  }
+
+  Future<AppResult<LiveSession>> createSession({
+    required String hostId,
+    required String hostName,
+    required String hostType,
+    required String title,
+    String? thumbnailUrl,
+    String? topic,
+    String? accessMode,
+    String? opponentId,
+    String? opponentName,
+    String? battleId,
+    int? scheduledAt,
+    String? channelIdOverride,
+  }) async {
+    developer.log(
+      'createSession start hostId=$hostId hostType=$hostType title=${title.trim()} topic=${(topic ?? '').trim()} accessMode=${(accessMode ?? '').trim()}',
+      name: 'WEAFRICA.Live',
+    );
+
+    if (!await ConnectivityWrapper.hasConnection) {
+      developer.log('Session creation failed: no connectivity');
+      if (!kReleaseMode) {
+        throw StateError('No internet connection');
+      }
+      return const AppFailure(
+        userMessage:
+            'No internet connection. Check your network and try again.',
+      );
+    }
+
+    // Scheduling is handled by a separate flow (not implemented yet).
+    // Avoid creating a "live now" session when the caller intended a schedule.
+    if (scheduledAt != null) {
+      developer.log('Session creation failed: scheduledAt not supported');
+      if (!kReleaseMode) {
+        throw StateError('Scheduled sessions are not supported.');
+      }
+      return const AppFailure(
+        userMessage: 'Scheduled live is not available yet. Start live now.',
+      );
+    }
+
+    // Guard against starting a second live while already live.
+    // If we can detect the existing channel, auto-end it so creators don't get
+    // permanently locked out after crashes or missed "End" calls.
+    // (Server also enforces single live per host.)
+    try {
+      developer.log(
+        'createSession validating active live state',
+        name: 'WEAFRICA.Live',
+      );
+      await validateCanGoLive(hostId);
+      developer.log(
+        'createSession active live validation passed',
+        name: 'WEAFRICA.Live',
+      );
+    } on LiveSessionConflictException catch (e) {
+      final existing = (e.existingChannelId ?? '').trim();
+      developer.log(
+        'createSession conflict detected existingChannel=$existing message=${e.message}',
+        name: 'WEAFRICA.Live',
+      );
+      if (existing.isEmpty) rethrow;
+      await endLiveAndEnsureCleared(hostId: hostId, channelId: existing);
+      developer.log(
+        'createSession cleared previous live channel=$existing',
+        name: 'WEAFRICA.Live',
+      );
+    }
+
+    try {
+      final override = (channelIdOverride ?? '').trim();
+      final explicitBattleId = (battleId ?? '').trim();
+      final isBattle =
+          (opponentId != null && opponentId.trim().isNotEmpty) ||
+          explicitBattleId.isNotEmpty ||
+          override.startsWith('weafrica_battle_');
+
+      // Deterministic channels remove pre-start race windows and make reconnect
+      // and authorization simpler.
+      final channelId = override.isNotEmpty ? override : 'live_$hostId';
+      developer.log(
+        'createSession channel prepared channelId=$channelId isBattle=$isBattle',
+        name: 'WEAFRICA.Live',
+      );
+
+      String idToken = '';
+      try {
+        idToken = (await _auth.currentUser?.getIdToken())?.trim() ?? '';
+      } on FirebaseAuthException catch (e, st) {
+        developer.log(
+          'createSession getIdToken failed (initial)',
+          name: 'WEAFRICA.Live',
+          error: e,
+          stackTrace: st,
+        );
+        // Best-effort retry with forced refresh; this can recover from transient
+        // token refresh hiccups during long-running app sessions.
+        try {
+          idToken = (await _auth.currentUser?.getIdToken(true))?.trim() ?? '';
+        } on FirebaseAuthException catch (e2, st2) {
+          developer.log(
+            'createSession getIdToken failed (refresh)',
+            name: 'WEAFRICA.Live',
+            error: e2,
+            stackTrace: st2,
+          );
+          return AppFailure(userMessage: _friendlySessionStartError(e2));
+        }
+      }
+      if (idToken.isEmpty) {
+        developer.log('Session creation failed: missing Firebase ID token');
+        if (!kReleaseMode) {
+          throw StateError('Not signed in (missing Firebase ID token)');
+        }
+        return const AppFailure(userMessage: 'Please sign in again and try.');
+      }
+      developer.log(
+        'createSession Firebase token acquired',
+        name: 'WEAFRICA.Live',
+      );
+
+      // Create/mark session live in DB via Edge API (service-role writes).
+      developer.log(
+        'createSession starting live session via Edge API',
+        name: 'WEAFRICA.Live',
+      );
+      await _liveSessionsApi.startSession(
+        channelId: channelId,
+        idToken: idToken,
+        hostName: hostName,
+        title: title,
+        category: isBattle ? 'battle' : hostType,
+        liveType: isBattle ? 'battle' : 'normal',
+        mode: isBattle ? 'BATTLE_1v1' : 'SOLO',
+        thumbnailUrl: thumbnailUrl,
+        topic: topic,
+        accessMode: accessMode,
+      );
+      developer.log(
+        'createSession Edge startSession completed',
+        name: 'WEAFRICA.Live',
+      );
+      if (isBattle) {
+        developer.log(
+          'createSession requested battle metadata live_type=battle mode=BATTLE_1v1 channelId=$channelId',
+          name: 'WEAFRICA.Live',
+        );
+      }
+
+      final agoraUid = _stableAgoraUid(hostId);
+      developer.log(
+        'createSession requesting Agora token uid=$agoraUid',
+        name: 'WEAFRICA.Live',
+      );
+      final token = await _agoraTokenApi.fetchRtcToken(
+        channelId: channelId,
+        role: AgoraRtcRole.broadcaster,
+        uid: agoraUid,
+        idToken: idToken,
+        battleId: explicitBattleId.isNotEmpty ? explicitBattleId : null,
+      );
+      developer.log(
+        'createSession Agora token received length=${token.length}',
+        name: 'WEAFRICA.Live',
+      );
+
+      unawaited(
+        JourneyService.instance.logEvent(
+          eventType: 'live_started',
+          eventKey: channelId,
+          metadata: {'is_battle': isBattle, 'host_type': hostType},
+        ),
+      );
+
+      String? liveId;
+      final row = await _supabase
+          .from('live_sessions')
+          .select('id')
+          .eq('channel_id', channelId)
+          .maybeSingle()
+          .timeout(const Duration(seconds: 8));
+      liveId = row == null ? null : (row['id'] ?? '').toString().trim();
+      if (liveId != null && liveId.isEmpty) liveId = null;
+
+      final status = 'live';
+
+      final session = LiveSession(
+        // The consumer live_sessions table is keyed by UUID internally but the
+        // app's live/battle flow is channel-based. Treat channelId as the
+        // stable identifier within the app layer.
+        id: channelId,
+        title: title,
+        hostName: hostName,
+        opponentName: opponentName,
+        viewerCount: 0,
+        giftCount: 0,
+        status: status == 'live' ? SessionStatus.live : SessionStatus.scheduled,
+        scheduledAt: null,
+        channelId: channelId,
+        token: token,
+        userRole: UserRole.host,
+        liveType: isBattle ? 'battle' : 'normal',
+        liveId: liveId,
+      );
+
+      developer.log(
+        'createSession success sessionId=${session.id} channelId=${session.channelId} liveId=${session.liveId ?? '(none)'}',
+        name: 'WEAFRICA.Live',
+      );
+
+      return AppSuccess(session);
+    } catch (e, st) {
+      developer.log('Session creation failed', error: e, stackTrace: st);
+      if (e is LiveSessionConflictException) {
+        // Safe, user-actionable message.
+        rethrow;
+      }
+      // In debug builds we still want a user-actionable error instead of a raw
+      // firebase_auth exception string.
+      if (!kReleaseMode) {
+        if (e is FirebaseAuthException) {
+          return AppFailure(userMessage: _friendlySessionStartError(e));
+        }
+        rethrow;
+      }
+      return AppFailure(userMessage: _friendlySessionStartError(e));
+    }
+  }
+
+  Future<AppResult<LiveSession>> joinSession(
+    String sessionId,
+    String userId, {
+    bool asBroadcaster = false,
+    String? battleId,
+  }) async {
+    if (!await ConnectivityWrapper.hasConnection) {
+      return const AppFailure();
+    }
+
+    try {
+      final normalizedUserId = userId.trim();
+      if (normalizedUserId.isEmpty) {
+        return const AppFailure(userMessage: 'Please sign in and try again.');
+      }
+
+      final normalizedSessionId = sessionId.trim();
+      if (normalizedSessionId.isEmpty) {
+        return const AppFailure(
+          userMessage: 'This live is not available anymore.',
+        );
+      }
+
+      final explicitBattleId = (battleId ?? '').trim();
+      final isUuidSessionId = _uuidRegex.hasMatch(normalizedSessionId);
+
+      final response = await (isUuidSessionId
+          ? _supabase
+                .from('live_sessions')
+                .select(
+                  'id,channel_id,host_id,host_name,title,viewer_count,gift_count,is_live,ended_at,scheduled_at,live_type,access_tier',
+                )
+                .eq('id', normalizedSessionId)
+                .maybeSingle()
+          : _supabase
+                .from('live_sessions')
+                .select(
+                  'id,channel_id,host_id,host_name,title,viewer_count,gift_count,is_live,ended_at,scheduled_at,live_type,access_tier',
+                )
+                .eq('channel_id', normalizedSessionId)
+                .maybeSingle());
+
+      if (response == null || response.isEmpty) {
+        return const AppFailure(
+          userMessage: 'This live is not available anymore.',
+        );
+      }
+
+      final channelId = (response['channel_id'] ?? response['id'] ?? '')
+          .toString()
+          .trim();
+      if (channelId.isEmpty) {
+        return const AppFailure(
+          userMessage: 'This live is not available anymore.',
+        );
+      }
+
+      final hostId = (response['host_id'] ?? '').toString().trim();
+
+      // 🔒 BROADCAST PERMISSION GATE
+      if (asBroadcaster) {
+        final role = 'consumer'; // TODO connect Firebase/Supabase role
+        if (role != 'artist' && role != 'dj') {
+          return const AppFailure(
+            userMessage: 'Only artists or DJs can join as broadcaster.',
+          );
+        }
+      }
+
+      final shouldBroadcast =
+          asBroadcaster || (hostId.isNotEmpty && hostId == normalizedUserId);
+
+      final accessTier = (response['access_tier'] ?? '').toString();
+      final allowed = LivePriorityAccessGate.instance.ensureAllowed(
+        channelId: channelId,
+        accessTier: accessTier,
+        asBroadcaster: shouldBroadcast,
+      );
+      if (!allowed) {
+        return const AppFailure(
+          userMessage: 'This live requires priority access. Upgrade to join.',
+        );
+      }
+
+      final idToken = (await _auth.currentUser?.getIdToken())?.trim();
+      if (shouldBroadcast &&
+          explicitBattleId.isNotEmpty &&
+          (idToken == null || idToken.isEmpty)) {
+        // Battle broadcaster tokens require Firebase auth.
+        return const AppFailure(userMessage: 'Please sign in and try again.');
+      }
+
+      final agoraUid = _stableAgoraUid(userId);
+      final token = await _agoraTokenApi.fetchRtcToken(
+        channelId: channelId,
+        role: shouldBroadcast
+            ? AgoraRtcRole.broadcaster
+            : AgoraRtcRole.audience,
+        uid: agoraUid,
+        // Audience tokens should not depend on Firebase auth validity.
+        idToken: shouldBroadcast ? idToken : null,
+        battleId: explicitBattleId.isNotEmpty ? explicitBattleId : null,
+      );
+
+      final isLive = response['is_live'] == true;
+      final endedAt = response['ended_at'] != null
+          ? DateTime.tryParse(response['ended_at'].toString())
+          : null;
+      final status = endedAt != null
+          ? SessionStatus.ended
+          : isLive
+          ? SessionStatus.live
+          : SessionStatus.scheduled;
+
+      final hostName = (response['host_name'] ?? '').toString().trim();
+      final resolvedHostName = hostName.isNotEmpty ? hostName : 'Host';
+
+      final liveIdRaw = (response['id'] ?? '').toString().trim();
+      final liveId = liveIdRaw.isEmpty ? null : liveIdRaw;
+
+      return AppSuccess(
+        LiveSession(
+          id: channelId,
+          title: (response['title'] ?? '').toString(),
+          hostName: resolvedHostName,
+          opponentName: null,
+          viewerCount: (response['viewer_count'] as int?) ?? 0,
+          giftCount: (response['gift_count'] as int?) ?? 0,
+          status: status,
+          scheduledAt: response['scheduled_at'] != null
+              ? DateTime.tryParse(response['scheduled_at'].toString())
+              : null,
+          channelId: channelId,
+          token: token,
+          userRole: shouldBroadcast ? UserRole.host : UserRole.audience,
+          liveType: (response['live_type'] ?? '').toString().trim().isNotEmpty
+              ? (response['live_type'] ?? '').toString().trim()
+              : 'normal',
+          liveId: liveId,
+        ),
+      );
+    } catch (e, st) {
+      if (kDebugMode) {
+        debugPrint(
+          'JOIN_SESSION_ERROR channel=$sessionId user=$userId battleId=${battleId ?? ''} error=$e',
+        );
+      }
+      developer.log('Join session failed', error: e, stackTrace: st);
+      return AppFailure(userMessage: _friendlySessionJoinError(e));
+    }
+  }
+
+  int _stableAgoraUid(String userId) {
+    // Agora UIDs must be positive ints. Keep stable per user so reconnects work.
+    final h = userId.hashCode.abs();
+    final uid = (h % 2000000000);
+    return uid == 0 ? 1 : uid;
+  }
+
+  /// Search creators for opponent selection.
+  ///
+  /// Returns maps with keys: id, name, avatar, role, followers, isOnline.
+  Future<List<Map<String, dynamic>>> searchUsers({
+    required String query,
+    required String role,
+    required String excludeUserId,
+    int limit = 20,
+  }) async {
+    final q = query.trim();
+    if (q.isEmpty) return const <Map<String, dynamic>>[];
+
+    try {
+      final creatorRole = CreatorRoleX.tryParse(role) ?? CreatorRole.artist;
+      final items = await CreatorsRepository(
+        client: _supabase,
+      ).list(role: creatorRole, limit: limit, query: q);
+
+      return items
+          .map((p) {
+            final id = (p.userId ?? p.id).trim();
+            return <String, dynamic>{
+              'id': id,
+              'name': p.displayName,
+              'avatar': p.avatarUrl,
+              'role': p.role.id,
+              'followers': 0,
+              'isOnline': false,
+            };
+          })
+          .where((m) => (m['id']?.toString() ?? '').isNotEmpty)
+          .where((m) => (m['id']?.toString() ?? '') != excludeUserId)
+          .toList(growable: false);
+    } catch (e, st) {
+      developer.log('searchUsers failed', error: e, stackTrace: st);
+      rethrow;
+    }
+  }
+}

@@ -1,0 +1,98 @@
+{
+  "info": {
+    "name": "WeAfrica - Push (Local)",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "1) Firebase - Sign in (get idToken)",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "url": {
+          "raw": "https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key={{firebaseApiKey}}",
+          "protocol": "https",
+          "host": ["identitytoolkit", "googleapis", "com"],
+          "path": ["v1", "accounts:signInWithPassword"],
+          "query": [
+            { "key": "key", "value": "{{firebaseApiKey}}" }
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"email\": \"{{firebaseEmail}}\",\n  \"password\": \"{{firebasePassword}}\",\n  \"returnSecureToken\": true\n}"
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "// Saves the Firebase idToken into the active environment as {{firebaseIdToken}}",
+              "try {",
+              "  const json = pm.response.json();",
+              "  if (json && json.idToken) {",
+              "    pm.environment.set('firebaseIdToken', json.idToken);",
+              "  }",
+              "} catch (e) {}"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "2) API - Register device token",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "Authorization", "value": "Bearer {{firebaseIdToken}}" }
+        ],
+        "url": "{{baseUrl}}/api/push/register",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"fcm_token\": \"{{fcmToken}}\",\n  \"platform\": \"ios\",\n  \"device_id\": \"postman-device\",\n  \"country_code\": \"ng\",\n  \"topics\": [\"consumers\", \"trending\"],\n  \"app_version\": \"1.2.3\",\n  \"device_model\": \"Postman\",\n  \"locale\": \"en-NG\"\n}"
+        }
+      }
+    },
+    {
+      "name": "3) API - Send push (internal secret)",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "Authorization", "value": "Bearer {{pushInternalSecret}}" }
+        ],
+        "url": "{{baseUrl}}/api/push/send",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"notification\": {\n    \"title\": \"Hi\",\n    \"body\": \"Test push from Postman\"\n  },\n  \"data\": {\n    \"source\": \"postman\"\n  },\n  \"token_topic\": \"trending\",\n  \"audience\": {\n    \"type\": \"user_uid\",\n    \"uid\": \"{{firebaseUid}}\"\n  },\n  \"max_per_user_per_day\": 2,\n  \"limit_tokens\": 500\n}"
+        }
+      }
+    },
+    {
+      "name": "(Optional) Admin - Supabase env debug (requires firebase_session cookie)",
+      "request": {
+        "method": "GET",
+        "header": [
+          { "key": "Cookie", "value": "firebase_session={{firebaseSessionCookie}}" }
+        ],
+        "url": "{{baseUrl}}/api/admin/supabase-env-debug"
+      }
+    }
+  ],
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:3000" },
+    { "key": "firebaseApiKey", "value": "" },
+    { "key": "firebaseEmail", "value": "" },
+    { "key": "firebasePassword", "value": "" },
+    { "key": "firebaseIdToken", "value": "" },
+    { "key": "firebaseUid", "value": "" },
+    { "key": "fcmToken", "value": "" },
+    { "key": "pushInternalSecret", "value": "" },
+    { "key": "firebaseSessionCookie", "value": "" }
+  ]
+}

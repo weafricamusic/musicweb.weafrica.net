@@ -1,0 +1,5 @@
+{
+    "chat.agent.maxRequests": 500,
+    "chat.agent.enabled": true,
+    "editor.formatOnSave": true
+}
