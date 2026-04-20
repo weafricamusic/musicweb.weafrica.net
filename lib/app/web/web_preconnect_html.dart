@@ -8,15 +8,18 @@ void warmupWebConnections(String url) {
   final head = web.document.head;
   if (head == null) return;
 
-  void addLink(String rel) {
-    final selector = 'link[rel="$rel"][href="$origin"]';
-    if (head.querySelector(selector) != null) return;
+  bool exists(String rel) {
+    return head.querySelector('link[rel="$rel"][href^="$origin"]') != null;
+  }
+
+  void addLink(String rel, {bool crossOrigin = false}) {
+    if (exists(rel)) return;
 
     final link = web.HTMLLinkElement()
       ..rel = rel
       ..href = origin;
 
-    if (rel == 'preconnect') {
+    if (crossOrigin) {
       link.crossOrigin = 'anonymous';
     }
 
@@ -24,5 +27,5 @@ void warmupWebConnections(String url) {
   }
 
   addLink('dns-prefetch');
-  addLink('preconnect');
+  addLink('preconnect', crossOrigin: true);
 }
