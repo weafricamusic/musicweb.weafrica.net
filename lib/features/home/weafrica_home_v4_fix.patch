@@ -1,0 +1,34 @@
+--- a/lib/features/home/weafrica_home_v4.dart
++++ b/lib/features/home/weafrica_home_v4.dart
+@@ -1,6 +1,7 @@
+ class _WeAfricaHomeV4State extends State<WeAfricaHomeV4> {
++  bool _isMounted = false;
+   
+   @override
+   void initState() {
+     super.initState();
++    _isMounted = true;
+     _loadData();
+   }
+   
+   @override
+   void dispose() {
++    _isMounted = false;
+     super.dispose();
+   }
+   
+   Future<void> _loadData() async {
+     try {
+       final data = await _fetchData();
+-      setState(() {
++      if (_isMounted) setState(() {
+         _updateData(data);
+       });
+     } catch (e) {
+-      setState(() {
++      if (_isMounted) setState(() {
+         _error = e.toString();
+       });
+     }
+   }
+ }

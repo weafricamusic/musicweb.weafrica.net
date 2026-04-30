@@ -5,8 +5,7 @@ import 'package:google_sign_in/google_sign_in.dart';
 
 import '../../app/theme.dart';
 import '../../app/utils/user_facing_error.dart';
-import '../../app/widgets/gradient_button.dart';
-import '../../app/widgets/weafrica_brand_mark.dart';
+import '../../services/facebook_auth_service.dart';
 import 'creator_profile_provisioner.dart';
 import 'user_profile_provisioner.dart';
 import 'user_role.dart';
@@ -20,7 +19,8 @@ class LoginScreen extends StatefulWidget {
   State<LoginScreen> createState() => _LoginScreenState();
 }
 
-class _LoginScreenState extends State<LoginScreen> {
+class _LoginScreenState extends State<LoginScreen>
+    with SingleTickerProviderStateMixin {
   final _identifierController = TextEditingController();
   final _passwordController = TextEditingController();
   final _formKey = GlobalKey<FormState>();
@@ -31,10 +31,15 @@ class _LoginScreenState extends State<LoginScreen> {
 
   UserRole _roleIntent = UserRole.consumer;
 
+  late AnimationController _animationController;
+  late Animation<double> _fadeAnimation;
+  late Animation<Offset> _slideAnimation;
+
   @override
   void dispose() {
     _identifierController.dispose();
     _passwordController.dispose();
+    _animationController.dispose();
     super.dispose();
   }
 
@@ -42,7 +47,26 @@ class _LoginScreenState extends State<LoginScreen> {
   void initState() {
     super.initState();
 
-    // Load the last selected intent so the user doesn't have to re-pick each time.
+    _animationController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 800),
+    );
+
+    _fadeAnimation = CurvedAnimation(
+      parent: _animationController,
+      curve: Curves.easeOut,
+    );
+
+    _slideAnimation = Tween<Offset>(
+      begin: const Offset(0, 0.1),
+      end: Offset.zero,
+    ).animate(CurvedAnimation(
+      parent: _animationController,
+      curve: Curves.easeOut,
+    ));
+
+    _animationController.forward();
+
     UserRoleIntentStore.getRole().then((value) {
       if (!mounted) return;
       setState(() => _roleIntent = value);
@@ -62,7 +86,13 @@ class _LoginScreenState extends State<LoginScreen> {
     } catch (_) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Could not enable ${_roleIntent.label} mode yet. Please try again.')),
+        SnackBar(
+          content: Text(
+              'Could not enable ${_roleIntent.label} mode yet. Please try again.'),
+          behavior: SnackBarBehavior.floating,
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        ),
       );
     }
   }
@@ -81,54 +111,66 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   Widget _roleIntentSelector() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Text(
-          'Sign in as',
-          style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                color: AppColors.textMuted,
-                fontWeight: FontWeight.w800,
+    return Container(
+      padding: const EdgeInsets.all(4),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1A1A1A),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFF333333)),
+      ),
+      child: Row(
+        children: [
+          _roleButton(UserRole.consumer, 'Listener', Icons.headphones),
+          _roleButton(UserRole.artist, 'Artist', Icons.mic),
+          _roleButton(UserRole.dj, 'DJ', Icons.graphic_eq),
+        ],
+      ),
+    );
+  }
+
+  Widget _roleButton(UserRole role, String label, IconData icon) {
+    final isSelected = _roleIntent == role;
+    return Expanded(
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            onTap: () => _setRoleIntent(role),
+            borderRadius: BorderRadius.circular(12),
+            child: Container(
+              padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
+              decoration: BoxDecoration(
+                color: isSelected ? const Color(0xFF2A2A2A) : Colors.transparent,
+                borderRadius: BorderRadius.circular(12),
               ),
-        ),
-        const SizedBox(height: 10),
-        SegmentedButton<UserRole>(
-          segments: const [
-            ButtonSegment<UserRole>(
-              value: UserRole.consumer,
-              icon: Icon(Icons.headphones),
-              label: Text('Listener'),
-            ),
-            ButtonSegment<UserRole>(
-              value: UserRole.artist,
-              icon: Icon(Icons.mic),
-              label: Text('Artist'),
-            ),
-            ButtonSegment<UserRole>(
-              value: UserRole.dj,
-              icon: Icon(Icons.graphic_eq),
-              label: Text('DJ'),
-            ),
-          ],
-          selected: <UserRole>{_roleIntent},
-          onSelectionChanged: (set) {
-            final role = set.isEmpty ? UserRole.consumer : set.first;
-            _setRoleIntent(role);
-          },
-          showSelectedIcon: false,
-          style: ButtonStyle(
-            side: WidgetStateProperty.all(const BorderSide(color: AppColors.border)),
-            backgroundColor: WidgetStateProperty.resolveWith((states) {
-              if (states.contains(WidgetState.selected)) return AppColors.surface2;
-              return AppColors.surface;
-            }),
-            foregroundColor: WidgetStateProperty.all(AppColors.text),
-            shape: WidgetStateProperty.all(
-              RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    icon,
+                    size: 20,
+                    color: isSelected
+                        ? const Color(0xFFD4AF37)
+                        : const Color(0xFF888888),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    label,
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                      color: isSelected
+                          ? Colors.white
+                          : const Color(0xFF888888),
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
         ),
-      ],
+      ),
     );
   }
 
@@ -141,7 +183,6 @@ class _LoginScreenState extends State<LoginScreen> {
     });
 
     try {
-      // Ensure intent is persisted before auth state changes.
       await UserRoleIntentStore.setRole(_roleIntent);
       await FirebaseAuth.instance.signInWithEmailAndPassword(
         email: _identifierController.text.trim(),
@@ -181,7 +222,6 @@ class _LoginScreenState extends State<LoginScreen> {
     });
 
     try {
-      // Ensure intent is persisted before auth state changes.
       await UserRoleIntentStore.setRole(_roleIntent);
       final cred = await FirebaseAuth.instance.createUserWithEmailAndPassword(
         email: _identifierController.text.trim(),
@@ -189,16 +229,19 @@ class _LoginScreenState extends State<LoginScreen> {
       );
 
       await UserProfileProvisioner.ensureForCurrentUser(intent: _roleIntent);
-
-      // If the user is creating an Artist/DJ account, try to provision a basic
-      // creator profile immediately. (Non-fatal if blocked by Supabase grants.)
       await _provisionCreatorProfileIfNeeded();
 
-      // Force email verification for email/password accounts.
       await cred.user?.sendEmailVerification();
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Verification email sent. Please verify to continue.')),
+        SnackBar(
+          content: const Text(
+              'Verification email sent. Please verify to continue.'),
+          behavior: SnackBarBehavior.floating,
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          backgroundColor: Colors.green.shade700,
+        ),
       );
     } on FirebaseAuthException catch (e, st) {
       UserFacingError.log('LoginScreen._createAccount(FirebaseAuth)', e, st);
@@ -239,7 +282,13 @@ class _LoginScreenState extends State<LoginScreen> {
       await FirebaseAuth.instance.sendPasswordResetEmail(email: email);
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Password reset email sent')),
+        SnackBar(
+          content: const Text('Password reset email sent'),
+          behavior: SnackBarBehavior.floating,
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          backgroundColor: Colors.green.shade700,
+        ),
       );
     } on FirebaseAuthException catch (e, st) {
       UserFacingError.log('LoginScreen._forgotPassword(FirebaseAuth)', e, st);
@@ -271,7 +320,6 @@ class _LoginScreenState extends State<LoginScreen> {
     });
 
     try {
-      // Ensure intent is persisted before auth state changes.
       await UserRoleIntentStore.setRole(_roleIntent);
       if (kIsWeb) {
         final provider = GoogleAuthProvider();
@@ -323,208 +371,767 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
-  Widget _socialButton({
-    Key? key,
-    required Widget icon,
-    required String label,
-    required VoidCallback? onPressed,
-  }) {
-    return SizedBox(
-      height: 52,
-      width: double.infinity,
-      child: OutlinedButton.icon(
-          key: key,
-        onPressed: onPressed,
-        icon: icon,
-        label: Text(label, style: const TextStyle(fontWeight: FontWeight.w900)),
-        style: OutlinedButton.styleFrom(
-          foregroundColor: AppColors.text,
-          side: const BorderSide(color: AppColors.border),
-          backgroundColor: AppColors.surface2,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+  Future<void> _signInWithFacebook() async {
+    setState(() {
+      _isLoading = true;
+      _error = null;
+    });
+
+    try {
+      await UserRoleIntentStore.setRole(_roleIntent);
+
+      final userCredential = await FacebookAuthService.signInWithFacebook();
+
+      if (userCredential == null) {
+        setState(
+          () => _error = 'Facebook sign in was cancelled or failed.',
+        );
+        return;
+      }
+
+      await _completePostSignInSetup();
+    } on FirebaseAuthException catch (e, st) {
+      UserFacingError.log('LoginScreen._signInWithFacebook(FirebaseAuth)', e, st);
+      if (!mounted) return;
+      setState(
+        () => _error = UserFacingError.message(
+          e.message ?? e.code,
+          fallback: 'Sign in failed. Please try again.',
         ),
-      ),
-    );
+      );
+    } catch (e, st) {
+      UserFacingError.log('LoginScreen._signInWithFacebook', e, st);
+      if (!mounted) return;
+      setState(
+        () => _error = UserFacingError.message(
+          e,
+          fallback: 'Sign in failed. Please try again.',
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
   }
 
   @override
   Widget build(BuildContext context) {
+    final screenWidth = MediaQuery.of(context).size.width;
+    final isDesktop = screenWidth > 900;
+
     return Scaffold(
-      body: SafeArea(
-        child: LayoutBuilder(
-          builder: (context, constraints) {
-            return SingleChildScrollView(
-              padding: const EdgeInsets.all(20),
-              child: Center(
-                child: ConstrainedBox(
-                  constraints: BoxConstraints(
-                    maxWidth: 420,
-                    minHeight: (constraints.maxHeight - 40).clamp(0, double.infinity),
-                  ),
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      Align(
-                        alignment: Alignment.centerLeft,
-                        child: const WeAfricaBrandMark(),
-                      ),
-                      const SizedBox(height: 16),
-                      Text(
-                        'WeAfrica\nMusic',
-                        textAlign: TextAlign.left,
-                        style: Theme.of(context).textTheme.displaySmall?.copyWith(
-                              fontWeight: FontWeight.w900,
-                              height: 0.95,
-                            ),
-                      ),
-                      const SizedBox(height: 10),
-                      const Text(
-                        'Discover Africa\'s sound',
-                        style: TextStyle(color: AppColors.textMuted, fontWeight: FontWeight.w600),
-                      ),
-                      const SizedBox(height: 28),
-                      const SizedBox(height: 16),
+      backgroundColor: const Color(0xFF0A0A0A),
+      body: isDesktop ? _buildDesktopLayout() : _buildMobileLayout(),
+    );
+  }
 
-                      DecoratedBox(
-                        decoration: BoxDecoration(
-                          color: AppColors.surface,
-                          borderRadius: BorderRadius.circular(22),
-                          border: Border.all(color: AppColors.border),
-                        ),
-                        child: Padding(
-                          padding: const EdgeInsets.all(18),
-                          child: Form(
-                            key: _formKey,
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.stretch,
-                              children: [
-                                _roleIntentSelector(),
-                                const SizedBox(height: 16),
+  Widget _buildDesktopLayout() {
+    return Row(
+      children: [
+        // Left Side - Visual
+        Expanded(
+          child: _buildLeftSide(),
+        ),
+        // Right Side - Login Form
+        Expanded(
+          child: _buildRightSide(),
+        ),
+      ],
+    );
+  }
 
-                                _socialButton(
-                                  key: const Key('login_google'),
-                                  icon: const Icon(Icons.g_mobiledata, size: 24),
-                                  label: 'Continue with Google',
-                                  onPressed: _isLoading ? null : _signInWithGoogle,
-                                ),
-                                const SizedBox(height: 12),
-
-                                Row(
-                                  children: [
-                                    const Expanded(child: Divider(color: AppColors.border)),
-                                    Padding(
-                                      padding: const EdgeInsets.symmetric(horizontal: 10),
-                                      child: Text(
-                                        'or',
-                                        style: Theme.of(context)
-                                            .textTheme
-                                            .labelMedium
-                                            ?.copyWith(color: AppColors.textMuted),
-                                      ),
-                                    ),
-                                    const Expanded(child: Divider(color: AppColors.border)),
-                                  ],
-                                ),
-                                const SizedBox(height: 12),
-
-                                TextFormField(
-                                  key: const Key('login_email'),
-                                  controller: _identifierController,
-                                  keyboardType: TextInputType.emailAddress,
-                                  autofillHints: const [AutofillHints.email, AutofillHints.username],
-                                  decoration: const InputDecoration(
-                                    labelText: 'Email / Phone',
-                                    hintText: 'you@example.com',
-                                  ),
-                                  validator: (v) {
-                                    final value = (v ?? '').trim();
-                                    if (value.isEmpty) return 'Email or phone is required';
-                                    // Current auth backend uses Firebase email/password.
-                                    // Keep validation friendly while still allowing the "Email / Phone" field.
-                                    if (!value.contains('@')) return 'Enter a valid email address';
-                                    return null;
-                                  },
-                                ),
-                                const SizedBox(height: 14),
-                                TextFormField(
-                                  key: const Key('login_password'),
-                                  controller: _passwordController,
-                                  autofillHints: const [AutofillHints.password],
-                                  obscureText: _obscure,
-                                  decoration: InputDecoration(
-                                    labelText: 'Password',
-                                    suffixIcon: IconButton(
-                                      onPressed: () => setState(() => _obscure = !_obscure),
-                                      icon: Icon(_obscure ? Icons.visibility : Icons.visibility_off),
-                                    ),
-                                  ),
-                                  validator: (v) {
-                                    final value = v ?? '';
-                                    if (value.isEmpty) return 'Password is required';
-                                    if (value.length < 6) return 'Use at least 6 characters';
-                                    return null;
-                                  },
-                                ),
-                                const SizedBox(height: 10),
-                                Align(
-                                  alignment: Alignment.centerRight,
-                                  child: TextButton(
-                                    key: const Key('login_forgot_password'),
-                                    onPressed: _isLoading ? null : _forgotPassword,
-                                    child: const Text('Forgot password?'),
-                                  ),
-                                ),
-
-                                if (_error != null) ...[
-                                  const SizedBox(height: 8),
-                                  Text(
-                                    _error!,
-                                    style: const TextStyle(
-                                      color: Color(0xFFFF6B6B),
-                                      fontWeight: FontWeight.w600,
-                                    ),
-                                  ),
-                                ],
-                                const SizedBox(height: 14),
-
-                                GradientButton(
-                                  key: const Key('login_submit'),
-                                  isLoading: _isLoading,
-                                  onPressed: _isLoading ? null : _signInWithEmail,
-                                  child: Text(
-                                    'Login',
-                                    style: const TextStyle(fontWeight: FontWeight.w900),
-                                  ),
-                                ),
-                                const SizedBox(height: 10),
-                                SizedBox(
-                                  height: 52,
-                                  child: OutlinedButton(
-                                    key: const Key('login_create_account'),
-                                    onPressed: _isLoading ? null : _createAccount,
-                                    style: OutlinedButton.styleFrom(
-                                      foregroundColor: AppColors.text,
-                                      side: const BorderSide(color: AppColors.border),
-                                      backgroundColor: AppColors.surface2,
-                                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                                    ),
-                                    child: const Text('Create account', style: TextStyle(fontWeight: FontWeight.w900)),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            );
-          },
+  Widget _buildMobileLayout() {
+    return SingleChildScrollView(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          children: [
+            const SizedBox(height: 40),
+            // Mobile: Show logo and minimal branding
+            _buildLogo(),
+            const SizedBox(height: 32),
+            _buildLoginForm(),
+          ],
         ),
       ),
     );
   }
+
+  Widget _buildLeftSide() {
+    return Container(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            const Color(0xFF0A0A0A),
+            const Color(0xFF1A1A1A),
+          ],
+        ),
+      ),
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          // Background decorative elements
+          Positioned.fill(
+            child: CustomPaint(
+              painter: SoundWavePainter(),
+            ),
+          ),
+          
+          // Main content
+          Padding(
+            padding: const EdgeInsets.all(48),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Logo
+                _buildLogo(),
+                
+                const Spacer(),
+                
+                // Hero Image (placeholder - replace with actual image)
+                Center(
+                  child: Container(
+                    width: 400,
+                    height: 400,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      gradient: RadialGradient(
+                        colors: [
+                          const Color(0xFFD4AF37).withValues(alpha: 0.3),
+                          Colors.transparent,
+                        ],
+                      ),
+                    ),
+                    child: Center(
+                      child: Icon(
+                        Icons.headphones,
+                        size: 150,
+                        color: const Color(0xFFD4AF37).withValues(alpha: 0.8),
+                      ),
+                    ),
+                  ),
+                ),
+                
+                const Spacer(),
+                
+                // Tagline
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Feel Africa.',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 48,
+                        fontWeight: FontWeight.w900,
+                        height: 1.1,
+                      ),
+                    ),
+                    const Text(
+                      'Live the Sound.',
+                      style: TextStyle(
+                        color: Color(0xFFD4AF37),
+                        fontSize: 48,
+                        fontWeight: FontWeight.w900,
+                        height: 1.1,
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    Text(
+                      'Discover. Stream. Connect.',
+                      style: TextStyle(
+                        color: Colors.white.withValues(alpha: 0.7),
+                        fontSize: 18,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ],
+                ),
+                
+                const SizedBox(height: 48),
+                
+                // Feature icons
+                Row(
+                  children: [
+                    _buildFeatureIcon(
+                      icon: Icons.music_note,
+                      title: 'Millions of Songs',
+                      subtitle: 'Endless choices',
+                    ),
+                    const SizedBox(width: 32),
+                    _buildFeatureIcon(
+                      icon: Icons.headphones,
+                      title: 'Afro Sounds',
+                      subtitle: 'Curated for you',
+                    ),
+                    const SizedBox(width: 32),
+                    _buildFeatureIcon(
+                      icon: Icons.favorite,
+                      title: 'For You',
+                      subtitle: 'Made personal',
+                    ),
+                  ],
+                ),
+                
+                const SizedBox(height: 48),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildRightSide() {
+    return Container(
+      color: const Color(0xFF0F0F0F),
+      child: Center(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(48),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 420),
+            child: FadeTransition(
+              opacity: _fadeAnimation,
+              child: SlideTransition(
+                position: _slideAnimation,
+                child: _buildLoginForm(),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildLogo() {
+    return Row(
+      children: [
+        Container(
+          width: 40,
+          height: 40,
+          decoration: BoxDecoration(
+            gradient: const LinearGradient(
+              colors: [
+                Color(0xFFD4AF37),
+                Color(0xFFE5C158),
+              ],
+            ),
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: const Center(
+            child: Text(
+              'W',
+              style: TextStyle(
+                color: Color(0xFF0A0A0A),
+                fontSize: 24,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(width: 12),
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text(
+              'weafrica',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 20,
+                fontWeight: FontWeight.w800,
+                letterSpacing: -0.5,
+              ),
+            ),
+            Text(
+              'MUSIC',
+              style: TextStyle(
+                color: const Color(0xFFD4AF37),
+                fontSize: 10,
+                fontWeight: FontWeight.w700,
+                letterSpacing: 3,
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildFeatureIcon({
+    required IconData icon,
+    required String title,
+    required String subtitle,
+  }) {
+    return Row(
+      children: [
+        Container(
+          width: 48,
+          height: 48,
+          decoration: BoxDecoration(
+            color: const Color(0xFFD4AF37).withValues(alpha: 0.1),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+              color: const Color(0xFFD4AF37).withValues(alpha: 0.3),
+            ),
+          ),
+          child: Icon(
+            icon,
+            color: const Color(0xFFD4AF37),
+            size: 24,
+          ),
+        ),
+        const SizedBox(width: 12),
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              title,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 14,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            Text(
+              subtitle,
+              style: TextStyle(
+                color: Colors.white.withValues(alpha: 0.6),
+                fontSize: 12,
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildLoginForm() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Language selector (decorative for now)
+        Align(
+          alignment: Alignment.topRight,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+            decoration: BoxDecoration(
+              color: const Color(0xFF1A1A1A),
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(color: const Color(0xFF333333)),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(
+                  Icons.language,
+                  color: Color(0xFF888888),
+                  size: 16,
+                ),
+                const SizedBox(width: 8),
+                const Text(
+                  'English',
+                  style: TextStyle(
+                    color: Color(0xFF888888),
+                    fontSize: 13,
+                  ),
+                ),
+                const SizedBox(width: 4),
+                Icon(
+                  Icons.keyboard_arrow_down,
+                  color: const Color(0xFF888888),
+                  size: 16,
+                ),
+              ],
+            ),
+          ),
+        ),
+        
+        const SizedBox(height: 32),
+        
+        // Welcome text
+        const Text(
+          'Welcome back',
+          style: TextStyle(
+            color: Colors.white,
+            fontSize: 32,
+            fontWeight: FontWeight.w900,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          'Log in to continue to Weafrica Music',
+          style: TextStyle(
+            color: Colors.white.withValues(alpha: 0.6),
+            fontSize: 14,
+          ),
+        ),
+        
+        // Gold underline accent
+        const SizedBox(height: 16),
+        Container(
+          width: 40,
+          height: 3,
+          decoration: BoxDecoration(
+            gradient: const LinearGradient(
+              colors: [
+                Color(0xFFD4AF37),
+                Color(0xFFE5C158),
+              ],
+            ),
+            borderRadius: BorderRadius.circular(2),
+          ),
+        ),
+        
+        const SizedBox(height: 32),
+        
+        // Role selector
+        _roleIntentSelector(),
+        const SizedBox(height: 24),
+        
+        // Email field
+        _buildInputField(
+          controller: _identifierController,
+          label: 'Email',
+          hint: 'Enter your email',
+          icon: Icons.email_outlined,
+          keyboardType: TextInputType.emailAddress,
+        ),
+        const SizedBox(height: 20),
+        
+        // Password field
+        _buildInputField(
+          controller: _passwordController,
+          label: 'Password',
+          hint: 'Enter your password',
+          icon: Icons.lock_outline,
+          isPassword: true,
+        ),
+        
+        // Forgot password
+        const SizedBox(height: 12),
+        Align(
+          alignment: Alignment.centerRight,
+          child: GestureDetector(
+            onTap: _isLoading ? null : _forgotPassword,
+            child: const Text(
+              'Forgot password?',
+              style: TextStyle(
+                color: Color(0xFFD4AF37),
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ),
+        
+        // Error message
+        if (_error != null) ...[
+          const SizedBox(height: 16),
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: Colors.red.withValues(alpha: 0.1),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: Colors.red.withValues(alpha: 0.3)),
+            ),
+            child: Row(
+              children: [
+                const Icon(Icons.error_outline, color: Colors.red, size: 20),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    _error!,
+                    style: const TextStyle(
+                      color: Colors.red,
+                      fontSize: 13,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+        
+        const SizedBox(height: 24),
+        
+        // Login button
+        _buildLoginButton(),
+        
+        const SizedBox(height: 24),
+        
+        // OR divider
+        Row(
+          children: [
+            Expanded(
+              child: Container(
+                height: 1,
+                color: const Color(0xFF333333),
+              ),
+            ),
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 16),
+              child: Text(
+                'OR',
+                style: TextStyle(
+                  color: Color(0xFF666666),
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+            Expanded(
+              child: Container(
+                height: 1,
+                color: const Color(0xFF333333),
+              ),
+            ),
+          ],
+        ),
+        
+        const SizedBox(height: 24),
+        
+        // Facebook button
+        _buildSocialButton(
+          onPressed: _isLoading ? null : _signInWithFacebook,
+          icon: Icons.facebook,
+          label: 'Continue with Facebook',
+          backgroundColor: const Color(0xFF1877F2),
+          textColor: Colors.white,
+        ),
+        const SizedBox(height: 12),
+        
+        // Google button
+        _buildSocialButton(
+          onPressed: _isLoading ? null : _signInWithGoogle,
+          icon: Icons.g_mobiledata,
+          label: 'Continue with Google',
+          backgroundColor: Colors.white,
+          textColor: const Color(0xFF333333),
+        ),
+        
+        const SizedBox(height: 32),
+        
+        // Sign up link
+        Center(
+          child: GestureDetector(
+            onTap: _isLoading ? null : _createAccount,
+            child: RichText(
+              text: TextSpan(
+                text: "Don't have an account? ",
+                style: TextStyle(
+                  color: Colors.white.withValues(alpha: 0.6),
+                  fontSize: 14,
+                ),
+                children: const [
+                  TextSpan(
+                    text: 'Sign up',
+                    style: TextStyle(
+                      color: Color(0xFFD4AF37),
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildInputField({
+    required TextEditingController controller,
+    required String label,
+    required String hint,
+    required IconData icon,
+    bool isPassword = false,
+    TextInputType? keyboardType,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 14,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Container(
+          decoration: BoxDecoration(
+            color: const Color(0xFF1A1A1A),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: const Color(0xFF333333)),
+          ),
+          child: TextFormField(
+            controller: controller,
+            obscureText: isPassword ? _obscure : false,
+            keyboardType: keyboardType,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 14,
+            ),
+            decoration: InputDecoration(
+              hintText: hint,
+              hintStyle: TextStyle(
+                color: Colors.white.withValues(alpha: 0.4),
+                fontSize: 14,
+              ),
+              prefixIcon: Icon(
+                icon,
+                color: const Color(0xFF666666),
+                size: 20,
+              ),
+              suffixIcon: isPassword
+                  ? IconButton(
+                      onPressed: () => setState(() => _obscure = !_obscure),
+                      icon: Icon(
+                        _obscure ? Icons.visibility_off : Icons.visibility,
+                        color: const Color(0xFF666666),
+                        size: 20,
+                      ),
+                    )
+                  : null,
+              border: InputBorder.none,
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: 16,
+                vertical: 16,
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildLoginButton() {
+    return Container(
+      width: double.infinity,
+      height: 52,
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          colors: [
+            Color(0xFFD4AF37),
+            Color(0xFFE5C158),
+          ],
+        ),
+        borderRadius: BorderRadius.circular(12),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFFD4AF37).withValues(alpha: 0.3),
+            blurRadius: 20,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: _isLoading ? null : _signInWithEmail,
+          borderRadius: BorderRadius.circular(12),
+          child: Center(
+            child: _isLoading
+                ? const SizedBox(
+                    height: 20,
+                    width: 20,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF0A0A0A)),
+                    ),
+                  )
+                : const Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Text(
+                        'Log in',
+                        style: TextStyle(
+                          color: Color(0xFF0A0A0A),
+                          fontSize: 16,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                      SizedBox(width: 8),
+                      Icon(
+                        Icons.arrow_forward,
+                        color: Color(0xFF0A0A0A),
+                        size: 20,
+                      ),
+                    ],
+                  ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSocialButton({
+    required VoidCallback? onPressed,
+    required IconData icon,
+    required String label,
+    required Color backgroundColor,
+    required Color textColor,
+  }) {
+    return SizedBox(
+      width: double.infinity,
+      height: 48,
+      child: ElevatedButton.icon(
+        onPressed: onPressed,
+        icon: Icon(icon, color: textColor, size: 24),
+        label: Text(
+          label,
+          style: TextStyle(
+            color: textColor,
+            fontSize: 14,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        style: ElevatedButton.styleFrom(
+          backgroundColor: backgroundColor,
+          foregroundColor: textColor,
+          elevation: 0,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// Custom painter for sound wave decoration
+class SoundWavePainter extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = const Color(0xFFD4AF37).withValues(alpha: 0.1)
+      ..strokeWidth = 2
+      ..style = PaintingStyle.stroke;
+
+    final path = Path();
+    final width = size.width;
+    final height = size.height;
+
+    // Create wave pattern
+    for (int i = 0; i < 5; i++) {
+      path.moveTo(0, height * 0.6 + (i * 30));
+      
+      for (double x = 0; x < width; x += 10) {
+        final y = height * 0.6 + 
+                 (i * 30) + 
+                 (i + 1) * 10 * 
+                 (x / width) * 
+                 (0.5 - (x / width).abs());
+        path.lineTo(x, y);
+      }
+    }
+
+    canvas.drawPath(path, paint);
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }

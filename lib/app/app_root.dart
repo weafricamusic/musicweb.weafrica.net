@@ -17,6 +17,7 @@ import 'widgets/supabase_setup_screen.dart';
 import '../services/battle_invite_manager.dart';
 import '../features/settings/constants_viewer_screen.dart';
 
+import 'package:weafrica_music/features/live_old/screens/live_feed_screen.dart';
 class MyApp extends StatefulWidget {
   const MyApp({
     super.key,
@@ -105,8 +106,8 @@ class _MyAppState extends State<MyApp> {
             '/dj/studio': (_) => const DjDashboardScreen(),
             '/dj/dashboard': (_) => const DjDashboardScreen(),
             '/artist/dashboard': (_) => const ArtistDashboardScreen(),
-            '/live/feed': (_) => const LiveFeedScreen(),
-            '/battle/lobby': (_) => const BattleLobbyScreen(),
+            '/live/feed': (_) => LiveFeedScreen(),
+            '/battle/lobby': (_) => BattleLobbyScreen(),
             '/constants': (_) => const AppConstantsViewerScreen(),
           },
           home: widget.homeOverride ??

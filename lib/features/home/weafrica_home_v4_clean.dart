@@ -396,10 +396,10 @@ class _WeAfricaHomeV4State extends State<WeAfricaHomeV4> {
                   margin: const EdgeInsets.only(right: 10),
                   decoration: BoxDecoration(
                     gradient: LinearGradient(
-                      colors: [Colors.orange.withOpacity(0.15), Colors.grey[850]!],
+                      colors: [Colors.orange.withValues(alpha: ), Colors.grey[850]!],
                     ),
                     borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: Colors.orange.withOpacity(0.3)),
+                    border: Border.all(color: Colors.orange.withValues(alpha: )),
                   ),
                   child: Row(
                     children: [
@@ -407,7 +407,7 @@ class _WeAfricaHomeV4State extends State<WeAfricaHomeV4> {
                         width: 50,
                         height: 80,
                         decoration: BoxDecoration(
-                          color: Colors.orange.withOpacity(0.1),
+                          color: Colors.orange.withValues(alpha: ),
                           borderRadius: const BorderRadius.horizontal(left: Radius.circular(8)),
                           image: song['thumbnail_url'] != null
                               ? DecorationImage(image: NetworkImage(song['thumbnail_url']), fit: BoxFit.cover)

@@ -38,11 +38,13 @@ class ReelFeedScreen extends StatefulWidget {
     this.pageSize = ReelPaginationService.defaultPageSize,
     this.onAuthRequired,
     this.onOpenArtistProfile,
+    this.initialVideoId,
   });
 
   final int pageSize;
   final VoidCallback? onAuthRequired;
   final void Function(String artistUserId)? onOpenArtistProfile;
+  final String? initialVideoId;
 
   @override
   State<ReelFeedScreen> createState() => _ReelFeedScreenState();

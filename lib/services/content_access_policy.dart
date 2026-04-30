@@ -32,22 +32,17 @@ class ContentAccessPolicy {
     final id = contentId.trim();
     if (id.isEmpty) return const ContentAccessDecision.allowed();
 
+    // Allow all non-exclusive content for everyone
+    if (!isExclusive) {
+      return const ContentAccessDecision.allowed();
+    }
+
+    // Only check entitlements for exclusive content
     if (isExclusive && !entitlements.effectiveExclusiveContentEnabled) {
       return const ContentAccessDecision.blocked(ContentAccessBlockReason.exclusive);
     }
 
-    final access = entitlements.effectiveContentAccess.trim().toLowerCase();
-    if (access != 'limited') {
-      return const ContentAccessDecision.allowed();
-    }
-
-    final ratio = entitlements.effectiveContentLimitRatio;
-    if (ratio >= 1.0) return const ContentAccessDecision.allowed();
-    if (ratio <= 0.0) return const ContentAccessDecision.blocked(ContentAccessBlockReason.ratio);
-
-    final bucket = _bucket01(contentId: id, userKey: userKey);
-    if (bucket < ratio) return const ContentAccessDecision.allowed();
-    return const ContentAccessDecision.blocked(ContentAccessBlockReason.ratio);
+    return const ContentAccessDecision.allowed();
   }
 
   /// Stable 0..1 bucket.

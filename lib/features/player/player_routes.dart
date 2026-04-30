@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
 
-import '../../screens/full_player_screen.dart';
+import 'screens/full_player_screen.dart';
 
+/// Opens the full player screen with a slide-up transition
 void openPlayer(BuildContext context) {
   Navigator.of(context).push(
     PageRouteBuilder(

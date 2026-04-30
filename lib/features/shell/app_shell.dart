@@ -1,5 +1,4 @@
 import '../../features/artist_dashboard/screens/artist_profile_screen.dart';
-import '../../features/live/screens/live_swipe_watch_screen.dart';
 import '../../features/creator/creator_upload_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
@@ -27,12 +26,14 @@ import '../auth/user_role_intent_store.dart';
 import '../auth/user_role_store.dart';
 import '../../home/home_tab.dart';
 import '../library/library_tab_real.dart';
-import '../live/live_screen.dart';
-import '../live/models/live_args.dart';
-import '../live/models/live_battle.dart';
-import '../live/services/battle_matching_api.dart';
-import '../live/services/battle_invite_service.dart';
-import '../player/mini_player.dart';
+import 'package:weafrica_music/features/live_old/screens/live_swipe_watch_screen.dart';
+// Live imports removed - system being rebuilt
+// import '../live/live_screen.dart';
+// import '../live/models/live_args.dart';
+// import '../live/models/live_battle.dart';
+// import '../live/services/battle_matching_api.dart';
+// import '../live/services/battle_invite_service.dart';
+import '../player/widgets/mini_player.dart';
 import '../player/playback_controller.dart';
 import '../player/player_routes.dart';
 import '../settings/about_weafrica_music_page.dart';
@@ -106,14 +107,15 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   StreamSubscription<LivePriorityAccessGateEvent>? _livePriorityGateSub;
   bool _showingLivePriorityGateModal = false;
 
-  final BattleInviteService _battleInviteService = BattleInviteService();
-  static const BattleMatchingApi _battleMatchingApi = BattleMatchingApi();
-  StreamSubscription<List<Map<String, dynamic>>>? _battleInviteSub;
-  String? _realtimeUid;
-  String? _battleInviteUid;
-  final Set<String> _seenBattleInviteIds = <String>{};
-  String? _lastInviteSnackId;
-  bool _showingBattleInviteDialog = false;
+  // Live battle features temporarily disabled
+  // final BattleInviteService _battleInviteService = BattleInviteService();
+  // static const BattleMatchingApi _battleMatchingApi = BattleMatchingApi();
+  // StreamSubscription<List<Map<String, dynamic>>>? _battleInviteSub;
+  // String? _realtimeUid;
+  // String? _battleInviteUid;
+  // final Set<String> _seenBattleInviteIds = <String>{};
+  // String? _lastInviteSnackId;
+  // bool _showingBattleInviteDialog = false;
 
   int? _coinBalance;
   bool _coinBalanceLoading = false;
@@ -191,7 +193,6 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
         role: roleForUi,
         hostId: user.uid,
         hostName: hostName,
-        initialBattleModeEnabled: battleModeEnabled,
       ),
     );
   }
@@ -203,104 +204,30 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
       ),
+      isScrollControlled: true,
       builder: (sheetContext) {
-        return TweenAnimationBuilder<double>(
-          duration: const Duration(milliseconds: 180),
-          curve: Curves.easeOutCubic,
-          tween: Tween<double>(begin: 0.97, end: 1.0),
-          builder: (context, scale, child) {
-            return Transform.scale(scale: scale, child: child);
+        return _CreatorCreateSheet(
+          roleForUi: roleForUi,
+          onGoLive: () {
+            Navigator.of(sheetContext).pop();
+            unawaited(_openGoLiveSetup(roleForUi: roleForUi));
           },
-          child: SafeArea(
-            top: false,
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Container(
-                    width: 42,
-                    height: 4,
-                    decoration: BoxDecoration(
-                      color: AppColors.textMuted.withValues(alpha: 0.45),
-                      borderRadius: BorderRadius.circular(99),
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  ListTile(
-                    contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 14,
-                      vertical: 4,
-                    ),
-                    tileColor: AppColors.brandOrange.withValues(alpha: 0.16),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(14),
-                      side: BorderSide(
-                        color: AppColors.brandOrange.withValues(alpha: 0.45),
-                      ),
-                    ),
-                    leading: const Icon(
-                      Icons.radio_button_checked,
-                      color: AppColors.brandOrange,
-                    ),
-                    title: const Text('GO LIVE NOW'),
-                    subtitle: const Text('Start streaming instantly'),
-                    onTap: () {
-                      Navigator.of(sheetContext).pop();
-                      unawaited(_openGoLiveSetup(roleForUi: roleForUi));
-                    },
-                  ),
-                  const SizedBox(height: 8),
-                  ListTile(
-                    leading: const Icon(Icons.image_outlined),
-                    title: const Text('Photo + Song Post'),
-                    onTap: () {
-                      Navigator.of(sheetContext).pop();
-                      _open(
-                        context,
-                        PhotoSongPostMockupScreen(role: roleForUi),
-                      );
-                    },
-                  ),
-                  ListTile(
-                    leading: const Icon(Icons.music_note_outlined),
-                    title: const Text('Upload Song'),
-                    onTap: () {
-                      Navigator.of(sheetContext).pop();
-                      _open(
-                        context,
-                        UploadTrackScreen(creatorIntent: roleForUi),
-                      );
-                    },
-                  ),
-                  ListTile(
-                    leading: const Icon(Icons.ondemand_video_outlined),
-                    title: const Text('Upload Video'),
-                    onTap: () {
-                      Navigator.of(sheetContext).pop();
-                      _open(
-                        context,
-                        UploadVideoScreen(creatorIntent: roleForUi),
-                      );
-                    },
-                  ),
-                  ListTile(
-                    leading: const Icon(Icons.sports_mma_outlined),
-                    title: const Text('Start Battle'),
-                    onTap: () {
-                      Navigator.of(sheetContext).pop();
-                      unawaited(
-                        _openGoLiveSetup(
-                          roleForUi: roleForUi,
-                          battleModeEnabled: true,
-                        ),
-                      );
-                    },
-                  ),
-                ],
-              ),
-            ),
-          ),
+          onPhotoSong: () {
+            Navigator.of(sheetContext).pop();
+            _open(context, PhotoSongPostMockupScreen(role: roleForUi));
+          },
+          onUploadSong: () {
+            Navigator.of(sheetContext).pop();
+            _open(context, UploadTrackScreen(creatorIntent: roleForUi));
+          },
+          onUploadVideo: () {
+            Navigator.of(sheetContext).pop();
+            _open(context, UploadVideoScreen(creatorIntent: roleForUi));
+          },
+          onStartBattle: () {
+            Navigator.of(sheetContext).pop();
+            unawaited(_openGoLiveSetup(roleForUi: roleForUi, battleModeEnabled: true));
+          },
         );
       },
     );
@@ -534,6 +461,8 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     }
   }
 
+  // Live battle features temporarily disabled
+  /*
   void _syncRealtimeListenersForUid(String? uid) {
     if (_realtimeUid == uid) return;
     _seenBattleInviteIds.clear();
@@ -561,9 +490,27 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
         if (!mounted || rows.isEmpty) return;
 
         final invites = rows.map(BattleInvite.fromMap).toList(growable: false);
+        
+        // Filter: Only show invites where current user is the recipient (toUid)
+        // AND not the sender (fromUid) - prevent host seeing their own invites
         final newInvites = invites.where((invite) {
           final id = invite.id.trim();
-          return id.isNotEmpty && !_seenBattleInviteIds.contains(id);
+          final toUid = invite.toUid.trim();
+          final fromUid = invite.fromUid.trim();
+          
+          // Must be valid invite
+          if (id.isEmpty) return false;
+          
+          // Must be addressed to current user
+          if (toUid != uid) return false;
+          
+          // Don't show if user sent it themselves (shouldn't happen but safety check)
+          if (fromUid == uid) return false;
+          
+          // Don't show already seen invites
+          if (_seenBattleInviteIds.contains(id)) return false;
+          
+          return true;
         }).toList(growable: false);
 
         if (newInvites.isEmpty) return;
@@ -579,8 +526,12 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
           );
         }
 
-        unawaited(_showBattleInvitePrompt(newInvites.first));
-        unawaited(NotificationCenterStore.instance.refreshUnreadCount());
+        // Only show if this user is the recipient, not the sender
+        final inviteToShow = newInvites.first;
+        if (inviteToShow.toUid.trim() == uid) {
+          _showBattleInviteSnackBar(inviteToShow);
+          unawaited(NotificationCenterStore.instance.refreshUnreadCount());
+        }
       },
       onError: (_, _) {
         // Best-effort stream; we still have push + polling fallback.
@@ -618,85 +569,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       );
   }
 
-  Future<void> _showBattleInvitePrompt(BattleInvite invite) async {
-    if (!mounted || _showingBattleInviteDialog) return;
-
-    _showingBattleInviteDialog = true;
-    try {
-      final from = invite.fromUserName.trim().isNotEmpty
-          ? invite.fromUserName.trim()
-          : 'Another creator';
-      final exp = invite.expiresAt.toLocal().toString().split('.').first;
-      var busy = false;
-
-      await showDialog<void>(
-        context: context,
-        barrierDismissible: true,
-        builder: (dialogCtx) {
-          return StatefulBuilder(
-            builder: (dialogCtx, setState) {
-              Future<void> respond(String action) async {
-                if (busy) return;
-                setState(() => busy = true);
-                try {
-                  if (action == 'accept') {
-                    final battle = await _battleMatchingApi.respondToInvite(
-                      inviteId: invite.id,
-                      action: 'accept',
-                    );
-                    if (!dialogCtx.mounted || !mounted) return;
-                    Navigator.of(dialogCtx).pop();
-                    await _openBattleFromInvite(invite: invite, battle: battle);
-                    return;
-                  }
-
-                  if (action == 'decline') {
-                    await _battleMatchingApi.respondToInvite(
-                      inviteId: invite.id,
-                      action: 'decline',
-                    );
-                    if (dialogCtx.mounted) Navigator.of(dialogCtx).pop();
-                    return;
-                  }
-
-                  Navigator.of(dialogCtx).pop();
-                  _openBattleInvitesInbox();
-                } catch (_) {
-                  if (!mounted) return;
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Could not process battle invite. Please try again.')),
-                  );
-                } finally {
-                  if (dialogCtx.mounted) setState(() => busy = false);
-                }
-              }
-
-              return AlertDialog(
-                title: const Text('Battle invite'),
-                content: Text('$from invited you to a live battle. Expires $exp.'),
-                actions: [
-                  TextButton(
-                    onPressed: busy ? null : () => respond('view'),
-                    child: const Text('View'),
-                  ),
-                  OutlinedButton(
-                    onPressed: busy ? null : () => respond('decline'),
-                    child: const Text('Decline'),
-                  ),
-                  FilledButton(
-                    onPressed: busy ? null : () => respond('accept'),
-                    child: const Text('Accept'),
-                  ),
-                ],
-              );
-            },
-          );
-        },
-      );
-    } finally {
-      _showingBattleInviteDialog = false;
-    }
-  }
+  // Popup dialog removed - using incoming battle notification instead
 
   Future<void> _openBattleFromInvite({
     required BattleInvite invite,
@@ -710,9 +583,14 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
 
     final role = await UserRoleResolver.resolveCurrentUser();
     final displayName = user?.displayName?.trim();
-    final hostName = (displayName != null && displayName.isNotEmpty)
+    final myName = (displayName != null && displayName.isNotEmpty)
         ? displayName
         : role.label;
+
+    // Determine who is the host and who is the invited artist
+    // The invite.fromUid is the person who sent the invite (the host)
+    final hostId = invite.fromUid.trim();
+    final isCurrentUserHost = uid == hostId;
 
     final participants = <String>{
       invite.fromUid.trim(),
@@ -728,8 +606,9 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
           liveId: battle.channelId,
           channelId: battle.channelId,
           role: role == UserRole.consumer ? _roleIntent : role,
-          hostId: uid,
-          hostName: hostName,
+          // CRITICAL: hostId must be the actual battle host, not the current user
+          hostId: hostId,
+          hostName: isCurrentUserHost ? myName : invite.fromUserName,
           isBattle: true,
           battleId: battle.battleId,
           battleArtists: participants,
@@ -743,6 +622,15 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
         ? const DjLiveBattlesScreen()
         : ArtistLiveBattlesScreen();
     _open(context, page);
+  }
+  */
+  void _syncRealtimeListenersForUid(String? uid) {
+    // Live battle features temporarily disabled
+    if (uid != null) {
+      NotificationCenterStore.instance.startRealtimeSync(uid: uid);
+    } else {
+      NotificationCenterStore.instance.stopRealtimeSync();
+    }
   }
 
   void _maybeProvisionCreatorProfile(String uid) {
@@ -1023,7 +911,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
                 : <Widget>[
                     const HomeTab(),
                     const ReelFeedScreen(),
-                    const LiveSwipeWatchScreen(),
+                    LiveSwipeWatchScreen(),
                     const LibraryTab(),
                     ArtistProfileScreen(),
                   ];
@@ -2093,6 +1981,486 @@ class _MenuTile extends StatelessWidget {
       ),
       trailing: const Icon(Icons.chevron_right, color: AppColors.textMuted),
       onTap: onTap,
+    );
+  }
+}
+
+// ===================== CREATOR CREATE SHEET =====================
+class _CreatorCreateSheet extends StatefulWidget {
+  const _CreatorCreateSheet({
+    required this.roleForUi,
+    required this.onGoLive,
+    required this.onPhotoSong,
+    required this.onUploadSong,
+    required this.onUploadVideo,
+    required this.onStartBattle,
+  });
+
+  final UserRole roleForUi;
+  final VoidCallback onGoLive;
+  final VoidCallback onPhotoSong;
+  final VoidCallback onUploadSong;
+  final VoidCallback onUploadVideo;
+  final VoidCallback onStartBattle;
+
+  @override
+  State<_CreatorCreateSheet> createState() => _CreatorCreateSheetState();
+}
+
+class _CreatorCreateSheetState extends State<_CreatorCreateSheet> {
+  late Future<List<Map<String, dynamic>>> _liveUsersFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    _liveUsersFuture = _fetchLiveUsers();
+  }
+
+  Future<List<Map<String, dynamic>>> _fetchLiveUsers() async {
+    try {
+      final rows = await Supabase.instance.client
+          .from('live_sessions')
+          .select('host_id,host_name,thumbnail_url')
+          .eq('is_live', true)
+          .neq('live_type', 'battle')
+          .order('viewer_count', ascending: false)
+          .limit(5);
+      
+      return (rows as List)
+          .whereType<Map>()
+          .map((m) => m.map((k, v) => MapEntry(k.toString(), v)))
+          .where((m) => (m['host_id']?.toString().trim() ?? '').isNotEmpty)
+          .toList(growable: false);
+    } catch (e) {
+      return [];
+    }
+  }
+
+  String _getInitials(String name) {
+    final parts = name.trim().split(RegExp(r'\s+'));
+    if (parts.isEmpty) return '?';
+    if (parts.length == 1) return parts[0][0].toUpperCase();
+    return '${parts[0][0]}${parts[1][0]}'.toUpperCase();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return TweenAnimationBuilder<double>(
+      duration: const Duration(milliseconds: 180),
+      curve: Curves.easeOutCubic,
+      tween: Tween<double>(begin: 0.97, end: 1.0),
+      builder: (context, scale, child) {
+        return Transform.scale(scale: scale, child: child);
+      },
+      child: SafeArea(
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 10, 16, 16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Handle bar
+              Center(
+                child: Container(
+                  width: 42,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: AppColors.textMuted.withValues(alpha: 0.45),
+                    borderRadius: BorderRadius.circular(99),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 20),
+              
+              // Title
+              Text(
+                'Create',
+                style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                      fontWeight: FontWeight.w900,
+                    ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                'Choose what you want to share',
+                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                      color: AppColors.textMuted,
+                    ),
+              ),
+              const SizedBox(height: 20),
+
+              // Go Live Now Card with Live Avatars
+              _LiveNowCard(
+                onTap: widget.onGoLive,
+                liveUsersFuture: _liveUsersFuture,
+                getInitials: _getInitials,
+              ),
+              
+              const SizedBox(height: 12),
+
+              // Grid of action cards
+              GridView.count(
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                crossAxisCount: 2,
+                mainAxisSpacing: 12,
+                crossAxisSpacing: 12,
+                childAspectRatio: 1.3,
+                children: [
+                  _ActionCard(
+                    icon: Icons.image_outlined,
+                    title: 'Photo + Song',
+                    subtitle: 'Post',
+                    gradient: const LinearGradient(
+                      colors: [Color(0xFF6B4EFF), Color(0xFF9B7BFF)],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                    ),
+                    onTap: widget.onPhotoSong,
+                  ),
+                  _ActionCard(
+                    icon: Icons.music_note_outlined,
+                    title: 'Upload Song',
+                    subtitle: 'Audio track',
+                    gradient: const LinearGradient(
+                      colors: [Color(0xFF00C9A7), Color(0xFF00E5C4)],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                    ),
+                    onTap: widget.onUploadSong,
+                  ),
+                  _ActionCard(
+                    icon: Icons.ondemand_video_outlined,
+                    title: 'Upload Video',
+                    subtitle: 'Music video',
+                    gradient: const LinearGradient(
+                      colors: [Color(0xFFFF6B6B), Color(0xFFFF8E8E)],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                    ),
+                    onTap: widget.onUploadVideo,
+                  ),
+                  _ActionCard(
+                    icon: Icons.sports_mma_outlined,
+                    title: 'Start Battle',
+                    subtitle: 'Go live battle',
+                    gradient: const LinearGradient(
+                      colors: [Color(0xFFFFD93D), Color(0xFFFFED4E)],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                    ),
+                    iconColor: Colors.black87,
+                    textColor: Colors.black87,
+                    subTitleColor: Colors.black54,
+                    onTap: widget.onStartBattle,
+                  ),
+                ],
+              ),
+              
+              const SizedBox(height: 8),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _LiveNowCard extends StatelessWidget {
+  const _LiveNowCard({
+    required this.onTap,
+    required this.liveUsersFuture,
+    required this.getInitials,
+  });
+
+  final VoidCallback onTap;
+  final Future<List<Map<String, dynamic>>> liveUsersFuture;
+  final String Function(String) getInitials;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(20),
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          gradient: const LinearGradient(
+            colors: [Color(0xFFFF4757), Color(0xFFFF6348)],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+          borderRadius: BorderRadius.circular(20),
+          boxShadow: [
+            BoxShadow(
+              color: const Color(0xFFFF4757).withValues(alpha: 0.3),
+              blurRadius: 12,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        child: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.2),
+                borderRadius: BorderRadius.circular(16),
+              ),
+              child: const Icon(
+                Icons.radio_button_checked,
+                color: Colors.white,
+                size: 28,
+              ),
+            ),
+            const SizedBox(width: 16),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'GO LIVE NOW',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 18,
+                      fontWeight: FontWeight.w900,
+                      letterSpacing: 0.5,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    'Join others streaming live',
+                    style: TextStyle(
+                      color: Colors.white.withValues(alpha: 0.85),
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  // Live avatars
+                  FutureBuilder<List<Map<String, dynamic>>>(
+                    future: liveUsersFuture,
+                    builder: (context, snapshot) {
+                      final users = snapshot.data ?? [];
+                      if (users.isEmpty) {
+                        return Row(
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                              decoration: BoxDecoration(
+                                color: Colors.white.withValues(alpha: 0.2),
+                                borderRadius: BorderRadius.circular(20),
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Container(
+                                    width: 8,
+                                    height: 8,
+                                    decoration: const BoxDecoration(
+                                      color: Colors.white,
+                                      shape: BoxShape.circle,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 6),
+                                  const Text(
+                                    'Start the trend',
+                                    style: TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        );
+                      }
+
+                      return Row(
+                        children: [
+                          // Stacked avatars
+                          SizedBox(
+                            height: 32,
+                            width: users.length * 22.0 + 8,
+                            child: Stack(
+                              children: [
+                                for (int i = 0; i < users.length && i < 4; i++)
+                                  Positioned(
+                                    left: i * 16.0,
+                                    child: Container(
+                                      width: 32,
+                                      height: 32,
+                                      decoration: BoxDecoration(
+                                        shape: BoxShape.circle,
+                                        border: Border.all(
+                                          color: const Color(0xFFFF4757),
+                                          width: 2,
+                                        ),
+                                      ),
+                                      child: ClipOval(
+                                        child: _buildAvatar(users[i]),
+                                      ),
+                                    ),
+                                  ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: Colors.white.withValues(alpha: 0.2),
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: Text(
+                              '${users.length} live',
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 11,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                          ),
+                        ],
+                      );
+                    },
+                  ),
+                ],
+              ),
+            ),
+            Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.25),
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: const Icon(
+                Icons.arrow_forward_ios,
+                color: Colors.white,
+                size: 16,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildAvatar(Map<String, dynamic> user) {
+    final thumbnailUrl = (user['thumbnail_url'] ?? '').toString().trim();
+    final hostName = (user['host_name'] ?? 'User').toString();
+
+    if (thumbnailUrl.isNotEmpty && thumbnailUrl.startsWith('http')) {
+      return Image.network(
+        thumbnailUrl,
+        fit: BoxFit.cover,
+        errorBuilder: (context, error, stackTrace) {
+          return _buildInitialsAvatar(hostName);
+        },
+      );
+    }
+    return _buildInitialsAvatar(hostName);
+  }
+
+  Widget _buildInitialsAvatar(String name) {
+    return Container(
+      color: Colors.white.withValues(alpha: 0.3),
+      child: Center(
+        child: Text(
+          getInitials(name),
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 12,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ActionCard extends StatelessWidget {
+  const _ActionCard({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.gradient,
+    required this.onTap,
+    this.iconColor = Colors.white,
+    this.textColor = Colors.white,
+    this.subTitleColor = Colors.white70,
+  });
+
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final Gradient gradient;
+  final VoidCallback onTap;
+  final Color iconColor;
+  final Color textColor;
+  final Color subTitleColor;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(18),
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          gradient: gradient,
+          borderRadius: BorderRadius.circular(18),
+          boxShadow: [
+            BoxShadow(
+              color: (gradient.colors.first as Color).withValues(alpha: 0.25),
+              blurRadius: 8,
+              offset: const Offset(0, 3),
+            ),
+          ],
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.2),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Icon(
+                icon,
+                color: iconColor,
+                size: 24,
+              ),
+            ),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: TextStyle(
+                    color: textColor,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  subtitle,
+                  style: TextStyle(
+                    color: subTitleColor,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

@@ -23,15 +23,15 @@ subprojects {
     project.evaluationDependsOn(":app")
 }
 
-// Workaround for AGP namespace requirement in older plugins
+// Workaround for agora_rtm v1.6.3 Kotlin compilation errors
+// The package uses old Flutter embedding API (Registrar) which is incompatible with Kotlin 1.8+
 subprojects {
-    if (name == "flutter_app_badger") {
-        pluginManager.withPlugin("com.android.library") {
-            extensions.findByType(LibraryExtension::class.java)?.apply {
-                if (namespace.isNullOrBlank()) {
-                    namespace = "com.weafrica.flutter_app_badger"
-                }
-            }
+    if (name == "agora_rtm") {
+        pluginManager.withPlugin("org.jetbrains.kotlin.android") {
+            val kotlinExtension = extensions.findByType(
+                org.jetbrains.kotlin.gradle.dsl.KotlinAndroidProjectExtension::class.java
+            )
+            kotlinExtension?.compilerOptions?.freeCompilerArgs?.add("-Xskip-metadata-version-check")
         }
     }
 }

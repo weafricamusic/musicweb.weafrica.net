@@ -10,6 +10,7 @@ exports.StreamModule = void 0;
 const common_1 = require("@nestjs/common");
 const supabase_module_1 = require("../common/supabase/supabase.module");
 const agora_service_1 = require("./agora/agora.service");
+const agora_controller_1 = require("./agora/agora.controller");
 const stream_service_1 = require("./stream.service");
 let StreamModule = class StreamModule {
 };
@@ -18,6 +19,7 @@ exports.StreamModule = StreamModule = __decorate([
     (0, common_1.Module)({
         imports: [supabase_module_1.SupabaseModule],
         providers: [agora_service_1.AgoraService, stream_service_1.StreamService],
+        controllers: [agora_controller_1.AgoraController],
         exports: [agora_service_1.AgoraService, stream_service_1.StreamService],
     })
 ], StreamModule);

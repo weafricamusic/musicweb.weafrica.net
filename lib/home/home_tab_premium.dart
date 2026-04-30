@@ -4,8 +4,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../app/theme/weafrica_colors.dart';
 import '../features/player/player_routes.dart';
 import '../features/player/playback_controller.dart';
-import '../features/live/screens/live_watch_screen.dart';
 import '../features/pulse/reels/feed_screen.dart';
+import '../features/tracks/track.dart';
 
 class HomeTabPremium extends StatefulWidget {
   const HomeTabPremium({super.key});
@@ -136,7 +136,7 @@ class _HomeTabPremiumState extends State<HomeTabPremium> {
   }
 
   Future<void> _playSong(Map<String, dynamic> song) async {
-    final track = Track(
+    final track = Track.simple(
       id: song['id'].toString(),
       title: song['title'].toString(),
       artist: song['artist'].toString(),
@@ -153,20 +153,16 @@ class _HomeTabPremiumState extends State<HomeTabPremium> {
     await prefs.setStringList('recently_played', recent);
     
     if (mounted) {
-      await PlaybackController.instance.playTrack(track);
+      PlaybackController.instance.play(track);
       openPlayer(context);
     }
   }
 
   void _joinLiveStream(Map<String, dynamic> live) {
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (_) => LiveWatchScreen(
-          channelId: live['channel_id'].toString(),
-          hostName: live['host_name'].toString(),
-          title: live['title']?.toString() ?? 'Live Stream',
-        ),
+    // Live streaming temporarily disabled
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Live streaming is temporarily unavailable'),
       ),
     );
   }
@@ -300,7 +296,7 @@ class _HomeTabPremiumState extends State<HomeTabPremium> {
               Container(
                 width: 50,
                 height: 50,
-                decoration: BoxDecoration(color: Colors.white.withOpacity(0.2), borderRadius: BorderRadius.circular(10)),
+                decoration: BoxDecoration(color: Colors.white.withValues(alpha: 0.2), borderRadius: BorderRadius.circular(10)),
                 child: const Icon(Icons.mic, color: Colors.white, size: 25),
               ),
             ],
@@ -631,7 +627,7 @@ class _HomeTabPremiumState extends State<HomeTabPremium> {
                 margin: const EdgeInsets.only(bottom: 6),
                 padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
                 decoration: BoxDecoration(
-                  color: isTop3 ? WeAfricaColors.gold.withOpacity(0.1) : Colors.grey[850],
+                  color: isTop3 ? WeAfricaColors.gold.withValues(alpha: 0.1) : Colors.grey[850],
                   borderRadius: BorderRadius.circular(8),
                   border: isTop3 ? Border.all(color: WeAfricaColors.gold, width: 0.5) : null,
                 ),
@@ -686,7 +682,7 @@ class _HomeTabPremiumState extends State<HomeTabPremium> {
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                       decoration: BoxDecoration(
-                        color: WeAfricaColors.gold.withOpacity(0.15),
+                        color: WeAfricaColors.gold.withValues(alpha: 0.15),
                         borderRadius: BorderRadius.circular(10),
                       ),
                       child: Text(
@@ -730,10 +726,10 @@ class _HomeTabPremiumState extends State<HomeTabPremium> {
                     gradient: LinearGradient(
                       begin: Alignment.topLeft,
                       end: Alignment.bottomRight,
-                      colors: [WeAfricaColors.gold.withOpacity(0.15), Colors.grey[850]!],
+                      colors: [WeAfricaColors.gold.withValues(alpha: 0.15), Colors.grey[850]!],
                     ),
                     borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: WeAfricaColors.gold.withOpacity(0.3)),
+                    border: Border.all(color: WeAfricaColors.gold.withValues(alpha: 0.3)),
                   ),
                   child: Row(
                     children: [
@@ -741,7 +737,7 @@ class _HomeTabPremiumState extends State<HomeTabPremium> {
                         width: 60,
                         height: 90,
                         decoration: BoxDecoration(
-                          color: WeAfricaColors.gold.withOpacity(0.1),
+                          color: WeAfricaColors.gold.withValues(alpha: 0.1),
                           borderRadius: const BorderRadius.horizontal(left: Radius.circular(8)),
                           image: song['thumbnail_url'] != null
                               ? DecorationImage(image: NetworkImage(song['thumbnail_url']), fit: BoxFit.cover)

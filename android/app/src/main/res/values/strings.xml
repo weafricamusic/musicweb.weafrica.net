@@ -1,4 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">WeAfrica Music</string>
+    
+    <!-- Facebook Login Configuration -->
+    <string name="facebook_app_id">709400555589170</string>
+    <string name="facebook_client_token">f393937fb1e6eaacb7890832a5ee6628</string>
+    <string name="fb_login_protocol_scheme">fb709400555589170</string>
 </resources>

@@ -16,6 +16,7 @@ import '../live/screens/live_feed_screen.dart';
 import '../subscriptions/services/creator_entitlement_gate.dart';
 import '../ads/screens/earn_coins_screen.dart';
 
+import 'package:weafrica_music/features/live_old/screens/live_feed_screen.dart';
 class WalletScreen extends StatefulWidget {
   const WalletScreen({super.key, this.roleOverride});
 
@@ -245,7 +246,7 @@ class _WalletScreenState extends State<WalletScreen> {
       );
 
     await Navigator.of(context).push(
-      MaterialPageRoute<void>(builder: (_) => const LiveFeedScreen()),
+      MaterialPageRoute<void>(builder: (_) => LiveFeedScreen()),
     );
   }
 

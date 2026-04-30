@@ -64,7 +64,6 @@ class _DjGoLiveScreenState extends State<DjGoLiveScreen> {
         role: UserRole.dj,
         hostId: _userId,
         hostName: _userName,
-        initialBattleModeEnabled: false,
       ),
     );
   }

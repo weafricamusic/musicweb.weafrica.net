@@ -2,57 +2,159 @@
 <html>
 
 <head>
-  <!--
-    If you are serving your web app in a path other than the root, change the
-    href value below to reflect the base path you are serving from.
-
-    The path provided below has to start and end with a slash "/" in order for
-    it to work correctly.
-
-    For more details:
-    * https://developer.mozilla.org/en-US/docs/Web/HTML/Element/base
-
-    This is a placeholder for base href that will be replaced by the value of
-    the `--base-href` argument provided to `flutter build`.
-  -->
-  <base href="$FLUTTER_BASE_HREF">
-
   <meta charset="UTF-8">
-  <meta content="IE=Edge" http-equiv="X-UA-Compatible">
-  <meta name="description" content="WeAfrica Music — stream, discover, and support African music.">
-
-  <link rel="canonical" href="https://musicweb.weafrica.net/">
-
-  <!-- iOS meta tags & icons -->
-  <meta name="mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="black">
-  <meta name="apple-mobile-web-app-title" content="WeAfrica Music">
-  <link rel="apple-touch-icon" href="icons/Icon-192.png">
-
-  <!-- Favicon -->
-  <link rel="icon" type="image/png" href="favicon.png" />
-
+  <meta name="viewport"
+    content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>WeAfrica Music</title>
+
+  <!-- Firebase Configuration -->
+  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-messaging-compat.js"></script>
+
+  <!-- Agora Web SDK for Voice and Video Calling -->
+  <script src="https://download.agora.io/sdk/release/AgoraRTC_N-4.24.3.js"></script>
+
+  <script>
+    const firebaseConfig = {
+      apiKey: "AIzaSyBy7DgF8Vk39ek75gO7iIi_f8spwDJbgLY",
+      authDomain: "weafrica-music-85cdc.firebaseapp.com",
+      projectId: "weafrica-music-85cdc",
+      messagingSenderId: "985705961084",
+      appId: "1:985705961084:web:b494fce32e4a41b8c45bf9"
+    };
+    firebase.initializeApp(firebaseConfig);
+
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('/firebase-messaging-sw.js')
+        .then((registration) => {
+          console.log('Service Worker registered:', registration);
+        })
+        .catch((error) => {
+          console.error('Service Worker failed:', error);
+        });
+    }
+  </script>
+
   <link rel="manifest" href="manifest.json">
+  <link rel="icon" type="image/png" href="favicon.png">
+
+  <!-- Flutter Web Full Viewport Styles -->
+  <style>
+    /* Ensure full viewport coverage */
+    html,
+    body {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+    }
+
+    /* Flutter view should fill the entire viewport */
+    flutter-view {
+      position: absolute !important;
+      top: 0 !important;
+      left: 0 !important;
+      width: 100% !important;
+      height: 100% !important;
+    }
+
+    /* Ensure the body element fills the viewport */
+    body>flutter-view {
+      width: 100%;
+      height: 100%;
+    }
+
+    /* Prevent Zoho SalesIQ from interfering with layout */
+    #zsiqwidget,
+    .zsiq_theme1 {
+      z-index: 9999 !important;
+    }
+
+    /* Handle mobile safe areas */
+    @supports (padding: env(safe-area-inset-top)) {
+      flutter-view {
+        padding-top: env(safe-area-inset-top);
+        padding-bottom: env(safe-area-inset-bottom);
+      }
+    }
+
+    /* Prevent horizontal scroll */
+    body {
+      overflow-x: hidden !important;
+    }
+
+    /* Ensure canvas fills the view */
+    canvas {
+      width: 100% !important;
+      height: 100% !important;
+    }
+  </style>
+
+  <!-- Zoho SalesIQ Live Chat -->
+  <script>
+    window.$zoho = window.$zoho || {};
+    $zoho.salesiq = $zoho.salesiq || {
+      ready: function () { },
+      float: 1,
+      position: "right",
+      language: "english",
+      trackingpage: "all"
+    };
+  </script>
+  <script id="zsiqscript"
+    src="https://salesiq.zohopublic.com/widget?wc=siq25e9a3e58012b687f7dda2ab0b5b7a196b36e836020c53972df3bc0d09853e55"
+    defer></script>
 </head>
 
 <body>
+  <script src="flutter.js" defer></script>
   <script>
-    if ('serviceWorker' in navigator) {
-      window.addEventListener('load', function () {
-        navigator.serviceWorker
-          .register('/firebase-messaging-sw.js')
-          .catch(function (e) {
-            // Fallback for cases where the app is served from a subpath in dev.
-            return navigator.serviceWorker.register('firebase-messaging-sw.js');
-          })
-          .catch(function (e) {
-            console.warn('Failed to register firebase-messaging-sw.js', e);
-          });
-      });
-    }
+    // Modern Flutter Web initialization with proper viewport handling
+    window.addEventListener('load', function (ev) {
+      // Ensure body has proper dimensions before Flutter loads
+      document.body.style.width = '100%';
+      document.body.style.height = '100%';
+      document.documentElement.style.width = '100%';
+      document.documentElement.style.height = '100%';
+
+      if (_flutter && _flutter.loader) {
+        _flutter.loader.loadEntrypoint({
+          serviceWorker: {
+            serviceWorkerVersion: '1.0.0',
+          },
+          onEntrypointLoaded: async function (engineInitializer) {
+            // Initialize with explicit viewport configuration
+            let appRunner = await engineInitializer.initializeEngine({
+              renderer: 'canvaskit',
+              // Ensure the engine uses the full viewport
+              useColorCorrectness: true,
+            });
+            await appRunner.runApp();
+
+            // Post-initialization viewport fix
+            setTimeout(function () {
+              var flutterView = document.querySelector('flutter-view');
+              if (flutterView) {
+                flutterView.style.width = '100%';
+                flutterView.style.height = '100%';
+                flutterView.style.position = 'absolute';
+                flutterView.style.top = '0';
+                flutterView.style.left = '0';
+              }
+            }, 100);
+          }
+        });
+      }
+    });
   </script>
-  <script src="flutter_bootstrap.js" async></script>
 </body>
 
 </html>

@@ -1,0 +1,278 @@
+import 'package:supabase_flutter/supabase_flutter.dart';
+
+class LiveDiscoveryService {
+  LiveDiscoveryService({SupabaseClient? client}) : _supabase = client ?? Supabase.instance.client;
+
+  final SupabaseClient _supabase;
+
+  static const Duration _maxLiveSessionAge = Duration(hours: 18);
+  static const Duration _zeroViewerStaleAge = Duration(minutes: 90);
+
+  /// Normalize string for consistent filtering (removes spaces, newlines, case sensitivity)
+  String _normalize(String input) {
+    return input
+        .toLowerCase()
+        .trim()
+        .replaceAll(RegExp(r'\s+'), ''); // removes spaces/newlines
+  }
+
+  /// Production-ready filter that catches test streams reliably
+  bool _isValidStream(Map<String, dynamic> row) {
+    final hostName = (row['host_name'] ?? '').toString();
+    final hostId = (row['host_id'] ?? '').toString();
+    final channelId = (row['channel_id'] ?? '').toString();
+    final title = (row['title'] ?? '').toString();
+    final streamId = (row['id'] ?? '').toString();
+
+    // Check all relevant fields with normalized filtering
+    final allText = '$hostName $hostId $channelId $title $streamId';
+    final normalized = _normalize(allText);
+
+    return !(normalized.contains('phase2') ||
+             normalized.contains('verify') ||
+             normalized.contains('post3000') ||
+             normalized.contains('port3000') ||
+             normalized.contains('host-') ||
+             normalized.contains('localhost') ||
+             normalized.contains('test') ||
+             normalized.contains('example.com'));
+  }
+
+  bool _isInternalTestStream(Map<String, dynamic> row) {
+    return !_isValidStream(row);
+  }
+
+  int _toInt(dynamic v) {
+    if (v is int) return v;
+    if (v is num) return v.toInt();
+    return int.tryParse('${v ?? ''}') ?? 0;
+  }
+
+  DateTime? _parseTime(dynamic v) {
+    final raw = (v ?? '').toString().trim();
+    if (raw.isEmpty) return null;
+    return DateTime.tryParse(raw)?.toUtc();
+  }
+
+  DateTime? _parseLiveAnchor(Map<String, dynamic> row) {
+    return _parseTime(row['started_at']) ?? _parseTime(row['created_at']);
+  }
+
+  bool _looksSyntheticHost(Map<String, dynamic> row) {
+    final hostName = (row['host_name'] ?? '').toString().trim().toLowerCase();
+    final hostId = (row['host_id'] ?? '').toString().trim().toLowerCase();
+    final channelId = (row['channel_id'] ?? '').toString().trim().toLowerCase();
+    final title = (row['title'] ?? '').toString().trim().toLowerCase();
+
+    final corpus = <String>[hostName, hostId, channelId, title]
+        .where((v) => v.isNotEmpty)
+        .join(' ');
+
+    if (corpus.contains('@weafrica.test')) {
+      return true;
+    }
+
+    // Apply aggressive test filtering only to technical identifiers,
+    // not display names/titles, to avoid hiding real creators.
+    final idCorpus = ' $hostId $channelId ';
+    const idBlockedNeedles = <String>{
+      ' verify ',
+      ' phase2 ',
+      ' post3000 ',
+      ' port3000 ',
+      ' localhost',
+      'post3000-',
+      'port3000-',
+    };
+    if (idBlockedNeedles.any((needle) => idCorpus.contains(needle))) {
+      return true;
+    }
+
+    // Keep broad domain-based blocks.
+    final fullCorpus = '$hostName $hostId $channelId $title';
+    if (fullCorpus.contains('@example.com')) {
+      return true;
+    }
+
+    return false;
+  }
+
+  bool _isGhostOrStaleLive(Map<String, dynamic> row) {
+    final startedAt = _parseLiveAnchor(row);
+    final viewers = _toInt(row['viewer_count']);
+    if (startedAt == null) {
+      // If timestamp metadata is missing but stream has audience, keep it visible.
+      return viewers <= 0;
+    }
+
+    final age = DateTime.now().toUtc().difference(startedAt);
+    if (age > _maxLiveSessionAge && viewers <= 0) return true;
+
+    if (viewers <= 0 && age > _zeroViewerStaleAge) return true;
+
+    return false;
+  }
+
+  Future<List<Map<String, dynamic>>> listLiveNowBattles({
+    int limit = 20,
+    bool excludeInternalTestHosts = true,
+  }) async {
+    // Build query dynamically to handle missing columns gracefully
+    dynamic query = _supabase
+        .from('live_sessions')
+        .select('id,channel_id,host_id,host_name,title,category,viewer_count,thumbnail_url,started_at,created_at,trending_score,access_tier,live_type,battle_id')
+        .eq('is_live', true)
+        .eq('live_type', 'battle');
+
+    // Add backend filtering to prevent test streams from reaching the client
+    if (excludeInternalTestHosts) {
+      query = query
+        .not('host_id', 'ilike', '%post3000%')
+        .not('host_id', 'ilike', '%port3000%')
+        .not('host_id', 'ilike', '%phase2%')
+        .not('host_id', 'ilike', '%verify%')
+        .not('host_id', 'ilike', '%host-%')
+        .not('channel_id', 'ilike', '%post3000%')
+        .not('channel_id', 'ilike', '%port3000%')
+        .not('channel_id', 'ilike', '%phase2%')
+        .not('channel_id', 'ilike', '%verify%')
+        .not('channel_id', 'ilike', '%host-%')
+        .not('title', 'ilike', '%post3000%')
+        .not('title', 'ilike', '%port3000%')
+        .not('title', 'ilike', '%phase2%')
+        .not('title', 'ilike', '%verify%')
+        .not('title', 'ilike', '%host-%')
+        .not('title', 'ilike', '%test%')
+        .not('title', 'ilike', '%localhost%')
+        .not('title', 'ilike', '%example.com%');
+    }
+
+    // Only filter by mode if the column exists (check by trying to add filter)
+    // The mode column may not exist in all schema versions
+    try {
+      query = query.eq('mode', 'BATTLE_1v1');
+    } catch (_) {
+      // If mode column doesn't exist, continue without it
+    }
+
+    query = query
+        .order('trending_score', ascending: false, nullsFirst: false)
+        .order('viewer_count', ascending: false, nullsFirst: false)
+        .order('started_at', ascending: false);
+
+    if (limit > 0) {
+      query = query.limit(limit);
+    }
+
+    final rows = await query;
+
+    return (rows as List)
+        .whereType<Map>()
+        .map((m) => m.map((k, v) => MapEntry(k.toString(), v)))
+        .where((m) => (m['channel_id']?.toString().trim() ?? '').isNotEmpty)
+        .toList(growable: false);
+  }
+
+  Future<List<Map<String, dynamic>>> listLiveNowSolo({
+    int limit = 20,
+    bool excludeInternalTestHosts = true,
+  }) async {
+    // Build query dynamically to handle missing columns gracefully
+    dynamic query = _supabase
+        .from('live_sessions')
+        .select('id,channel_id,host_id,host_name,title,category,viewer_count,thumbnail_url,started_at,created_at,trending_score,access_tier,live_type')
+        .eq('is_live', true)
+        // Defensive: exclude battle rows even if mode is mis-set.
+        .neq('live_type', 'battle');
+
+    // Add backend filtering to prevent test streams from reaching the client
+    if (excludeInternalTestHosts) {
+      query = query
+        .not('host_id', 'ilike', '%post3000%')
+        .not('host_id', 'ilike', '%port3000%')
+        .not('host_id', 'ilike', '%phase2%')
+        .not('host_id', 'ilike', '%verify%')
+        .not('host_id', 'ilike', '%host-%')
+        .not('channel_id', 'ilike', '%post3000%')
+        .not('channel_id', 'ilike', '%port3000%')
+        .not('channel_id', 'ilike', '%phase2%')
+        .not('channel_id', 'ilike', '%verify%')
+        .not('channel_id', 'ilike', '%host-%')
+        .not('title', 'ilike', '%post3000%')
+        .not('title', 'ilike', '%port3000%')
+        .not('title', 'ilike', '%phase2%')
+        .not('title', 'ilike', '%verify%')
+        .not('title', 'ilike', '%host-%')
+        .not('title', 'ilike', '%test%')
+        .not('title', 'ilike', '%localhost%')
+        .not('title', 'ilike', '%example.com%');
+    }
+
+    // Only filter by mode if the column exists
+    try {
+      query = query.eq('mode', 'SOLO');
+    } catch (_) {
+      // If mode column doesn't exist, continue without it
+    }
+
+    query = query
+        .order('trending_score', ascending: false, nullsFirst: false)
+        .order('viewer_count', ascending: false, nullsFirst: false)
+        .order('started_at', ascending: false);
+
+    if (limit > 0) {
+      query = query.limit(limit);
+    }
+
+    final rows = await query;
+
+    return (rows as List)
+        .whereType<Map>()
+        .map((m) => m.map((k, v) => MapEntry(k.toString(), v)))
+        .where((m) => (m['channel_id']?.toString().trim() ?? '').isNotEmpty)
+        .toList(growable: false);
+  }
+
+  Future<List<Map<String, dynamic>>> listUpcomingBattles({int limit = 20}) async {
+    dynamic query = _supabase
+        .from('live_battles')
+        .select('battle_id,channel_id,status,title,category,scheduled_at,created_at,access_tier')
+        .neq('status', 'ended')
+        .neq('status', 'live')
+        .not('scheduled_at', 'is', null)
+        .order('scheduled_at', ascending: true);
+
+    if (limit > 0) {
+      query = query.limit(limit);
+    }
+
+    final rows = await query;
+
+    return (rows as List)
+        .whereType<Map>()
+        .map((m) => m.map((k, v) => MapEntry(k.toString(), v)))
+        .where((m) => (m['channel_id']?.toString().trim() ?? '').isNotEmpty)
+        .toList(growable: false);
+  }
+
+  Future<List<Map<String, dynamic>>> listReplayBattles({int limit = 20}) async {
+    dynamic query = _supabase
+        .from('live_battles')
+        .select('battle_id,channel_id,status,title,category,ended_at,started_at,created_at,access_tier')
+        .eq('status', 'ended')
+        .order('ended_at', ascending: false)
+        .order('created_at', ascending: false);
+
+    if (limit > 0) {
+      query = query.limit(limit);
+    }
+
+    final rows = await query;
+
+    return (rows as List)
+        .whereType<Map>()
+        .map((m) => m.map((k, v) => MapEntry(k.toString(), v)))
+        .where((m) => (m['channel_id']?.toString().trim() ?? '').isNotEmpty)
+        .toList(growable: false);
+  }
+}

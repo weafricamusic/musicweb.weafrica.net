@@ -35,10 +35,11 @@ import '../features/player/song_comments_sheet.dart';
 import '../features/subscriptions/role_based_subscription_screen.dart';
 import '../features/wallet/wallet_screen.dart';
 import '../features/tracks/tracks_repository.dart';
-import '../screens/full_player_screen.dart';
+import '../features/player/screens/full_player_screen.dart';
 import 'creator_finance_api.dart';
 import 'user_service.dart';
 
+import 'package:weafrica_music/features/live_old/screens/live_feed_screen.dart';
 void _nsLog(String message) {
   if (kDebugMode) {
     debugPrint(message);
@@ -584,12 +585,10 @@ class NotificationService {
       }
 
       if (action == 'live_battle_invite_accepted') {
-        await _showBattleInviteAcceptedDialog(data);
         return;
       }
 
       if (action == 'live_battle_invite_declined') {
-        _showBattleInviteDeclinedBanner(data);
         return;
       }
 
@@ -743,6 +742,20 @@ class NotificationService {
       playSound: true,
       enableVibration: true,
       icon: '@mipmap/launcher_icon',
+      fullScreenIntent: true,
+      category: AndroidNotificationCategory.call,
+      actions: <AndroidNotificationAction>[
+        AndroidNotificationAction(
+          'accept_battle',
+          'Accept',
+          showsUserInterface: true,
+        ),
+        AndroidNotificationAction(
+          'decline_battle',
+          'Decline',
+          cancelNotification: true,
+        ),
+      ],
     );
     const darwinDetails = DarwinNotificationDetails(
       presentAlert: true,
@@ -1298,13 +1311,18 @@ class NotificationService {
                   if (action == 'accept') {
                     final role = await UserRoleResolver.resolveCurrentUser();
                     final displayName = (fb_auth.FirebaseAuth.instance.currentUser?.displayName ?? '').trim();
+                    
+                    // IMPORTANT: hostId should be the battle creator (hostAId), NOT the current user
+                    // This ensures invited artists join as audience, not as broadcaster with split screen
+                    final battleHostId = _s(battle.hostAId).isNotEmpty ? battle.hostAId! : fromUid;
+                    
                     await _openBattleRoom(
                       channelId: _s(battle.channelId).isNotEmpty
                           ? battle.channelId
                           : (channelId.isNotEmpty ? channelId : (battleId.isNotEmpty ? 'weafrica_battle_$battleId' : '')),
                       battleId: _s(battle.battleId).isNotEmpty ? battle.battleId : battleId,
                       role: role,
-                      hostId: uid,
+                      hostId: battleHostId,  // Use actual battle host, not current user
                       hostName: displayName.isNotEmpty ? displayName : role.label,
                       battleArtists: <String>{
                         _s(battle.hostAId),
@@ -1381,60 +1399,6 @@ class NotificationService {
     }
     return 'Your battle invite was declined.';
   }
-
-  Future<void> _showBattleInviteAcceptedDialog(Map<String, dynamic> data) async {
-    final ctx = await _waitForNavigatorContext(timeout: const Duration(seconds: 8));
-    if (ctx == null || !ctx.mounted) {
-      _nsLog('⚠️ Battle invite accepted dialog skipped: no navigator context');
-      return;
-    }
-
-    final message = _battleInviteAcceptedMessage(data);
-
-    await showDialog<void>(
-      context: ctx,
-      builder: (dialogCtx) {
-        return AlertDialog(
-          title: const Text('Battle invite accepted'),
-          content: Text(message),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(dialogCtx).pop(),
-              child: const Text('Later'),
-            ),
-            FilledButton(
-              onPressed: () async {
-                Navigator.of(dialogCtx).pop();
-                await _openAcceptedBattleFromNotification(data);
-              },
-              child: const Text('Open battle'),
-            ),
-          ],
-        );
-      },
-    );
-  }
-
-  void _showBattleInviteDeclinedBanner(Map<String, dynamic> data) {
-    final ctx = AppNavigator.context;
-    if (ctx == null) {
-      _nsLog('📢 Battle invite declined: ${_battleInviteDeclinedMessage(data)}');
-      return;
-    }
-
-    final messenger = ScaffoldMessenger.maybeOf(ctx);
-    if (messenger == null) return;
-
-    messenger
-      ..clearSnackBars()
-      ..showSnackBar(
-        SnackBar(
-          content: Text(_battleInviteDeclinedMessage(data)),
-          duration: const Duration(seconds: 4),
-        ),
-      );
-  }
-
   Future<void> _openAcceptedBattleFromNotification(Map<String, dynamic> data) async {
     final channelId = _s(data['channel_id'] ?? data['channelId']);
     final battleId = _s(data['battle_id'] ?? data['battleId'] ?? data['entity_id']);
@@ -1456,11 +1420,15 @@ class NotificationService {
     final displayName = (currentUser?.displayName ?? '').trim();
     final role = await UserRoleResolver.resolveCurrentUser();
 
+    // IMPORTANT: hostId should be the battle creator (hostAId), NOT the current user
+    // This ensures invited artists join as audience, not as broadcaster with split screen
+    final battleHostId = hostAId.isNotEmpty ? hostAId : uid;
+
     await _openBattleRoom(
       channelId: ch,
       battleId: battleId.isNotEmpty ? battleId : ch,
       role: role,
-      hostId: uid,
+      hostId: battleHostId,  // Use actual battle host, not current user
       hostName: displayName.isNotEmpty ? displayName : role.label,
       battleArtists: <String>{hostAId, hostBId, uid}
           .where((s) => s.trim().isNotEmpty)
@@ -1577,7 +1545,7 @@ class NotificationService {
     if (nav == null) return;
     await nav.push(
       MaterialPageRoute<void>(
-        builder: (_) => const LiveFeedScreen(),
+        builder: (_) => LiveFeedScreen(),
       ),
     );
   }

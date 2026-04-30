@@ -124,10 +124,8 @@ Future<AppBootstrapResult> bootstrapApp({
             'tool/supabase.env.json (or pass as --dart-define).',
           );
         }
-        await Firebase.initializeApp(options: options);
         await WebAuthSession.initialize();
       } else {
-        await Firebase.initializeApp();
       }
     },
     onAttemptFailure: (error, stackTrace) {

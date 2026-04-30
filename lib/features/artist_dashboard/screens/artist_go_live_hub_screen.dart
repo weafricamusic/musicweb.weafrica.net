@@ -55,7 +55,6 @@ class _ArtistGoLiveHubScreenState extends State<ArtistGoLiveHubScreen> {
           role: UserRole.artist,
           hostId: user.uid,
           hostName: hostName,
-          initialBattleModeEnabled: _battleMode,
         ),
         fullscreenDialog: true,
       ),

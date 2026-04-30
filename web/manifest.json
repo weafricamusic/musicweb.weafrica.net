@@ -1,11 +1,11 @@
 {
-    "name": "WeAfrica Music",
-    "short_name": "WeAfrica",
-    "start_url": "/",
+    "name": "weafrica_music",
+    "short_name": "weafrica_music",
+    "start_url": ".",
     "display": "standalone",
     "background_color": "#0175C2",
     "theme_color": "#0175C2",
-    "description": "WeAfrica Music — stream, discover, and support African music.",
+    "description": "A new Flutter project.",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [

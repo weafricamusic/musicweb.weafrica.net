@@ -244,7 +244,7 @@ class _HomeTabNewState extends State<HomeTabNew> {
                 _loadData();
               },
               backgroundColor: Colors.grey[850],
-              selectedColor: WeAfricaColors.gold.withOpacity(0.3),
+              selectedColor: WeAfricaColors.gold.withValues(alpha: ),
               labelStyle: TextStyle(
                 color: isSelected ? WeAfricaColors.gold : Colors.white,
                 fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
@@ -274,7 +274,7 @@ class _HomeTabNewState extends State<HomeTabNew> {
                 _loadData();
               },
               backgroundColor: Colors.grey[850],
-              selectedColor: WeAfricaColors.gold.withOpacity(0.3),
+              selectedColor: WeAfricaColors.gold.withValues(alpha: ),
               labelStyle: TextStyle(
                 color: isSelected ? WeAfricaColors.gold : Colors.white,
                 fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,

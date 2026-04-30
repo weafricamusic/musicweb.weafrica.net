@@ -8,6 +8,295 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_KEY
 );
 
+// POST /api/songs/create - Create a draft song entry (returns song_id)
+// This is the first step in the two-step upload flow
+router.post('/create', authenticate, async (req, res) => {
+  try {
+    const {
+      title,
+      caption,
+      artist,
+      genre,
+      country,
+      language,
+      category,
+      album_id,
+      audio_url,
+      audio_bucket,
+      audio_path,
+      artwork_url,
+      artwork_bucket,
+      artwork_path,
+      thumbnail_url,
+      thumbnail_bucket,
+      thumbnail_path,
+      video_url,
+      video_bucket,
+      video_path,
+      file_path,
+      publish = false
+    } = req.body;
+
+    if (!title) {
+      return res.status(400).json({ error: 'Title is required' });
+    }
+
+    // Determine if this is a song or video based on presence of audio_url or video_url
+    const isSong = !!audio_url;
+
+    const songData = {
+      title: title.trim(),
+      artist: artist?.trim() || null,
+      artist_id: req.body.artist_id || null,
+      genre: genre?.trim() || null,
+      country: country?.trim() || null,
+      language: language?.trim() || null,
+      caption: caption?.trim() || null,
+      category: category?.trim() || null,
+      album_id: album_id?.trim() || null,
+      audio_url: audio_url || null,
+      artwork_url: artwork_url || thumbnail_url || null,
+      video_url: video_url || null,
+      user_id: req.user.id,
+      is_public: publish || false,
+      is_active: true,
+      approved: false, // Needs moderation before public
+      is_published: publish || false,
+      status: 'draft',
+      audio_bucket: audio_bucket || null,
+      audio_path: audio_path || file_path || null,
+      artwork_bucket: artwork_bucket || thumbnail_bucket || null,
+      artwork_path: artwork_path || thumbnail_path || null,
+      video_bucket: video_bucket || null,
+      video_path: video_path || null,
+    };
+
+    const { data, error } = await supabase
+      .from('songs')
+      .insert(songData)
+      .select('id')
+      .single();
+
+    if (error) throw error;
+
+    res.status(201).json({
+      song_id: data.id,
+      message: 'Draft created successfully'
+    });
+  } catch (error) {
+    console.error('Error creating song draft:', error);
+    res.status(400).json({ error: error.message });
+  }
+});
+
+// POST /api/songs/finalize - Finalize and publish a song after upload completes
+// This is the second step in the two-step upload flow
+router.post('/finalize', authenticate, async (req, res) => {
+  try {
+    const {
+      song_id,
+      audio_url,
+      artwork_url,
+      thumbnail_url,
+      file_path,
+      audio_bucket,
+      audio_path,
+      artwork_bucket,
+      artwork_path,
+      video_url,
+      video_bucket,
+      video_path
+    } = req.body;
+
+    if (!song_id) {
+      return res.status(400).json({ error: 'song_id is required' });
+    }
+
+    // Check if user owns this song
+    const { data: existingSong, error: fetchError } = await supabase
+      .from('songs')
+      .select('user_id, id')
+      .eq('id', song_id)
+      .single();
+
+    if (fetchError) throw fetchError;
+    if (!existingSong) {
+      return res.status(404).json({ error: 'Song not found' });
+    }
+    if (existingSong.user_id !== req.user.id) {
+      return res.status(403).json({ error: 'You can only finalize your own songs' });
+    }
+
+    // Update the song with final URLs and mark as published
+    const updateData = {
+      audio_url: audio_url || null,
+      artwork_url: artwork_url || thumbnail_url || null,
+      video_url: video_url || null,
+      audio_bucket: audio_bucket || null,
+      audio_path: audio_path || file_path || null,
+      artwork_bucket: artwork_bucket || null,
+      artwork_path: artwork_path || null,
+      video_bucket: video_bucket || null,
+      video_path: video_path || null,
+      is_public: true,
+      is_active: true,
+      is_published: true,
+      status: 'active',
+      approved: false, // Still needs moderation
+      updated_at: new Date().toISOString()
+    };
+
+    const { data, error } = await supabase
+      .from('songs')
+      .update(updateData)
+      .eq('id', song_id)
+      .select('id')
+      .single();
+
+    if (error) throw error;
+
+    res.json({
+      song_id: data.id,
+      message: 'Song finalized successfully'
+    });
+  } catch (error) {
+    console.error('Error finalizing song:', error);
+    res.status(400).json({ error: error.message });
+  }
+});
+
+// POST /api/videos/create - Create a draft video entry (returns video_id)
+router.post('/videos/create', authenticate, async (req, res) => {
+  // Delegate to songs/create - they use the same table
+  // Just redirect the response format
+  try {
+    const {
+      title,
+      caption,
+      category,
+      album_id,
+      video_url,
+      video_bucket,
+      video_path,
+      thumbnail_url,
+      thumbnail_bucket,
+      thumbnail_path,
+      file_path,
+      publish = false
+    } = req.body;
+
+    if (!title) {
+      return res.status(400).json({ error: 'Title is required' });
+    }
+
+    const songData = {
+      title: title.trim(),
+      caption: caption?.trim() || null,
+      category: category?.trim() || null,
+      album_id: album_id?.trim() || null,
+      video_url: video_url || null,
+      artwork_url: thumbnail_url || null,
+      user_id: req.user.id,
+      is_public: publish || false,
+      is_active: true,
+      approved: false,
+      is_published: publish || false,
+      status: 'draft',
+      video_bucket: video_bucket || null,
+      video_path: video_path || file_path || null,
+      artwork_bucket: thumbnail_bucket || null,
+      artwork_path: thumbnail_path || null,
+    };
+
+    const { data, error } = await supabase
+      .from('songs')
+      .insert(songData)
+      .select('id')
+      .single();
+
+    if (error) throw error;
+
+    res.status(201).json({
+      video_id: data.id,
+      song_id: data.id, // Also return as song_id for compatibility
+      message: 'Video draft created successfully'
+    });
+  } catch (error) {
+    console.error('Error creating video draft:', error);
+    res.status(400).json({ error: error.message });
+  }
+});
+
+// POST /api/videos/finalize - Finalize and publish a video after upload completes
+router.post('/videos/finalize', authenticate, async (req, res) => {
+  try {
+    const {
+      video_id,
+      song_id,
+      video_url,
+      thumbnail_url,
+      file_path,
+      video_bucket,
+      video_path,
+      thumbnail_bucket,
+      thumbnail_path
+    } = req.body;
+
+    const id = video_id || song_id;
+    if (!id) {
+      return res.status(400).json({ error: 'video_id or song_id is required' });
+    }
+
+    // Check if user owns this video
+    const { data: existingSong, error: fetchError } = await supabase
+      .from('songs')
+      .select('user_id, id')
+      .eq('id', id)
+      .single();
+
+    if (fetchError) throw fetchError;
+    if (!existingSong) {
+      return res.status(404).json({ error: 'Video not found' });
+    }
+    if (existingSong.user_id !== req.user.id) {
+      return res.status(403).json({ error: 'You can only finalize your own videos' });
+    }
+
+    const updateData = {
+      video_url: video_url || null,
+      artwork_url: thumbnail_url || null,
+      video_bucket: video_bucket || null,
+      video_path: video_path || file_path || null,
+      artwork_bucket: thumbnail_bucket || null,
+      artwork_path: thumbnail_path || null,
+      is_public: true,
+      is_active: true,
+      is_published: true,
+      status: 'active',
+      approved: false,
+      updated_at: new Date().toISOString()
+    };
+
+    const { data, error } = await supabase
+      .from('songs')
+      .update(updateData)
+      .eq('id', id)
+      .select('id')
+      .single();
+
+    if (error) throw error;
+
+    res.json({
+      video_id: data.id,
+      song_id: data.id,
+      message: 'Video finalized successfully'
+    });
+  } catch (error) {
+    console.error('Error finalizing video:', error);
+    res.status(400).json({ error: error.message });
+  }
+});
+
 // Get all songs (public)
 router.get('/', async (req, res) => {
   try {

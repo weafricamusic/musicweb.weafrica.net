@@ -1940,7 +1940,6 @@ class _WarRoomScreenState extends State<WarRoomScreen> {
           role: UserRole.artist,
           hostId: user.uid,
           hostName: hostName,
-          initialBattleModeEnabled: true,
         ),
       ),
     );

@@ -93,13 +93,17 @@ class VideosRepository {
       if (v.videoUri == null) continue;
       if (!seen.add(v.id)) continue;
 
-      final access = ContentAccessPolicy.decide(
-        entitlements: entitlements,
-        contentId: v.id,
-        isExclusive: v.isExclusive,
-        userKey: userKey,
-      );
-      if (!access.allowed) continue;
+      // Only apply access policy to exclusive videos.
+      // Public/non-exclusive videos should always appear in the home feed.
+      if (v.isExclusive) {
+        final access = ContentAccessPolicy.decide(
+          entitlements: entitlements,
+          contentId: v.id,
+          isExclusive: v.isExclusive,
+          userKey: userKey,
+        );
+        if (!access.allowed) continue;
+      }
 
       out.add(v);
       if (out.length >= limit) break;
@@ -140,13 +144,17 @@ class VideosRepository {
       if (v.videoUri == null) continue;
       if (!seen.add(v.id)) continue;
 
-      final access = ContentAccessPolicy.decide(
-        entitlements: entitlements,
-        contentId: v.id,
-        isExclusive: v.isExclusive,
-        userKey: userKey,
-      );
-      if (!access.allowed) continue;
+      // Only apply access policy to exclusive videos.
+      // Public/non-exclusive videos should always appear in the home feed.
+      if (v.isExclusive) {
+        final access = ContentAccessPolicy.decide(
+          entitlements: entitlements,
+          contentId: v.id,
+          isExclusive: v.isExclusive,
+          userKey: userKey,
+        );
+        if (!access.allowed) continue;
+      }
 
       out.add(v);
       if (out.length >= limit) break;

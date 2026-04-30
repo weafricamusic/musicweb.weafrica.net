@@ -2,7 +2,7 @@
   "project_info": {
     "project_number": "985705961084",
     "project_id": "weafrica-music-85cdc",
-    "storage_bucket": "weafrica-music-85cdc.appspot.com"
+    "storage_bucket": "weafrica-music-85cdc.firebasestorage.app"
   },
   "client": [
     {

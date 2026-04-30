@@ -1,6 +1,6 @@
 import 'dart:async';
 
-import 'package:agora_rtm/src/agora_rtm_client.dart';
+import 'agora_rtm_client.dart';
 import 'package:flutter/services.dart';
 
 import 'agora_rtm_plugin.dart';

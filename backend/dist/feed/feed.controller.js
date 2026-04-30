@@ -21,8 +21,8 @@ let FeedController = class FeedController {
     constructor(feedService) {
         this.feedService = feedService;
     }
-    async getGlobalFeed(limit) {
-        return this.feedService.generateGlobalFeed(this.parseLimit(limit, 50, 200));
+    async getGlobalFeed() {
+        return this.feedService.generateGlobalFeed();
     }
     async getPersonalFeed(user, limit) {
         return this.feedService.generatePersonalizedFeed(user.uid, this.parseLimit(limit, 50, 200));
@@ -73,9 +73,8 @@ let FeedController = class FeedController {
 exports.FeedController = FeedController;
 __decorate([
     (0, common_1.Get)('global'),
-    __param(0, (0, common_1.Query)('limit')),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [String]),
+    __metadata("design:paramtypes", []),
     __metadata("design:returntype", Promise)
 ], FeedController.prototype, "getGlobalFeed", null);
 __decorate([
@@ -114,7 +113,7 @@ __decorate([
     __metadata("design:returntype", Promise)
 ], FeedController.prototype, "trackEngagement", null);
 exports.FeedController = FeedController = __decorate([
-    (0, common_1.Controller)('feed'),
+    (0, common_1.Controller)('api/feed'),
     __metadata("design:paramtypes", [feed_service_1.FeedService])
 ], FeedController);
 //# sourceMappingURL=feed.controller.js.map

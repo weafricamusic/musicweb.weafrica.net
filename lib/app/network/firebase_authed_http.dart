@@ -2,8 +2,8 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:http/http.dart' as http;
-
-// import '../auth/firebase_idtoken_provider.dart';
+import 'package:firebase_auth/firebase_auth.dart' as fb_auth;
+import 'package:flutter/foundation.dart';
 
 class FirebaseAuthedHttp {
   const FirebaseAuthedHttp._();
@@ -32,7 +32,6 @@ class FirebaseAuthedHttp {
         forceRefresh: true,
       );
 
-      // Retry only if we can actually provide auth now.
       if (refreshedHeaders.containsKey('Authorization')) {
         res = await http.get(uri, headers: refreshedHeaders).timeout(timeout);
       }
@@ -169,11 +168,30 @@ class FirebaseAuthedHttp {
 
     if (!includeAuthIfAvailable && !requireAuth) return merged;
 
-    // Firebase ID token provider currently disabled in this environment.
-    final String? token = null;
+    // Get Firebase ID token
+    String? token;
+    try {
+      final user = fb_auth.FirebaseAuth.instance.currentUser;
+      if (user != null) {
+        token = await user.getIdToken(forceRefresh);
+        if (kDebugMode) {
+          debugPrint('🔑 Firebase token obtained: ${token != null ? "Yes (${token!.length} chars)" : "No"}');
+        }
+      } else {
+        if (kDebugMode) {
+          debugPrint('⚠️ No Firebase user logged in');
+        }
+      }
+    } catch (e) {
+      if (kDebugMode) {
+        debugPrint('❌ Failed to get Firebase token: $e');
+      }
+    }
 
     if (token != null && token.isNotEmpty) {
       merged['Authorization'] = 'Bearer $token';
+    } else if (requireAuth) {
+      throw Exception('Authentication required but no token available');
     }
 
     return merged;

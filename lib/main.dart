@@ -1,12 +1,16 @@
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:provider/provider.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'audio/audio.dart';
 import 'app/app_root.dart';
 import 'app/config/app_env.dart';
+import 'features/battle/bloc/battle_bloc.dart';
 import 'features/creator_dashboard/providers/creator_dashboard_provider.dart';
 import 'home/providers/audio_provider.dart';
 import 'services/notification_service.dart';
@@ -14,22 +18,22 @@ import 'services/notification_service.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Register background message handler as early as possible.
-  // Web uses the service worker (`web/firebase-messaging-sw.js`).
+  await Firebase.initializeApp();
+
   if (!kIsWeb &&
       (defaultTargetPlatform == TargetPlatform.android ||
           defaultTargetPlatform == TargetPlatform.iOS)) {
     FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
   }
 
-  // Load bundled env config early (safe to call twice; bootstrap also loads it).
   await AppEnv.load();
 
-  // Ticket 2.15: local caching (Hive).
-  // Safe to call on all platforms; required before opening any Hive boxes.
-  await Hive.initFlutter();
+  await Supabase.initialize(
+    url: AppEnv.supabaseUrl,
+    anonKey: AppEnv.supabaseAnonKey,
+  );
 
-  // Ensure the global audio handler is ready before any UI tries playback.
+  await Hive.initFlutter();
   await initWeAfricaAudio();
 
   runApp(
@@ -37,9 +41,9 @@ Future<void> main() async {
       providers: [
         ChangeNotifierProvider(create: (_) => AudioProvider()..init()),
         ChangeNotifierProvider(create: (_) => CreatorDashboardProvider()),
+        BlocProvider(create: (_) => BattleBloc()),
       ],
       child: const MyApp(),
     ),
   );
 }
-

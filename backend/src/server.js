@@ -1,3 +1,4 @@
+require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
@@ -7,7 +8,6 @@ const { createServer } = require('http');
 const { Server } = require('socket.io');
 const { startJourneyDispatchCron } = require('./cron/journey_dispatch_cron');
 const { startPostgresNotifyListener } = require('./services/postgresNotifyListener');
-require('dotenv').config();
 
 const app = express();
 const httpServer = createServer(app);
@@ -35,11 +35,13 @@ app.use('/api', limiter);
 // Routes
 app.use('/api/auth', require('./api/auth'));
 app.use('/api/battles', require('./api/battles'));
+app.use('/api/voting', require('./api/voting'));
 app.use('/api/gifts', require('./api/gifts'));
 app.use('/api/users', require('./api/users'));
 app.use('/api/payments', require('./api/payments'));
 app.use('/api/analytics', require('./api/analytics'));
 app.use('/api/songs', require('./api/songs'));
+app.use('/api/agora', require('./api/agora'));
 
 // WebSocket for real-time battle updates
 io.on('connection', (socket) => {

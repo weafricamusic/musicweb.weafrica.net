@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import ZohoSalesIQ from "@/components/ZohoSalesIQ";
 
 export const metadata: Metadata = {
   title: {
@@ -24,6 +25,7 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className="antialiased">
+        <ZohoSalesIQ />
         {children}
       </body>
     </html>

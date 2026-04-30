@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>WeAfrica Music</title>
+  
+  <!-- Firebase Configuration -->
+  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-messaging-compat.js"></script>
+  
+  <script>
+    // Initialize Firebase
+    const firebaseConfig = {
+      apiKey: "AIzaSyBy7DgF8Vk39ek75gO7iIi_f8spwDJbgLY",
+      authDomain: "weafrica-music-85cdc.firebaseapp.com",
+      projectId: "weafrica-music-85cdc",
+      messagingSenderId: "985705961084",
+      appId: "1:985705961084:web:b494fce32e4a41b8c45bf9"
+    };
+    firebase.initializeApp(firebaseConfig);
+    
+    // Register service worker
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('/firebase-messaging-sw.js')
+        .then((registration) => {
+          console.log('Service Worker registered successfully:', registration);
+        })
+        .catch((error) => {
+          console.error('Service Worker registration failed:', error);
+        });
+    }
+  </script>
+  
+  <!-- Force WebGL rendering -->
+  <script>
+    window.flutterWebRenderer = "canvaskit";
+  </script>
+  
+  <link rel="manifest" href="manifest.json">
+  <link rel="icon" type="image/png" href="favicon.png">
+</head>
+<body>
+  <script src="flutter.js" defer></script>
+</body>
+</html>

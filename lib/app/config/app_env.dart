@@ -50,6 +50,10 @@ class AppEnv {
         return const String.fromEnvironment('AGORA_TOKEN').trim();
       case 'AGORA_CHANNEL':
         return const String.fromEnvironment('AGORA_CHANNEL').trim();
+      case 'SUPABASE_URL':
+        return const String.fromEnvironment('SUPABASE_URL').trim();
+      case 'SUPABASE_ANON_KEY':
+        return const String.fromEnvironment('SUPABASE_ANON_KEY').trim();
       default:
         return '';
     }
@@ -60,6 +64,15 @@ class AppEnv {
     if (defined.isNotEmpty) return defined;
     return _getString(key, fallback: fallback);
   }
+
+
+  // --- Supabase ---
+
+  static String get supabaseUrl =>
+      _getDefinedOrAssetString('SUPABASE_URL');
+
+  static String get supabaseAnonKey =>
+      _getDefinedOrAssetString('SUPABASE_ANON_KEY');
 
   /// Optional default plan id for UI fallbacks (source of truth is /api/subscriptions/me).
   static String get defaultPlanId =>
