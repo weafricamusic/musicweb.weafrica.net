@@ -200,6 +200,55 @@ class SubscriptionsApi {
     throw http.ClientException('Unknown network failure while loading plans.', uri);
   }
 
+  /// Retry logic for /api/subscriptions/me with a longer timeout
+  /// to handle Supabase Edge Function cold starts.
+  static Future<http.Response> _fetchMeWithRetry(Uri uri, String token) async {
+    Object? lastError;
+    const retryDelays = <Duration>[
+      Duration(milliseconds: 500),
+      Duration(seconds: 2),
+    ];
+    // Use up to 15 s timeout on first try to survive cold starts,
+    // then shorter tries for subsequent attempts.
+    final timeouts = <Duration>[
+      const Duration(seconds: 15),
+      const Duration(seconds: 12),
+      const Duration(seconds: 10),
+    ];
+
+    for (var attempt = 0; attempt <= retryDelays.length; attempt++) {
+      try {
+        return await http
+            .get(uri, headers: _headersForFirebaseAuthedEdgeFunctionGet(token))
+            .timeout(timeouts[attempt.clamp(0, timeouts.length - 1)]);
+      } on SocketException catch (e) {
+        lastError = e;
+      } on http.ClientException catch (e) {
+        lastError = e;
+      } on TimeoutException catch (e) {
+        lastError = e;
+        if (kDebugMode) {
+          debugPrint('⚠️ /api/subscriptions/me timeout attempt ${attempt + 1}/${retryDelays.length + 1} (${timeouts[attempt.clamp(0, timeouts.length - 1)]})');
+        }
+      }
+
+      if (attempt < retryDelays.length) {
+        await Future<void>.delayed(retryDelays[attempt]);
+      }
+    }
+
+    if (lastError is TimeoutException) {
+      throw lastError;
+    }
+    if (lastError is SocketException) {
+      throw lastError;
+    }
+    if (lastError is http.ClientException) {
+      throw lastError;
+    }
+    throw http.ClientException('Unknown network failure while fetching subscription.', uri);
+  }
+
   /// Authenticated endpoint.
   static Future<SubscriptionMe> fetchMe({String? idToken}) async {
     final d = delegate;
@@ -212,12 +261,7 @@ class SubscriptionsApi {
 
     http.Response response;
     try {
-      response = await http
-          .get(
-            uri,
-            headers: _headersForFirebaseAuthedEdgeFunctionGet(token),
-          )
-          .timeout(const Duration(seconds: 10));
+      response = await _fetchMeWithRetry(uri, token);
     } on TimeoutException catch (e) {
       throw Exception('Timeout fetching subscription from $uri (${e.duration}).');
     } on http.ClientException catch (e) {

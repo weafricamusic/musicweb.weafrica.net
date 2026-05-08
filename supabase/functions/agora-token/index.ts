@@ -3,7 +3,19 @@ import pkg from "npm:agora-access-token";
 
 const { RtcTokenBuilder, RtcRole } = pkg;
 
+// CORS headers for browser cross-origin requests
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type, Authorization, apikey",
+};
+
 serve(async (req) => {
+  // Handle CORS preflight
+  if (req.method === "OPTIONS") {
+    return new Response(null, { status: 204, headers: corsHeaders });
+  }
+
   const url = new URL(req.url);
 
   const channel = url.searchParams.get("channel");
@@ -12,7 +24,7 @@ serve(async (req) => {
   if (!channel) {
     return new Response(
       JSON.stringify({ error: "Missing channel" }),
-      { status: 400 }
+      { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   }
 
@@ -22,7 +34,7 @@ serve(async (req) => {
   if (!appId || !appCertificate) {
     return new Response(
       JSON.stringify({ error: "Missing Agora config" }),
-      { status: 500 }
+      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   }
 
@@ -42,6 +54,6 @@ serve(async (req) => {
 
   return new Response(
     JSON.stringify({ token }),
-    { headers: { "Content-Type": "application/json" } }
+    { headers: { ...corsHeaders, "Content-Type": "application/json" } }
   );
 });

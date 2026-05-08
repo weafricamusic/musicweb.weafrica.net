@@ -3,8 +3,6 @@ import 'dart:js_util' as js_util;
 import 'dart:async';
 import 'package:flutter/foundation.dart';
 import '../../app/config/app_env.dart';
-```
-
 
 class AgoraWebAdapter {
   static dynamic _rtcClient;

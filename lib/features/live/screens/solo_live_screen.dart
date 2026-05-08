@@ -19,6 +19,9 @@ class _SoloLiveScreenState extends ConsumerState<SoloLiveScreen> {
   final TextEditingController _commentController = TextEditingController();
   bool _isMuted = false;
   bool _isCameraOff = false;
+  bool _isInitializing = false;
+  String? _initError;
+  bool _isEnding = false;
 
   @override
   void initState() {
@@ -27,44 +30,91 @@ class _SoloLiveScreenState extends ConsumerState<SoloLiveScreen> {
   }
 
   Future<void> _initializeAndJoin() async {
-    debugPrint('SOLO LIVE: waiting for live session...');
+    // Prevent double-init
+    if (_isInitializing) return;
+    _isInitializing = true;
 
-    final session = await ref.read(liveSessionProvider.future);
+    try {
+      debugPrint('SOLO LIVE: waiting for live session...');
 
-    if (!mounted) return;
+      final session = await ref.read(liveSessionProvider.future);
 
-    if (session == null) {
-      debugPrint('SOLO LIVE ERROR: live session is null');
-      return;
+      if (!mounted) {
+        _isInitializing = false;
+        return;
+      }
+
+      if (session == null) {
+        debugPrint('SOLO LIVE ERROR: live session is null');
+        _initError = 'Failed to load live session data. Please try again.';
+        if (mounted) setState(() {});
+        _isInitializing = false;
+        return;
+      }
+
+      final channelName = session['channel_id']?.toString();
+
+      if (channelName == null || channelName.isEmpty) {
+        debugPrint('SOLO LIVE ERROR: channel_id is missing');
+        _initError = 'Channel ID is missing. Please restart the stream.';
+        if (mounted) setState(() {});
+        _isInitializing = false;
+        return;
+      }
+
+      debugPrint('SOLO LIVE: joining Agora channel $channelName');
+
+      final agora = ref.read(agoraServiceProvider);
+      await agora.joinChannel(
+        channelName: channelName,
+        role: AgoraRole.broadcaster,
+      );
+
+      debugPrint('SOLO LIVE: Agora joinChannel completed');
+
+      if (!mounted) {
+        // Widget disposed during join — leave channel to clean up Agora state
+        try {
+          await agora.leaveChannel();
+        } catch (_) {}
+        _isInitializing = false;
+        return;
+      }
+
+      // On web, create DOM overlay for camera video
+      agora.createVideoOverlay();
+
+      ref.read(presenceReconciliationProvider).start();
+      _startHeartbeat(channelName);
+
+      _isInitializing = false;
+    } catch (e, st) {
+      debugPrint('SOLO LIVE ERROR: _initializeAndJoin failed: $e\n$st');
+      _initError = 'Failed to start live stream: ${e.toString()}';
+      _isInitializing = false;
+      // Cancel any running heartbeat on error
+      _heartbeatTimer?.cancel();
+      _heartbeatTimer = null;
+      if (mounted) setState(() {});
     }
-
-    final channelName = session['channel_id']?.toString();
-
-    if (channelName == null || channelName.isEmpty) {
-      debugPrint('SOLO LIVE ERROR: channel_id is missing');
-      return;
-    }
-
-    debugPrint('SOLO LIVE: joining Agora channel $channelName');
-
-    final agora = ref.read(agoraServiceProvider);
-    await agora.joinChannel(channelName: channelName, role: AgoraRole.broadcaster);
-
-    debugPrint('SOLO LIVE: Agora joinChannel completed');
-
-    // On web, create DOM overlay for camera video
-    agora.createVideoOverlay();
-
-    ref.read(presenceReconciliationProvider).start();
-    _startHeartbeat(channelName);
   }
 
   Timer? _heartbeatTimer;
 
   void _startHeartbeat(String channelName) {
+    // Cancel any existing heartbeat first
+    _heartbeatTimer?.cancel();
     final svc = ref.read(liveSessionService);
     _heartbeatTimer = Timer.periodic(const Duration(seconds: 30), (timer) {
-      svc.heartbeat(channelId: channelName);
+      if (!mounted) {
+        timer.cancel();
+        return;
+      }
+      try {
+        svc.heartbeat(channelId: channelName);
+      } catch (e) {
+        debugPrint('SOLO LIVE: heartbeat failed: $e');
+      }
     });
   }
 
@@ -92,6 +142,10 @@ class _SoloLiveScreenState extends ConsumerState<SoloLiveScreen> {
   }
 
   Future<void> _endLive() async {
+    // Prevent double-tap ending
+    if (_isEnding) return;
+    _isEnding = true;
+
     debugPrint('SOLO LIVE: Showing end live confirmation dialog');
     final confirmed = await showDialog<bool>(
       context: context,
@@ -116,26 +170,30 @@ class _SoloLiveScreenState extends ConsumerState<SoloLiveScreen> {
       ),
     );
 
-    if (confirmed == true) {
-      try {
-        final agora = ref.read(agoraServiceProvider);
-        agora.removeVideoOverlay();
-        await agora.leaveChannel();
-        await ref.read(liveSessionProvider.notifier).endLive();
+    if (confirmed != true) {
+      _isEnding = false;
+      return;
+    }
 
-        if (mounted) {
-          Navigator.pop(context);
-        }
-      } catch (e) {
-        debugPrint('SOLO LIVE ERROR: Failed to end live: $e');
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Failed to end live: ${e.toString()}'),
-              backgroundColor: Colors.red,
-            ),
-          );
-        }
+    try {
+      final agora = ref.read(agoraServiceProvider);
+      agora.removeVideoOverlay();
+      await agora.leaveChannel();
+      await ref.read(liveSessionProvider.notifier).endLive();
+
+      if (mounted) {
+        Navigator.pop(context);
+      }
+    } catch (e) {
+      debugPrint('SOLO LIVE ERROR: Failed to end live: $e');
+      _isEnding = false;
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to end live: ${e.toString()}'),
+            backgroundColor: Colors.red,
+          ),
+        );
       }
     }
   }
@@ -147,8 +205,20 @@ class _SoloLiveScreenState extends ConsumerState<SoloLiveScreen> {
     final sessionId = ref.read(liveSessionProvider.notifier).currentSessionId;
     if (sessionId == null) return;
 
-    await ref.read(sendCommentProvider)(sessionId, text);
-    _commentController.clear();
+    try {
+      await ref.read(sendCommentProvider)(sessionId, text);
+      _commentController.clear();
+    } catch (e) {
+      debugPrint('SOLO LIVE: send comment failed: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Failed to send comment. Please try again.'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
   }
 
   @override
@@ -164,30 +234,82 @@ class _SoloLiveScreenState extends ConsumerState<SoloLiveScreen> {
       body: Stack(
         children: [
           // Loading / background
-          ValueListenableBuilder<bool>(
-            valueListenable: agoraService.isJoined,
-            builder: (context, isJoined, child) {
-              if (!isJoined) {
-                return Container(
-                  decoration: const BoxDecoration(
-                    gradient: LinearGradient(
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
-                      colors: [Color(0xFF1a1a2e), Color(0xFF16213e)],
-                    ),
+          if (_initError != null)
+            // Error state — show error with retry
+            Container(
+              decoration: const BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [Color(0xFF1a1a2e), Color(0xFF16213e)],
+                ),
+              ),
+              child: Center(
+                child: Padding(
+                  padding: const EdgeInsets.all(32),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.error_outline,
+                          color: Colors.red, size: 48),
+                      const SizedBox(height: 16),
+                      Text(
+                        _initError!,
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                            color: Colors.white70, fontSize: 14),
+                      ),
+                      const SizedBox(height: 24),
+                      ElevatedButton.icon(
+                        onPressed: () {
+                          _initError = null;
+                          _initializeAndJoin();
+                        },
+                        icon: const Icon(Icons.refresh),
+                        label: const Text('Retry'),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: AppColors.brandBlue,
+                          foregroundColor: Colors.white,
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      TextButton(
+                        onPressed: () {
+                          if (mounted) Navigator.pop(context);
+                        },
+                        child: const Text('Go Back',
+                            style: TextStyle(color: Colors.white54)),
+                      ),
+                    ],
                   ),
-                  child: const Center(
-                    child: CircularProgressIndicator(
-                      color: AppColors.brandBlue,
+                ),
+              ),
+            )
+          else
+            ValueListenableBuilder<bool>(
+              valueListenable: agoraService.isJoined,
+              builder: (context, isJoined, child) {
+                if (!isJoined) {
+                  return Container(
+                    decoration: const BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: [Color(0xFF1a1a2e), Color(0xFF16213e)],
+                      ),
                     ),
-                  ),
-                );
-              }
-              // Transparent — video renders via DOM overlay (web) or
-              // native AgoraVideoView placed behind the Flutter canvas.
-              return const SizedBox.expand();
-            },
-          ),
+                    child: const Center(
+                      child: CircularProgressIndicator(
+                        color: AppColors.brandBlue,
+                      ),
+                    ),
+                  );
+                }
+                // Transparent — video renders via DOM overlay (web) or
+                // native AgoraVideoView placed behind the Flutter canvas.
+                return const SizedBox.expand();
+              },
+            ),
 
           // Top bar
           SafeArea(
@@ -252,18 +374,17 @@ class _SoloLiveScreenState extends ConsumerState<SoloLiveScreen> {
                                   ],
                                 ),
                                 const SizedBox(height: 2),
-                                if (sessionAsync != null)
-                                  sessionAsync.when(
-                                    data: (session) => Text(
-                                      '${session?['viewer_count'] ?? 0} viewers',
-                                      style: TextStyle(
-                                        color: Colors.white.withValues(alpha: 0.7),
-                                        fontSize: 12,
-                                      ),
+                                sessionAsync.when(
+                                  data: (session) => Text(
+                                    '${session?['viewer_count'] ?? 0} viewers',
+                                    style: TextStyle(
+                                      color: Colors.white.withValues(alpha: 0.7),
+                                      fontSize: 12,
                                     ),
-                                    loading: () => const SizedBox.shrink(),
-                                    error: (_, __) => const SizedBox.shrink(),
                                   ),
+                                  loading: () => const SizedBox.shrink(),
+                                  error: (_, _) => const SizedBox.shrink(),
+                                ),
                               ],
                             ),
                           ),

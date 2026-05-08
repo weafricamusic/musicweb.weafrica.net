@@ -46,55 +46,94 @@ class AgoraService {
   Future<void> initialize() async {
     if (_initialized) return;
 
-    print('🟢 Initializing Agora Web SDK...');
+    // Prevent concurrent initialization
+    if (_initializing) return;
+    _initializing = true;
 
-    for (int i = 0; i < 50; i++) {
-      if (js_util.hasProperty(html.window, 'AgoraRTC')) {
-        print('✅ AgoraRTC found');
-        break;
+    try {
+      debugPrint('🟢 Initializing Agora Web SDK...');
+
+      // Validate App ID before any SDK operation
+      final appId = AppEnv.agoraAppId;
+      if (appId.isEmpty) {
+        throw Exception('Agora App ID is empty. Check AppEnv.agoraAppId configuration.');
       }
-      await Future.delayed(const Duration(milliseconds: 100));
+      debugPrint('📋 App ID validated: ${appId.substring(0, 4)}... (length: ${appId.length})');
+
+      // Wait for AgoraRTC to be available (loaded via script tag in index.html)
+      for (int i = 0; i < 50; i++) {
+        if (js_util.hasProperty(html.window, 'AgoraRTC')) {
+          debugPrint('✅ AgoraRTC found after ${i * 100}ms');
+          break;
+        }
+        if (i == 49) {
+          debugPrint('⚠️ AgoraRTC still not loaded after 5s — check index.html CDN script');
+        }
+        await Future.delayed(const Duration(milliseconds: 100));
+      }
+
+      final AgoraRTC = js_util.getProperty(html.window, 'AgoraRTC');
+      if (AgoraRTC == null) {
+        throw Exception('AgoraRTC not loaded — check index.html CDN script tag');
+      }
+
+      final createPromise = js_util.callMethod(AgoraRTC, 'createClient', [
+        js_util.jsify({'mode': 'live', 'codec': 'vp8'}),
+      ]);
+      _rtcClient = await _awaitJsPromise(createPromise);
+
+      if (_rtcClient == null) {
+        throw Exception('AgoraRTC.createClient returned null');
+      }
+
+      _initialized = true;
+      debugPrint('✅ Agora Web SDK initialized');
+    } catch (e) {
+      debugPrint('❌ Agora initialization failed: $e');
+      _initializing = false;
+      rethrow;
+    } finally {
+      _initializing = true; // mark as attempted — initialize() can be called again if needed
+      if (!_initialized) _initializing = false;
     }
-
-    final AgoraRTC = js_util.getProperty(html.window, 'AgoraRTC');
-    if (AgoraRTC == null) {
-      throw Exception('AgoraRTC not loaded');
-    }
-
-    final createPromise = js_util.callMethod(AgoraRTC, 'createClient', [
-      js_util.jsify({'mode': 'live', 'codec': 'vp8'}),
-    ]);
-    _rtcClient = await _awaitJsPromise(createPromise);
-
-    _initialized = true;
-    print('✅ Agora Web SDK initialized');
   }
+  bool _initializing = false;
 
   // ─── Token ──────────────────────────────────────────────
 
   Future<String> _fetchToken(String channelName, int uid) async {
-    try {
-      final uri =
-          '${AppEnv.supabaseUrl}/functions/v1/agora-token?channel=$channelName&uid=$uid';
-      final response = await html.HttpRequest.request(
-        uri,
-        method: 'GET',
-        requestHeaders: {
-          'apikey': AppEnv.supabaseAnonKey,
-          'Authorization': 'Bearer ${AppEnv.supabaseAnonKey}',
-        },
-      );
-      if (response.status == 200) {
-        final decoded = jsonDecode(response.responseText ?? '{}');
-        final token = decoded['token'] ?? '';
-        print('🔑 Agora token fetched (${token.length} chars)');
-        return token;
-      } else {
-        print('⚠️ Token fetch HTTP ${response.status}: ${response.responseText}');
+    // Retry up to 2 times with 1s backoff
+    for (int attempt = 0; attempt < 2; attempt++) {
+      try {
+        final uri =
+            '${AppEnv.supabaseUrl}/functions/v1/agora-token?channel=$channelName&uid=$uid';
+        final response = await html.HttpRequest.request(
+          uri,
+          method: 'GET',
+          requestHeaders: {
+            'apikey': AppEnv.supabaseAnonKey,
+            'Authorization': 'Bearer ${AppEnv.supabaseAnonKey}',
+          },
+        );
+        if (response.status == 200) {
+          final decoded = jsonDecode(response.responseText ?? '{}');
+          final token = decoded['token'] ?? '';
+          if (token.isNotEmpty) {
+            debugPrint('🔑 Agora token fetched (${token.length} chars)');
+            return token;
+          }
+          debugPrint('⚠️ Token fetch returned empty token');
+        } else {
+          debugPrint('⚠️ Token fetch HTTP ${response.status}: ${response.responseText}');
+        }
+      } catch (e) {
+        debugPrint('⚠️ Token fetch error (attempt $attempt): $e');
       }
-    } catch (e) {
-      print('⚠️ Token fetch error: $e');
+      if (attempt < 1) {
+        await Future.delayed(const Duration(seconds: 1));
+      }
     }
+    debugPrint('❌ Token fetch failed after 2 attempts');
     return '';
   }
 
@@ -124,14 +163,25 @@ class AgoraService {
     if (finalToken.isEmpty) {
       finalToken = await _fetchToken(channelName, userId);
     }
-    // Agora expects null for token when not using token authentication
-    final tokenOrNull = finalToken.isEmpty ? null : finalToken;
+
+    // IMPORTANT: Agora v4.x requires a valid token for production apps.
+    // Passing null triggers deprecated "static key" authentication which is no longer supported.
+    // If we still don't have a token, throw an explicit error rather than
+    // letting the SDK fail with the confusing "dynamic use static key" message.
+    if (finalToken.isEmpty) {
+      throw Exception(
+        'Agora token is missing. Ensure the backend token server is reachable '
+        'and CORS is configured correctly. Backend URLs:\n'
+        '  - ${AppEnv.agoraTokenServerUrl.isNotEmpty ? AppEnv.agoraTokenServerUrl : 'https://weafrica-backend.vercel.app/api/agora/tokens/rtc'}\n'
+        '  - ${AppEnv.supabaseUrl}/functions/v1/agora-token',
+      );
+    }
 
     try {
       // Agora v4 join: (appid, channel, token, uid)
-      print('🔄 Calling client.join(appid, "$channelName", token, $userId)');
+      print('🔄 Calling client.join(appid, "$channelName", token (${finalToken.length} chars), $userId)');
       final joinPromise = js_util.callMethod(
-        _rtcClient, 'join', [appId, channelName, tokenOrNull, userId],
+        _rtcClient, 'join', [appId, channelName, finalToken, userId],
       );
       await _awaitJsPromise(joinPromise);
       _joined = true;

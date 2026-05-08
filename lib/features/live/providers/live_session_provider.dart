@@ -1,5 +1,5 @@
 import 'dart:async';
-
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'auth_provider.dart';
@@ -56,19 +56,32 @@ class LiveSessionNotifier extends AsyncNotifier<Map<String, dynamic>?> {
     final sessionId = _currentSessionId ?? current?['id']?.toString();
     final channelId = current?['channel_id']?.toString();
 
-    if (sessionId == null && (channelId == null || channelId.isEmpty)) {
+    // Must have at least one identifier to end the session
+    if ((sessionId == null || sessionId.isEmpty) &&
+        (channelId == null || channelId.isEmpty)) {
+      debugPrint('LiveSessionNotifier: endLive called but no sessionId or channelId — skipping DB update');
+      state = const AsyncValue.data(null);
+      _currentSessionId = null;
       return;
     }
 
+    debugPrint('LiveSessionNotifier: ending live session (sessionId=$sessionId, channelId=$channelId)');
+
     final update = {'status': 'ended', 'is_live': false};
 
-    if (sessionId != null && sessionId.isNotEmpty) {
-      await _supabase.from('live_sessions').update(update).eq('id', sessionId);
-    } else {
-      await _supabase
-          .from('live_sessions')
-          .update(update)
-          .eq('channel_id', channelId!);
+    try {
+      if (sessionId != null && sessionId.isNotEmpty) {
+        await _supabase.from('live_sessions').update(update).eq('id', sessionId);
+      } else {
+        await _supabase
+            .from('live_sessions')
+            .update(update)
+            .eq('channel_id', channelId!);
+      }
+      debugPrint('LiveSessionNotifier: DB updated to ended');
+    } catch (e, st) {
+      // Even if DB fails, reset local state so the client UI doesn't stay stuck
+      debugPrint('LiveSessionNotifier: failed to update DB for endLive: $e\n$st');
     }
 
     state = const AsyncValue.data(null);

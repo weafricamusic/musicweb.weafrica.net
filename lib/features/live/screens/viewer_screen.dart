@@ -1,12 +1,14 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart';
 import '../../../data/services/agora_service.dart';
 import '../../../app/theme.dart';
 import '../providers/agora_provider.dart';
 import '../providers/viewer_provider.dart';
 import '../providers/comment_provider.dart';
-import '../providers/auth_provider.dart';
+import '../../wallet/widgets/send_gift_dialog.dart';
+import '../../wallet/providers/wallet_provider.dart';
 
 class ViewerScreen extends ConsumerStatefulWidget {
   final String liveSessionId;
@@ -25,6 +27,10 @@ class ViewerScreen extends ConsumerStatefulWidget {
 class _ViewerScreenState extends ConsumerState<ViewerScreen> {
   final TextEditingController _commentController = TextEditingController();
   int _likeCount = 0;
+  bool _isInitializing = false;
+  String? _initError;
+  Timer? _streamTimeout;
+  bool _streamTimedOut = false;
 
   @override
   void initState() {
@@ -33,20 +39,49 @@ class _ViewerScreenState extends ConsumerState<ViewerScreen> {
   }
 
   Future<void> _initializeAndJoin() async {
-    await ref.read(agoraInitializedProvider.future);
+    // Prevent double-init
+    if (_isInitializing) return;
+    _isInitializing = true;
 
-    final agora = ref.read(agoraServiceProvider);
-    await agora.joinChannel(
-      channelName: widget.channelName,
-      role: AgoraRole.audience,
-    );
+    try {
+      debugPrint('VIEWER: initializing Agora...');
+      await ref.read(agoraInitializedProvider.future);
 
-    // Track viewer presence
-    await ref.read(joinLiveProvider)(widget.liveSessionId);
+      final agora = ref.read(agoraServiceProvider);
+      debugPrint('VIEWER: joining channel ${widget.channelName} as audience');
+      await agora.joinChannel(
+        channelName: widget.channelName,
+        role: AgoraRole.audience,
+      );
 
-    // On web: create DOM overlay when remote video arrives
-    if (kIsWeb) {
-      _setupRemoteVideoWatcher();
+      if (!mounted) {
+        _isInitializing = false;
+        return;
+      }
+
+      debugPrint('VIEWER: channel joined, starting viewer tracking');
+      // Track viewer presence
+      await ref.read(joinLiveProvider)(widget.liveSessionId);
+
+      if (!mounted) {
+        _isInitializing = false;
+        return;
+      }
+
+      // On web: create DOM overlay when remote video arrives
+      if (kIsWeb) {
+        _setupRemoteVideoWatcher();
+      }
+
+      // Start a timeout — if no remote video arrives within 15s, show error
+      _startStreamTimeout();
+
+      _isInitializing = false;
+    } catch (e, st) {
+      debugPrint('VIEWER ERROR: _initializeAndJoin failed: $e\n$st');
+      _initError = 'Failed to join stream: ${e.toString()}';
+      _isInitializing = false;
+      if (mounted) setState(() {});
     }
   }
 
@@ -63,8 +98,20 @@ class _ViewerScreenState extends ConsumerState<ViewerScreen> {
     }
   }
 
+  void _startStreamTimeout() {
+    _streamTimeout?.cancel();
+    _streamTimeout = Timer(const Duration(seconds: 15), () {
+      final agora = ref.read(agoraServiceProvider);
+      if (agora.remoteUid.value == null && mounted) {
+        debugPrint('VIEWER: stream timeout — no remote video after 15s');
+        setState(() => _streamTimedOut = true);
+      }
+    });
+  }
+
   @override
   void dispose() {
+    _streamTimeout?.cancel();
     _commentController.dispose();
     if (kIsWeb) {
       ref.read(agoraServiceProvider).removeVideoOverlay();
@@ -73,12 +120,82 @@ class _ViewerScreenState extends ConsumerState<ViewerScreen> {
     super.dispose();
   }
 
+  Future<void> _openGiftDialog() async {
+    try {
+      final hostName = 'Live Host'; // TODO: get actual host name from session
+      final balance = WalletProvider.instance.balance;
+
+      await SendGiftDialog.show(
+        context: context,
+        artistName: hostName,
+        userCoins: balance,
+        onGiftSent: (gift) async {
+          try {
+            // Get the host's user ID from the live session
+            final hostId = ''; // TODO: get from session when available
+            if (hostId.isEmpty) {
+              if (mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Cannot send gift: host info not available.'),
+                    backgroundColor: Colors.orange,
+                  ),
+                );
+              }
+              return;
+            }
+
+            final success = await WalletProvider.instance.sendGift(
+              creatorId: hostId,
+              giftId: gift.id,
+            );
+
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text(success
+                      ? '${gift.emoji} Gift sent!'
+                      : 'Failed to send gift. Check your balance.'),
+                  backgroundColor: success ? Colors.green : Colors.red,
+                ),
+              );
+            }
+          } catch (e) {
+            debugPrint('VIEWER: gift send failed: $e');
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('Failed to send gift. Please try again.'),
+                  backgroundColor: Colors.red,
+                ),
+              );
+            }
+          }
+        },
+      );
+    } catch (e) {
+      debugPrint('VIEWER: gift dialog failed: $e');
+    }
+  }
+
   Future<void> _sendComment() async {
     final text = _commentController.text.trim();
     if (text.isEmpty) return;
 
-    await ref.read(sendCommentProvider)(widget.liveSessionId, text);
-    _commentController.clear();
+    try {
+      await ref.read(sendCommentProvider)(widget.liveSessionId, text);
+      _commentController.clear();
+    } catch (e) {
+      debugPrint('VIEWER: send comment failed: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Failed to send comment. Please try again.'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
   }
 
   void _showLikeBurst(TapDownDetails details) {
@@ -124,28 +241,66 @@ class _ViewerScreenState extends ConsumerState<ViewerScreen> {
         child: Stack(
           children: [
             // Remote video background
-            ValueListenableBuilder<bool>(
-              valueListenable: agoraService.isJoined,
-              builder: (context, isJoined, child) {
-                if (!isJoined) {
-                  return Container(
-                    decoration: const BoxDecoration(
-                      gradient: LinearGradient(
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
-                        colors: [Color(0xFF1a1a2e), Color(0xFF16213e)],
-                      ),
+            if (_initError != null || _streamTimedOut)
+              // Error state — show error with retry
+              Container(
+                decoration: const BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [Color(0xFF1a1a2e), Color(0xFF16213e)],
+                  ),
+                ),
+                child: Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(32),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(Icons.error_outline,
+                            color: Colors.red, size: 48),
+                        const SizedBox(height: 16),
+                        Text(
+                          _initError ?? 'Stream not available. The broadcaster may be offline.',
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(
+                              color: Colors.white70, fontSize: 14),
+                        ),
+                        const SizedBox(height: 24),
+                        ElevatedButton.icon(
+                          onPressed: () {
+                            setState(() {
+                              _initError = null;
+                              _streamTimedOut = false;
+                              _isInitializing = false;
+                            });
+                            _initializeAndJoin();
+                          },
+                          icon: const Icon(Icons.refresh),
+                          label: const Text('Retry'),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: AppColors.brandBlue,
+                            foregroundColor: Colors.white,
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        TextButton(
+                          onPressed: () {
+                            if (mounted) Navigator.pop(context);
+                          },
+                          child: const Text('Leave',
+                              style: TextStyle(color: Colors.white54)),
+                        ),
+                      ],
                     ),
-                    child: const Center(
-                      child: CircularProgressIndicator(color: AppColors.brandBlue),
-                    ),
-                  );
-                }
-
-                return ValueListenableBuilder<int?>(
-                  valueListenable: agoraService.remoteUid,
-                  builder: (context, remoteUid, child) {
-                  if (remoteUid == null) {
+                  ),
+                ),
+              )
+            else
+              ValueListenableBuilder<bool>(
+                valueListenable: agoraService.isJoined,
+                builder: (context, isJoined, child) {
+                  if (!isJoined) {
                     return Container(
                       decoration: const BoxDecoration(
                         gradient: LinearGradient(
@@ -155,20 +310,38 @@ class _ViewerScreenState extends ConsumerState<ViewerScreen> {
                         ),
                       ),
                       child: const Center(
-                        child: Text(
-                          'Waiting for stream...',
-                          style: TextStyle(color: Colors.white60, fontSize: 16),
-                        ),
+                        child: CircularProgressIndicator(color: AppColors.brandBlue),
                       ),
                     );
                   }
-                  // Transparent — video renders via DOM overlay (web) or
-                  // native AgoraVideoView placed behind the Flutter canvas.
-                  return const SizedBox.expand();
-                  },
-                );
-              },
-            ),
+
+                  return ValueListenableBuilder<int?>(
+                    valueListenable: agoraService.remoteUid,
+                    builder: (context, remoteUid, child) {
+                    if (remoteUid == null) {
+                      return Container(
+                        decoration: const BoxDecoration(
+                          gradient: LinearGradient(
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                            colors: [Color(0xFF1a1a2e), Color(0xFF16213e)],
+                          ),
+                        ),
+                        child: const Center(
+                          child: Text(
+                            'Waiting for stream...',
+                            style: TextStyle(color: Colors.white60, fontSize: 16),
+                          ),
+                        ),
+                      );
+                    }
+                    // Transparent — video renders via DOM overlay (web) or
+                    // native AgoraVideoView placed behind the Flutter canvas.
+                    return const SizedBox.expand();
+                    },
+                  );
+                },
+              ),
 
             // Top bar
             SafeArea(
@@ -406,7 +579,7 @@ class _ViewerScreenState extends ConsumerState<ViewerScreen> {
                         ),
                         const SizedBox(width: 10),
                         GestureDetector(
-                          onTap: () {},
+                          onTap: _openGiftDialog,
                           child: Container(
                             width: 48,
                             height: 48,

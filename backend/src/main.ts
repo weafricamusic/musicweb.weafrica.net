@@ -36,7 +36,19 @@ async function bootstrap() {
   bootstrapEnv();
 
   const app = await NestFactory.create(AppModule, {
-    cors: true,
+    cors: {
+      origin: [
+        'https://weafrica.com',
+        'https://musicweb.weafrica.net',
+        'http://localhost:8080',
+        'http://localhost:3000',
+        'http://127.0.0.1:8080',
+        'http://127.0.0.1:3000',
+      ],
+      credentials: true,
+      methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+      allowedHeaders: ['Content-Type', 'Authorization', 'apikey'],
+    },
   });
 
   const port = Number.parseInt(process.env.PORT ?? '3000', 10);

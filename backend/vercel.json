@@ -1,0 +1,14 @@
+{
+    "buildCommand": "npm run build:nest",
+    "outputDirectory": ".",
+    "rewrites": [
+        {
+            "source": "/api/agora/(.*)",
+            "destination": "/src/api/agora"
+        },
+        {
+            "source": "/api/(.*)",
+            "destination": "/src/server"
+        }
+    ]
+}

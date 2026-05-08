@@ -12,6 +12,33 @@ import 'features/creator_dashboard/providers/creator_dashboard_provider.dart';
 import 'services/notification_service.dart';
 
 Future<void> main() async {
+  // Track repeated overflow errors to avoid spamming the console.
+  final _seenOverflows = <String, int>{};
+  const _maxOverflowPrints = 3;
+
+  FlutterError.onError = (FlutterErrorDetails details) {
+    final desc = details.toString();
+    final isOverflow = desc.contains('overflow') ||
+        desc.contains('RenderFlex') ||
+        desc.contains('debug_overflow_indicator');
+
+    if (isOverflow) {
+      final key = details.exception?.toString() ?? desc;
+      final count = (_seenOverflows[key] ?? 0) + 1;
+      _seenOverflows[key] = count;
+      if (count > _maxOverflowPrints) return;
+      debugPrint('⚠️ FLUTTER OVERFLOW (#$count): $key');
+      if (count == 1) {
+        debugPrintStack();
+      }
+      return;
+    }
+
+    debugPrint('❌ FLUTTER ERROR: ${details.exception}');
+    debugPrint('❌ Stack trace: ${details.stack}');
+    debugPrintStack();
+  };
+
   WidgetsFlutterBinding.ensureInitialized();
 
   // Register background message handler as early as possible.
