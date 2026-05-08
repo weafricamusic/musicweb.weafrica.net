@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:audio_service/audio_service.dart';
 
-import '../../../app/theme.dart';
 import '../playback_controller.dart';
 import '../queue_sheet.dart';
 
@@ -31,7 +30,7 @@ class FullPlayerScreen extends StatefulWidget {
 class _FullPlayerScreenState extends State<FullPlayerScreen> {
   double? _scrubValue;
   bool _isScrubbing = false;
-  bool _showLyrics = false;
+  final bool _showLyrics = false;
 
   // Country code to flag emoji mapping
   String _getCountryFlag(String? countryCode) {
@@ -186,7 +185,7 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
-                    color: Colors.white.withValues(alpha: 0.9),
+                    color: Colors.white.withValues(alpha: 0.2),
                     fontSize: 13,
                     fontWeight: FontWeight.w700,
                   ),
@@ -221,7 +220,7 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
             ),
             boxShadow: [
               BoxShadow(
-                color: const Color(0xFFD4AF37).withValues(alpha: 0.15),
+                color: const Color(0xFFD4AF37).withValues(alpha: 0.3),
                 blurRadius: 30,
                 offset: const Offset(0, 10),
               ),
@@ -249,14 +248,14 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
       return Container(
         padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 12),
         decoration: BoxDecoration(
-          color: const Color(0xFF1A2F1A).withValues(alpha: 0.5),
+          color: const Color(0xFF1A2F1A).withValues(alpha: 0.3),
           borderRadius: BorderRadius.circular(20),
         ),
         child: Text(
           'Feel the rhythm of Africa',
           textAlign: TextAlign.center,
           style: TextStyle(
-            color: Colors.white.withValues(alpha: 0.6),
+            color: Colors.white.withValues(alpha: 0.2),
             fontSize: 14,
             fontStyle: FontStyle.italic,
             fontWeight: FontWeight.w500,
@@ -268,7 +267,7 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 12),
       decoration: BoxDecoration(
-        color: const Color(0xFF1A2F1A).withValues(alpha: 0.5),
+        color: const Color(0xFF1A2F1A).withValues(alpha: 0.3),
         borderRadius: BorderRadius.circular(20),
       ),
       child: Text(
@@ -321,7 +320,7 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
-                  color: Colors.white.withValues(alpha: 0.7),
+                  color: Colors.white.withValues(alpha: 0.2),
                   fontSize: 15,
                   fontWeight: FontWeight.w600,
                 ),
@@ -384,7 +383,7 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                   decoration: BoxDecoration(
-                    color: const Color(0xFF1A2F1A).withValues(alpha: 0.2),
+                    color: const Color(0xFF1A2F1A).withValues(alpha: 0.3),
                     borderRadius: BorderRadius.circular(12),
                   ),
                   child: const Row(
@@ -433,7 +432,7 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
                   width: 40,
                   height: 4,
                   decoration: BoxDecoration(
-                    color: Colors.white.withValues(alpha: 0.3),
+                    color: Colors.white.withValues(alpha: 0.2),
                     borderRadius: BorderRadius.circular(2),
                   ),
                 ),
@@ -450,7 +449,7 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
                 Text(
                   'Send coins to ${track.artist}',
                   style: TextStyle(
-                    color: Colors.white.withValues(alpha: 0.7),
+                    color: Colors.white.withValues(alpha: 0.2),
                     fontSize: 14,
                   ),
                 ),
@@ -483,7 +482,7 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
       child: Container(
         padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 20),
         decoration: BoxDecoration(
-          color: const Color(0xFFD4AF37).withValues(alpha: 0.15),
+          color: const Color(0xFFD4AF37).withValues(alpha: 0.3),
           borderRadius: BorderRadius.circular(16),
           border: Border.all(
             color: const Color(0xFFD4AF37).withValues(alpha: 0.3),
@@ -542,7 +541,7 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
             activeTrackColor: const Color(0xFFD4AF37), // Gold
             inactiveTrackColor: Colors.white.withValues(alpha: 0.2),
             thumbColor: const Color(0xFFD4AF37),
-            overlayColor: const Color(0xFFD4AF37).withValues(alpha: 0.2),
+            overlayColor: const Color(0xFFD4AF37).withValues(alpha: 0.3),
           ),
           child: Slider(
             value: sliderValue.clamp(0.0, 1.0),
@@ -578,7 +577,7 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
                   _isScrubbing ? previewPosition : controller.position,
                 ),
                 style: TextStyle(
-                  color: Colors.white.withValues(alpha: 0.7),
+                  color: Colors.white.withValues(alpha: 0.2),
                   fontSize: 12,
                   fontWeight: FontWeight.w600,
                 ),
@@ -586,7 +585,7 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
               Text(
                 PlaybackController.format(controller.duration),
                 style: TextStyle(
-                  color: Colors.white.withValues(alpha: 0.7),
+                  color: Colors.white.withValues(alpha: 0.2),
                   fontSize: 12,
                   fontWeight: FontWeight.w600,
                 ),
@@ -614,7 +613,7 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
             Icons.shuffle,
             color: controller.shuffleEnabled
                 ? const Color(0xFFD4AF37)
-                : Colors.white.withValues(alpha: 0.6),
+                : Colors.white.withValues(alpha: 0.2),
             size: 24,
           ),
         ),
@@ -629,7 +628,7 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
             Icons.skip_previous,
             color: controller.canSkipPrevious
                 ? Colors.white
-                : Colors.white.withValues(alpha: 0.3),
+                : Colors.white.withValues(alpha: 0.2),
             size: 36,
           ),
         ),
@@ -647,7 +646,7 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
             shape: BoxShape.circle,
             boxShadow: [
               BoxShadow(
-                color: const Color(0xFFD4AF37).withValues(alpha: 0.4),
+                color: const Color(0xFFD4AF37).withValues(alpha: 0.3),
                 blurRadius: 20,
                 offset: const Offset(0, 8),
               ),
@@ -685,7 +684,7 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
             Icons.skip_next,
             color: controller.canSkipNext
                 ? Colors.white
-                : Colors.white.withValues(alpha: 0.3),
+                : Colors.white.withValues(alpha: 0.2),
             size: 36,
           ),
         ),
@@ -699,7 +698,7 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
                 : Icons.repeat,
             color: controller.repeatEnabled
                 ? const Color(0xFFD4AF37)
-                : Colors.white.withValues(alpha: 0.6),
+                : Colors.white.withValues(alpha: 0.2),
             size: 24,
           ),
         ),
@@ -760,7 +759,7 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         decoration: BoxDecoration(
           color: isActive
-              ? const Color(0xFFD4AF37).withValues(alpha: 0.2)
+              ? const Color(0xFFD4AF37).withValues(alpha: 0.3)
               : Colors.transparent,
           borderRadius: BorderRadius.circular(12),
         ),
@@ -771,7 +770,7 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
               icon,
               color: isActive
                   ? const Color(0xFFD4AF37)
-                  : Colors.white.withValues(alpha: 0.7),
+                  : Colors.white.withValues(alpha: 0.2),
               size: 24,
             ),
             const SizedBox(height: 4),
@@ -780,7 +779,7 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
               style: TextStyle(
                 color: isActive
                     ? const Color(0xFFD4AF37)
-                    : Colors.white.withValues(alpha: 0.7),
+                    : Colors.white.withValues(alpha: 0.2),
                 fontSize: 11,
                 fontWeight: FontWeight.w600,
               ),
@@ -805,7 +804,7 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
         color: const Color(0xFF1A2F1A),
         borderRadius: BorderRadius.circular(20),
         border: Border.all(
-          color: const Color(0xFFD4AF37).withValues(alpha: 0.2),
+          color: const Color(0xFFD4AF37).withValues(alpha: 0.3),
         ),
       ),
       child: ExpansionTile(
@@ -868,7 +867,7 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
           Text(
             'Nothing playing',
             style: TextStyle(
-              color: Colors.white.withValues(alpha: 0.7),
+              color: Colors.white.withValues(alpha: 0.2),
               fontSize: 18,
               fontWeight: FontWeight.w600,
             ),
@@ -877,7 +876,7 @@ class _FullPlayerScreenState extends State<FullPlayerScreen> {
           Text(
             'Select a track to start listening',
             style: TextStyle(
-              color: Colors.white.withValues(alpha: 0.5),
+              color: Colors.white.withValues(alpha: 0.2),
               fontSize: 14,
             ),
           ),
@@ -918,13 +917,13 @@ class _AlbumPlaceholder extends StatelessWidget {
           Icon(
             Icons.album,
             size: 80,
-            color: const Color(0xFFD4AF37).withValues(alpha: 0.4),
+            color: const Color(0xFFD4AF37).withValues(alpha: 0.3),
           ),
           const SizedBox(height: 12),
           Text(
             'WEAFRICA',
             style: TextStyle(
-              color: const Color(0xFFD4AF37).withValues(alpha: 0.6),
+              color: const Color(0xFFD4AF37).withValues(alpha: 0.3),
               fontSize: 16,
               fontWeight: FontWeight.w900,
               letterSpacing: 3,

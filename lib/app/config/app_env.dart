@@ -1,120 +1,87 @@
-import 'dart:convert';
+import 'package:flutter/foundation.dart';
 
-import 'package:flutter/services.dart';
-
-/// Environment/config loaded from bundled JSON.
+/// Central environment configuration for WeAfrica Music.
 ///
-/// This complements [ApiEnv] (which only cares about WEAFRICA_API_BASE_URL).
-/// Keep it lightweight and tolerant of missing keys.
+/// **SECURITY RULES:**
+/// 1. App ID (non-secret) — safe to embed, but prefer build-time injection.
+/// 2. App Certificate (SECRET) — NEVER put in client code. Keep server-only.
+/// 3. Supabase keys — anon key is safe for client; service_role key is server-only.
+///
+/// **Build-time injection (recommended):**
+///   flutter run --dart-define=AGORA_APP_ID=your_app_id
+///   flutter build web --dart-define=AGORA_APP_ID=your_app_id
 class AppEnv {
-  static Map<String, dynamic>? _decoded;
+  // ── Agora ────────────────────────────────────────────────
 
-  static Future<void> load({
-    String assetPath = 'assets/config/supabase.env.json',
-  }) async {
-    if (_decoded != null) return;
-    try {
-      final raw = await rootBundle.loadString(assetPath);
-      final parsed = jsonDecode(raw);
-      if (parsed is Map) {
-        _decoded = parsed.map((k, v) => MapEntry(k.toString(), v));
-      } else {
-        _decoded = <String, dynamic>{};
-      }
-    } catch (_) {
-      _decoded = <String, dynamic>{};
+  /// Agora App ID (32-char string, non-secret).
+  /// Injected at build time via --dart-define or falls back to compile-time const.
+  static String get agoraAppId {
+    const fromEnv = String.fromEnvironment('AGORA_APP_ID',
+        defaultValue: '21a9549ec323484ca5983aadbd3839af');
+    return fromEnv.trim();
+  }
+
+  /// Backend token server URL for fetching short-lived RTC tokens.
+  static String get agoraTokenServerUrl {
+    const fromEnv = String.fromEnvironment('AGORA_TOKEN_SERVER_URL',
+        defaultValue: '');
+    return fromEnv.trim();
+  }
+
+  // ── Supabase ─────────────────────────────────────────────
+
+  static const String supabaseUrl =
+      "https://nxkutpjdoidfwpkjbwcm.supabase.co";
+  static const String supabaseAnonKey =
+      "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im54a3V0cGpkb2lkZndwa2pid2NtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjcxMDA2NjEsImV4cCI6MjA4MjY3NjY2MX0.eQ5Z5lyYEXxepG-XzdSmPOqb6zCxI-qEnXLmXtl6K4U";
+
+  // ── PayChangu ────────────────────────────────────────────
+
+  static const String payChanguStartPath = "";
+
+  // ── Defaults ─────────────────────────────────────────────
+
+  static const String defaultPlanId = "";
+  static const String defaultCountryCode = "NG";
+
+  static Future<void> load() async {}
+
+  // ── Deprecated getters (kept for backward compatibility) ─
+  // These previously returned hardcoded "demo" values which were NEVER safe.
+  // Use AgoraTokenService to fetch real tokens from your backend.
+
+  @Deprecated('Use AgoraTokenService.fetchRtcToken() instead. This returns empty string.')
+  static String get agoraToken => '';
+
+  @Deprecated('Use AgoraTokenService.fetchRtcToken() instead. This returns empty string.')
+  static String get testToken => '';
+
+  @Deprecated('Pass channel name dynamically. This returns empty string.')
+  static String get agoraChannel => '';
+
+  static String get vercelProtectionBypassToken => "";
+
+  // ── Validation helpers ───────────────────────────────────
+
+  /// Validates the Agora App ID format (32 chars, no whitespace).
+  /// Throws [StateError] if invalid. Call before every SDK init.
+  static void validateAgoraAppId() {
+    final id = agoraAppId;
+    if (id.isEmpty) {
+      throw StateError(
+        'AGORA_APP_ID is empty. '
+        'Pass it at build time: flutter run --dart-define=AGORA_APP_ID=YOUR_APP_ID',
+      );
+    }
+    if (id.length != 32) {
+      throw StateError(
+        'AGORA_APP_ID has invalid length (${id.length}), expected 32. '
+        'Value: "${id.substring(0, id.length > 4 ? 4 : id.length)}..."',
+      );
+    }
+    if (kDebugMode) {
+      final redacted = '${id.substring(0, 4)}...${id.substring(id.length - 4)}';
+      debugPrint('✅ AppEnv — Agora App ID validated: $redacted');
     }
   }
-
-  static String _getString(String key, {String fallback = ''}) {
-    final v = _decoded?[key];
-    if (v is String) return v.trim();
-    return fallback;
-  }
-
-  static String _definedString(String key) {
-    switch (key) {
-      case 'WEAFRICA_DEFAULT_PLAN_ID':
-        return const String.fromEnvironment('WEAFRICA_DEFAULT_PLAN_ID').trim();
-      case 'DEFAULT_COUNTRY_CODE':
-        return const String.fromEnvironment('DEFAULT_COUNTRY_CODE').trim();
-      case 'WEAFRICA_PAYCHANGU_START_PATH':
-        return const String.fromEnvironment('WEAFRICA_PAYCHANGU_START_PATH').trim();
-      case 'WEAFRICA_VERCEL_PROTECTION_BYPASS':
-        return const String.fromEnvironment('WEAFRICA_VERCEL_PROTECTION_BYPASS').trim();
-      case 'WEAFRICA_TEST_TOKEN':
-        return const String.fromEnvironment('WEAFRICA_TEST_TOKEN').trim();
-      case 'AGORA_APP_ID':
-        return const String.fromEnvironment('AGORA_APP_ID').trim();
-      case 'AGORA_TOKEN':
-        return const String.fromEnvironment('AGORA_TOKEN').trim();
-      case 'AGORA_CHANNEL':
-        return const String.fromEnvironment('AGORA_CHANNEL').trim();
-      case 'SUPABASE_URL':
-        return const String.fromEnvironment('SUPABASE_URL').trim();
-      case 'SUPABASE_ANON_KEY':
-        return const String.fromEnvironment('SUPABASE_ANON_KEY').trim();
-      default:
-        return '';
-    }
-  }
-
-  static String _getDefinedOrAssetString(String key, {String fallback = ''}) {
-    final defined = _definedString(key);
-    if (defined.isNotEmpty) return defined;
-    return _getString(key, fallback: fallback);
-  }
-
-
-  // --- Supabase ---
-
-  static String get supabaseUrl =>
-      _getDefinedOrAssetString('SUPABASE_URL');
-
-  static String get supabaseAnonKey =>
-      _getDefinedOrAssetString('SUPABASE_ANON_KEY');
-
-  /// Optional default plan id for UI fallbacks (source of truth is /api/subscriptions/me).
-  static String get defaultPlanId =>
-      _getDefinedOrAssetString('WEAFRICA_DEFAULT_PLAN_ID', fallback: 'free');
-
-  /// Optional default country code for payments/ads.
-  static String get defaultCountryCode =>
-      _getDefinedOrAssetString('DEFAULT_COUNTRY_CODE', fallback: 'MW');
-
-  /// Backend path for starting a PayChangu payment.
-  ///
-  /// Example: `/api/payments/paychangu/start`
-  ///
-  /// The Flutter app will POST to `${ApiEnv.baseUrl}$payChanguStartPath`.
-  static String get payChanguStartPath =>
-      _getDefinedOrAssetString('WEAFRICA_PAYCHANGU_START_PATH');
-
-  /// Optional Vercel Deployment Protection bypass token.
-  ///
-  /// If your backend is deployed behind Vercel authentication, requests from
-  /// a mobile app will get HTTP 401 unless you either disable protection or
-  /// provide a bypass token.
-  static String get vercelProtectionBypassToken =>
-      _getDefinedOrAssetString('WEAFRICA_VERCEL_PROTECTION_BYPASS');
-
-  /// Optional shared secret for test-only backend routes.
-  ///
-  /// Used by the Supabase Edge Function when `WEAFRICA_ENABLE_TEST_ROUTES=true`.
-  static String get testToken {
-    return _getDefinedOrAssetString('WEAFRICA_TEST_TOKEN');
-  }
-
-  // --- Agora (Live, Step 1+) ---
-
-  /// Agora App ID (safe to bundle; not a secret).
-  static String get agoraAppId => _getDefinedOrAssetString('AGORA_APP_ID');
-
-  /// Optional token (required if App Certificate is enabled in Agora Console).
-  /// For production, generate tokens server-side.
-  static String get agoraToken => _getDefinedOrAssetString('AGORA_TOKEN');
-
-  /// Optional default channel for diagnostics/legacy screens.
-  static String get agoraChannel =>
-      _getDefinedOrAssetString('AGORA_CHANNEL', fallback: 'weafrica_live');
 }

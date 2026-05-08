@@ -149,7 +149,7 @@ class CreatorUploadScreen extends StatelessWidget {
                             begin: Alignment.topLeft,
                             end: Alignment.bottomRight,
                             colors: [
-                              scheme.primary.withValues(alpha: 0.18),
+                              scheme.primary.withValues(alpha: 0.3),
                               AppColors.surface,
                             ],
                           ),
@@ -166,7 +166,7 @@ class CreatorUploadScreen extends StatelessWidget {
                             begin: Alignment.topLeft,
                             end: Alignment.bottomRight,
                             colors: [
-                              scheme.secondary.withValues(alpha: 0.18),
+                              scheme.secondary.withValues(alpha: 0.3),
                               AppColors.surface,
                             ],
                           ),

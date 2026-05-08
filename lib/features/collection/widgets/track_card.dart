@@ -131,7 +131,7 @@ class TrackCard extends StatelessWidget {
                 color: AppColors.surface2,
                 borderRadius: BorderRadius.circular(16),
                 border: Border.all(
-                  color: isCurrent ? scheme.primary.withValues(alpha: 0.85) : AppColors.border,
+                  color: isCurrent ? scheme.primary.withValues(alpha: 0.3) : AppColors.border,
                   width: isCurrent ? 1.4 : 1,
                 ),
               ),
@@ -148,7 +148,7 @@ class TrackCard extends StatelessWidget {
                                     fontWeight: FontWeight.w900,
                                     color: hasAudio
                                         ? AppColors.textMuted
-                                        : AppColors.textMuted.withValues(alpha: 0.35),
+                                        : AppColors.textMuted.withValues(alpha: 0.3),
                                   ),
                             ),
                     ),
@@ -291,9 +291,9 @@ class _MetaPill extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.10),
+        color: color.withValues(alpha: 0.3),
         borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: color.withValues(alpha: 0.25)),
+        border: Border.all(color: color.withValues(alpha: 0.3)),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,

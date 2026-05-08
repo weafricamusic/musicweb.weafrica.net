@@ -47,7 +47,7 @@ class QuickAccessCard extends StatelessWidget {
             gradient: LinearGradient(
               colors: [
                 AppColors.surface2,
-                AppColors.brandOrange.withValues(alpha: 0.06),
+                AppColors.brandOrange.withValues(alpha: 0.5),
               ],
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,

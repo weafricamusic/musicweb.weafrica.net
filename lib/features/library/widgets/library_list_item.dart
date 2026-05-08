@@ -29,7 +29,7 @@ class LibraryListItem extends StatelessWidget {
       decoration: BoxDecoration(
         color: AppColors.surface2,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: gold.withValues(alpha: 0.18)),
+        border: Border.all(color: gold.withValues(alpha: 0.3)),
       ),
       child: ListTile(
         contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
@@ -39,7 +39,7 @@ class LibraryListItem extends StatelessWidget {
           decoration: BoxDecoration(
             color: AppColors.surface,
             borderRadius: BorderRadius.circular(10),
-            border: Border.all(color: gold.withValues(alpha: 0.25)),
+            border: Border.all(color: gold.withValues(alpha: 0.3)),
           ),
           child: _Leading(artworkUri: item.artworkUri),
         ),
@@ -146,7 +146,7 @@ class _Leading extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (artworkUri == null) {
-      return Icon(Icons.music_note, color: AppColors.stageGold.withValues(alpha: 0.8));
+      return Icon(Icons.music_note, color: AppColors.stageGold.withValues(alpha: 0.3));
     }
 
     return ClipRRect(
@@ -155,7 +155,7 @@ class _Leading extends StatelessWidget {
         artworkUri!.toString(),
         fit: BoxFit.cover,
         errorBuilder: (context, error, stackTrace) {
-          return Icon(Icons.music_note, color: AppColors.stageGold.withValues(alpha: 0.8));
+          return Icon(Icons.music_note, color: AppColors.stageGold.withValues(alpha: 0.3));
         },
       ),
     );

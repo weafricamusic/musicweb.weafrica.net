@@ -48,7 +48,7 @@ class ArtistProfileMainView extends StatelessWidget {
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
                   decoration: BoxDecoration(
-                    color: WeAfricaColors.gold.withOpacity(0.15),
+                    color: WeAfricaColors.gold.withValues(alpha: \1),
                     borderRadius: BorderRadius.circular(20),
                     border: Border.all(color: WeAfricaColors.gold),
                   ),
@@ -71,9 +71,9 @@ class ArtistProfileMainView extends StatelessWidget {
           Container(
             padding: const EdgeInsets.all(20),
             decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.05),
+              color: Colors.white.withValues(alpha: \1),
               borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: Colors.white.withOpacity(0.1)),
+              border: Border.all(color: Colors.white.withValues(alpha: \1)),
             ),
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceAround,
@@ -177,12 +177,12 @@ class ArtistProfileMainView extends StatelessWidget {
     return ElevatedButton(
       onPressed: onTap,
       style: ElevatedButton.styleFrom(
-        backgroundColor: isDanger ? Colors.red : Colors.white.withOpacity(0.1),
+        backgroundColor: isDanger ? Colors.red : Colors.white.withValues(alpha: \1),
         foregroundColor: isDanger ? Colors.white : WeAfricaColors.gold,
         padding: const EdgeInsets.symmetric(vertical: 12),
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(12),
-          side: isDanger ? BorderSide.none : BorderSide(color: WeAfricaColors.gold.withOpacity(0.3)),
+          side: isDanger ? BorderSide.none : BorderSide(color: WeAfricaColors.gold.withValues(alpha: \1)),
         ),
       ),
       child: Row(
@@ -201,7 +201,7 @@ class ArtistProfileMainView extends StatelessWidget {
       margin: const EdgeInsets.only(bottom: 8),
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.05),
+        color: Colors.white.withValues(alpha: \1),
         borderRadius: BorderRadius.circular(12),
       ),
       child: Row(

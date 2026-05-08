@@ -14,13 +14,13 @@ class GlassEffect {
     return BoxDecoration(
       gradient: LinearGradient(
         colors: [
-          WeAfricaColors.cardDark.withValues(alpha: opacity),
-          WeAfricaColors.surfaceDark.withValues(alpha: opacity * 0.5),
+          WeAfricaColors.cardDark.withValues(alpha: 0.5),
+          WeAfricaColors.surfaceDark.withValues(alpha: 0.5),
         ],
       ),
       borderRadius: BorderRadius.circular(borderRadius),
       border: Border.all(
-        color: borderColor ?? WeAfricaColors.gold.withValues(alpha: 0.15),
+        color: borderColor ?? WeAfricaColors.gold.withValues(alpha: 0.5),
         width: 0.5,
       ),
     );
@@ -48,7 +48,7 @@ class GlassEffect {
               ? InkWell(
                   onTap: onTap,
                   borderRadius: BorderRadius.circular(borderRadius),
-                  splashColor: WeAfricaColors.gold.withValues(alpha: 0.1),
+                  splashColor: WeAfricaColors.gold.withValues(alpha: 0.5),
                   highlightColor: Colors.transparent,
                   child: child,
                 )

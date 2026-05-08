@@ -449,7 +449,7 @@ class _EmptyState extends StatelessWidget {
       ),
       child: Row(
         children: [
-          Icon(Icons.music_off, color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.75)),
+          Icon(Icons.music_off, color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.3)),
           const SizedBox(width: 12),
           Expanded(
             child: Column(

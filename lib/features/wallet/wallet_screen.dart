@@ -12,7 +12,6 @@ import '../auth/user_role.dart';
 import '../auth/user_role_resolver.dart';
 import '../dj_dashboard/screens/dj_earnings_screen.dart';
 import '../artist_dashboard/screens/artist_earnings_screen.dart';
-import '../live/screens/live_feed_screen.dart';
 import '../subscriptions/services/creator_entitlement_gate.dart';
 import '../ads/screens/earn_coins_screen.dart';
 
@@ -383,9 +382,9 @@ class _WalletScreenState extends State<WalletScreen> {
                           width: 42,
                           decoration: BoxDecoration(
                             shape: BoxShape.circle,
-                            color: AppColors.stageGold.withValues(alpha: 0.14),
+                            color: AppColors.stageGold.withValues(alpha: 0.3),
                             border: Border.all(
-                              color: AppColors.stageGold.withValues(alpha: 0.35),
+                              color: AppColors.stageGold.withValues(alpha: 0.3),
                             ),
                           ),
                           child: const Icon(

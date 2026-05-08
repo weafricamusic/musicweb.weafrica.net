@@ -28,7 +28,7 @@ class LibraryEmptyState extends StatelessWidget {
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
                 color: AppColors.surface2,
-                border: Border.all(color: AppColors.stageGold.withValues(alpha: 0.25)),
+                border: Border.all(color: AppColors.stageGold.withValues(alpha: 0.3)),
               ),
               child: const Icon(Icons.library_music, color: AppColors.stageGold),
             ),

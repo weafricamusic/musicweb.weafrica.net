@@ -127,14 +127,14 @@ class _CategorySongsScreenState extends State<CategorySongsScreen> {
                     children: [
                       Icon(
                         Icons.error_outline,
-                        color: Colors.white.withValues(alpha: 0.5),
+                        color: Colors.white.withValues(alpha: 0.2),
                         size: 48,
                       ),
                       const SizedBox(height: 16),
                       Text(
                         _error!,
                         style: TextStyle(
-                          color: Colors.white.withValues(alpha: 0.7),
+                          color: Colors.white.withValues(alpha: 0.2),
                           fontSize: 16,
                         ),
                       ),
@@ -159,14 +159,14 @@ class _CategorySongsScreenState extends State<CategorySongsScreen> {
                     children: [
                       Icon(
                         Icons.music_off,
-                        color: Colors.white.withValues(alpha: 0.3),
+                        color: Colors.white.withValues(alpha: 0.2),
                         size: 64,
                       ),
                       const SizedBox(height: 16),
                       Text(
                         'No songs found',
                         style: TextStyle(
-                          color: Colors.white.withValues(alpha: 0.7),
+                          color: Colors.white.withValues(alpha: 0.2),
                           fontSize: 18,
                           fontWeight: FontWeight.w600,
                         ),
@@ -175,7 +175,7 @@ class _CategorySongsScreenState extends State<CategorySongsScreen> {
                       Text(
                         'Check back later for new ${widget.category} music',
                         style: TextStyle(
-                          color: Colors.white.withValues(alpha: 0.5),
+                          color: Colors.white.withValues(alpha: 0.2),
                           fontSize: 14,
                         ),
                       ),
@@ -216,7 +216,7 @@ class _CategorySongsScreenState extends State<CategorySongsScreen> {
                 color: const Color(0xFF1B1530),
                 borderRadius: BorderRadius.circular(12),
                 border: Border.all(
-                  color: Colors.white.withValues(alpha: 0.1),
+                  color: Colors.white.withValues(alpha: 0.2),
                 ),
               ),
               child: const Icon(
@@ -242,7 +242,7 @@ class _CategorySongsScreenState extends State<CategorySongsScreen> {
                 Text(
                   '${_songs.length} songs',
                   style: TextStyle(
-                    color: Colors.white.withValues(alpha: 0.6),
+                    color: Colors.white.withValues(alpha: 0.2),
                     fontSize: 14,
                   ),
                 ),
@@ -264,7 +264,7 @@ class _CategorySongsScreenState extends State<CategorySongsScreen> {
           color: const Color(0xFF1B1530),
           borderRadius: BorderRadius.circular(16),
           border: Border.all(
-            color: Colors.white.withValues(alpha: 0.05),
+            color: Colors.white.withValues(alpha: 0.2),
           ),
         ),
         child: Row(
@@ -316,7 +316,7 @@ class _CategorySongsScreenState extends State<CategorySongsScreen> {
                   Text(
                     song['artist'] ?? 'Unknown Artist',
                     style: TextStyle(
-                      color: Colors.white.withValues(alpha: 0.6),
+                      color: Colors.white.withValues(alpha: 0.2),
                       fontSize: 14,
                     ),
                     maxLines: 1,
@@ -328,7 +328,7 @@ class _CategorySongsScreenState extends State<CategorySongsScreen> {
                       child: Text(
                         song['genre'],
                         style: TextStyle(
-                          color: WeAfricaColors.gold.withValues(alpha: 0.8),
+                          color: WeAfricaColors.gold.withValues(alpha: 0.3),
                           fontSize: 12,
                           fontWeight: FontWeight.w500,
                         ),

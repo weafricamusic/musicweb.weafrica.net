@@ -1,4 +1,3 @@
-import 'package:supabase_flutter/supabase_flutter.dart';
 import '../data/models/live_comment_model.dart';
 import 'supabase_service.dart';
 

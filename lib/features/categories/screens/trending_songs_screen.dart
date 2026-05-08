@@ -114,14 +114,14 @@ class _TrendingSongsScreenState extends State<TrendingSongsScreen> {
                     children: [
                       Icon(
                         Icons.error_outline,
-                        color: Colors.white.withValues(alpha: 0.5),
+                        color: Colors.white.withValues(alpha: 0.2),
                         size: 48,
                       ),
                       const SizedBox(height: 16),
                       Text(
                         _error!,
                         style: TextStyle(
-                          color: Colors.white.withValues(alpha: 0.7),
+                          color: Colors.white.withValues(alpha: 0.2),
                           fontSize: 16,
                         ),
                       ),
@@ -146,14 +146,14 @@ class _TrendingSongsScreenState extends State<TrendingSongsScreen> {
                     children: [
                       Icon(
                         Icons.trending_down,
-                        color: Colors.white.withValues(alpha: 0.3),
+                        color: Colors.white.withValues(alpha: 0.2),
                         size: 64,
                       ),
                       const SizedBox(height: 16),
                       Text(
                         'No trending songs',
                         style: TextStyle(
-                          color: Colors.white.withValues(alpha: 0.7),
+                          color: Colors.white.withValues(alpha: 0.2),
                           fontSize: 18,
                           fontWeight: FontWeight.w600,
                         ),
@@ -162,7 +162,7 @@ class _TrendingSongsScreenState extends State<TrendingSongsScreen> {
                       Text(
                         'Start listening to build trends',
                         style: TextStyle(
-                          color: Colors.white.withValues(alpha: 0.5),
+                          color: Colors.white.withValues(alpha: 0.2),
                           fontSize: 14,
                         ),
                       ),
@@ -203,7 +203,7 @@ class _TrendingSongsScreenState extends State<TrendingSongsScreen> {
                 color: const Color(0xFF1B1530),
                 borderRadius: BorderRadius.circular(12),
                 border: Border.all(
-                  color: Colors.white.withValues(alpha: 0.1),
+                  color: Colors.white.withValues(alpha: 0.2),
                 ),
               ),
               child: const Icon(
@@ -229,7 +229,7 @@ class _TrendingSongsScreenState extends State<TrendingSongsScreen> {
                 Text(
                   '${_songs.length} hot tracks',
                   style: TextStyle(
-                    color: Colors.white.withValues(alpha: 0.6),
+                    color: Colors.white.withValues(alpha: 0.2),
                     fontSize: 14,
                   ),
                 ),
@@ -240,7 +240,7 @@ class _TrendingSongsScreenState extends State<TrendingSongsScreen> {
             width: 44,
             height: 44,
             decoration: BoxDecoration(
-              color: const Color(0xFF6A5CFF).withValues(alpha: 0.2),
+              color: const Color(0xFF6A5CFF).withValues(alpha: 0.3),
               borderRadius: BorderRadius.circular(12),
               border: Border.all(
                 color: const Color(0xFF6A5CFF).withValues(alpha: 0.3),
@@ -273,14 +273,14 @@ class _TrendingSongsScreenState extends State<TrendingSongsScreen> {
           border: Border.all(
             color: isTop3 
                 ? WeAfricaColors.gold.withValues(alpha: 0.3)
-                : Colors.white.withValues(alpha: 0.05),
+                : Colors.white.withValues(alpha: 0.2),
           ),
           gradient: isTop3
               ? LinearGradient(
                   colors: [
                     const Color(0xFF1B1530),
                     const Color(0xFF1B1530),
-                    WeAfricaColors.gold.withValues(alpha: 0.1),
+                    WeAfricaColors.gold.withValues(alpha: 0.3),
                   ],
                   stops: const [0.0, 0.7, 1.0],
                   begin: Alignment.centerLeft,
@@ -366,7 +366,7 @@ class _TrendingSongsScreenState extends State<TrendingSongsScreen> {
                   Text(
                     song['artist'] ?? 'Unknown Artist',
                     style: TextStyle(
-                      color: Colors.white.withValues(alpha: 0.6),
+                      color: Colors.white.withValues(alpha: 0.2),
                       fontSize: 14,
                     ),
                     maxLines: 1,
@@ -378,13 +378,13 @@ class _TrendingSongsScreenState extends State<TrendingSongsScreen> {
                       Icon(
                         Icons.play_arrow,
                         size: 14,
-                        color: Colors.white.withValues(alpha: 0.4),
+                        color: Colors.white.withValues(alpha: 0.2),
                       ),
                       const SizedBox(width: 4),
                       Text(
                         _formatNumber(plays),
                         style: TextStyle(
-                          color: Colors.white.withValues(alpha: 0.5),
+                          color: Colors.white.withValues(alpha: 0.2),
                           fontSize: 12,
                           fontWeight: FontWeight.w500,
                         ),
@@ -393,13 +393,13 @@ class _TrendingSongsScreenState extends State<TrendingSongsScreen> {
                       Icon(
                         Icons.favorite,
                         size: 14,
-                        color: Colors.red.withValues(alpha: 0.7),
+                        color: Colors.red.withValues(alpha: 0.3),
                       ),
                       const SizedBox(width: 4),
                       Text(
                         _formatNumber(likes),
                         style: TextStyle(
-                          color: Colors.white.withValues(alpha: 0.5),
+                          color: Colors.white.withValues(alpha: 0.2),
                           fontSize: 12,
                           fontWeight: FontWeight.w500,
                         ),
@@ -414,7 +414,7 @@ class _TrendingSongsScreenState extends State<TrendingSongsScreen> {
               width: 44,
               height: 44,
               decoration: BoxDecoration(
-                color: isTop3 ? WeAfricaColors.gold : Colors.white.withValues(alpha: 0.1),
+                color: isTop3 ? WeAfricaColors.gold : Colors.white.withValues(alpha: 0.2),
                 shape: BoxShape.circle,
                 boxShadow: isTop3
                     ? [

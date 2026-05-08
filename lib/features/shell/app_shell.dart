@@ -51,9 +51,7 @@ import '../subscriptions/subscriptions_controller.dart';
 import '../subscriptions/widgets/contextual_upgrade_modal.dart';
 import '../subscriptions/widgets/upgrade_prompt_factory.dart';
 import '../artist/dashboard/screens/artist_stats_screen.dart';
-import '../artist_dashboard/screens/artist_live_battles_screen.dart';
 import '../artist_dashboard/screens/artist_earnings_screen.dart';
-import '../dj_dashboard/screens/dj_live_battles_screen.dart';
 import '../dj_dashboard/screens/dj_earnings_screen.dart';
 import '../dj_dashboard/screens/dj_stats_screen.dart';
 import '../ads/models/ad_model.dart';
@@ -167,7 +165,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   }
 
   void _openProfilePage({required UserRole roleForUi}) {
-    _open(context, ArtistProfileScreen());
+    _openProfileMenuSheet(roleForUi: roleForUi);
   }
 
   Future<void> _openGoLiveSetup({
@@ -254,8 +252,6 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     _open(context, const NotificationsScreen());
   }
 
-  // TODO: Wire this up from the profile icon/menu.
-  // ignore: unused_element
   void _openProfileMenuSheet({required UserRole roleForUi}) {
     showModalBottomSheet<void>(
       context: context,
@@ -665,27 +661,26 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     if (_didProvisionCountryForUid == uid) return;
 
     _isProvisioningCountry = true;
-    () async {
-      final cc = await CountryService.ensureCountryCodeCached();
-      await UserProfileProvisioner.provisionForCurrentUser(
-        intent: role,
-        countryCode: cc,
-      );
-    }()
-        .then((_) {
-          if (!mounted) return;
-          setState(() {
-            _didProvisionCountryForUid = uid;
-            _isProvisioningCountry = false;
-          });
-        })
-        .catchError((_) {
-          if (!mounted) return;
-          setState(() {
-            _didProvisionCountryForUid = uid;
-            _isProvisioningCountry = false;
-          });
+    unawaited(() async {
+      try {
+        final cc = await CountryService.ensureCountryCodeCached();
+        await UserProfileProvisioner.provisionForCurrentUser(
+          intent: role,
+          countryCode: cc,
+        );
+        if (!mounted) return;
+        setState(() {
+          _didProvisionCountryForUid = uid;
+          _isProvisioningCountry = false;
         });
+      } catch (_) {
+        if (!mounted) return;
+        setState(() {
+          _didProvisionCountryForUid = uid;
+          _isProvisioningCountry = false;
+        });
+      }
+    }());
   }
 
   Future<void> _showInterstitialIfPossible({
@@ -762,9 +757,11 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
 
   @override
   Widget build(BuildContext context) {
+    print("🐚 AppShell.build() called");
     return StreamBuilder<User?>(
       stream: FirebaseAuth.instance.userChanges(),
       builder: (context, snap) {
+        print("🐚 AppShell StreamBuilder: connectionState=${snap.connectionState}, uid=${snap.data?.uid}");
         final uid = snap.data?.uid;
 
         WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -841,7 +838,6 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
             // Keep role-specific navigation simple and explicit.
             // Consumers: Home, Trending, Music, Live, Library
             // Artist/DJ:  Home, +Create, Studio, Library, Profile
-            final showMusicTab = !hasStudio;
             final createIndex = hasStudio ? 1 : -1;
 
             // For creators, Studio appears at index 2 (Home, +Create, Studio, Library, Profile).
@@ -913,7 +909,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
                     const ReelFeedScreen(),
                     LiveSwipeWatchScreen(),
                     const LibraryTab(),
-                    ArtistProfileScreen(),
+                    const ProfileRedirect(),
                   ];
             final destinations = hasStudio
                 ? <NavigationDestination>[
@@ -1131,7 +1127,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
                                     data: NavigationBarThemeData(
                                       backgroundColor: AppColors.surface,
                                       indicatorColor: AppColors.brandOrange
-                                          .withValues(alpha: 0.22),
+                                          .withValues(alpha: 0.3),
                                       labelTextStyle:
                                           WidgetStateProperty.resolveWith(
                                         (states) {
@@ -1230,6 +1226,33 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
         );
       },
     );
+  }
+}
+
+class ProfileRedirect extends StatefulWidget {
+  const ProfileRedirect({super.key});
+
+  @override
+  State<ProfileRedirect> createState() => _ProfileRedirectState();
+}
+
+class _ProfileRedirectState extends State<ProfileRedirect> {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      final role = await UserRoleResolver.resolveCurrentUser();
+      if (!mounted) return;
+      final shell = context.findAncestorStateOfType<_AppShellState>();
+      if (shell != null) {
+        // shell._openProfileMenuSheet(roleForUi: role);
+      }
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return const Center(child: CircularProgressIndicator());
   }
 }
 
@@ -2066,7 +2089,7 @@ class _CreatorCreateSheetState extends State<_CreatorCreateSheet> {
                   width: 42,
                   height: 4,
                   decoration: BoxDecoration(
-                    color: AppColors.textMuted.withValues(alpha: 0.45),
+                    color: AppColors.textMuted.withValues(alpha: 0.3),
                     borderRadius: BorderRadius.circular(99),
                   ),
                 ),
@@ -2231,7 +2254,7 @@ class _LiveNowCard extends StatelessWidget {
                   Text(
                     'Join others streaming live',
                     style: TextStyle(
-                      color: Colors.white.withValues(alpha: 0.85),
+                      color: Colors.white.withValues(alpha: 0.2),
                       fontSize: 13,
                       fontWeight: FontWeight.w600,
                     ),
@@ -2333,7 +2356,7 @@ class _LiveNowCard extends StatelessWidget {
             Container(
               padding: const EdgeInsets.all(10),
               decoration: BoxDecoration(
-                color: Colors.white.withValues(alpha: 0.25),
+                color: Colors.white.withValues(alpha: 0.2),
                 borderRadius: BorderRadius.circular(14),
               ),
               child: const Icon(
@@ -2366,7 +2389,7 @@ class _LiveNowCard extends StatelessWidget {
 
   Widget _buildInitialsAvatar(String name) {
     return Container(
-      color: Colors.white.withValues(alpha: 0.3),
+      color: Colors.white.withValues(alpha: 0.2),
       child: Center(
         child: Text(
           getInitials(name),
@@ -2414,7 +2437,7 @@ class _ActionCard extends StatelessWidget {
           borderRadius: BorderRadius.circular(18),
           boxShadow: [
             BoxShadow(
-              color: (gradient.colors.first as Color).withValues(alpha: 0.25),
+              color: (gradient.colors.first).withValues(alpha: 0.3),
               blurRadius: 8,
               offset: const Offset(0, 3),
             ),

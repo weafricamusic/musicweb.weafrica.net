@@ -460,8 +460,8 @@ class _CreatorDashboardScreenState extends State<CreatorDashboardScreen> {
                     padding: const EdgeInsets.all(6),
                     decoration: BoxDecoration(
                       color: status.toLowerCase() == 'live'
-                          ? AppColors.live.withValues(alpha: 0.1)
-                          : AppColors.pending.withValues(alpha: 0.1),
+                          ? AppColors.live.withValues(alpha: 0.3)
+                          : AppColors.pending.withValues(alpha: 0.3),
                       borderRadius: BorderRadius.circular(8),
                     ),
                     child: Icon(
@@ -745,7 +745,7 @@ class _StudioCard extends StatelessWidget {
                 Container(
                   padding: const EdgeInsets.all(10),
                   decoration: BoxDecoration(
-                    color: accent.withValues(alpha: 0.1),
+                    color: accent.withValues(alpha: 0.3),
                     borderRadius: BorderRadius.circular(12),
                   ),
                   child: Icon(icon, color: accent, size: 24),
@@ -826,7 +826,7 @@ class _ActivityItem extends StatelessWidget {
         Container(
           padding: const EdgeInsets.all(6),
           decoration: BoxDecoration(
-            color: color.withValues(alpha: 0.1),
+            color: color.withValues(alpha: 0.3),
             borderRadius: BorderRadius.circular(8),
           ),
           child: Icon(icon, color: color, size: 12),

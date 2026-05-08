@@ -52,9 +52,9 @@ class StatCard extends StatelessWidget {
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                     decoration: BoxDecoration(
-                      color: cs.primary.withValues(alpha: 31),
+                      color: cs.primary.withValues(alpha: 0.3),
                       borderRadius: BorderRadius.circular(30),
-                      border: Border.all(color: cs.primary.withValues(alpha: 64)),
+                      border: Border.all(color: cs.primary.withValues(alpha: 0.3)),
                     ),
                     child: Text(
                       badge!,

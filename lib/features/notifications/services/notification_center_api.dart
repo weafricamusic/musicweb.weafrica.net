@@ -1,5 +1,7 @@
 import 'dart:convert';
 
+import 'package:firebase_auth/firebase_auth.dart';
+
 import 'package:flutter/foundation.dart';
 import 'package:weafrica_music/app/network/firebase_authed_http.dart';
 import 'package:weafrica_music/app/config/api_env.dart';
@@ -56,6 +58,11 @@ class NotificationCenterApi {
   String get _baseUrl => ApiEnv.baseUrl;
 
   Future<int> getUnreadCount() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) {
+      return 0;
+    }
+
     final uri = Uri.parse('$_baseUrl/api/notifications/unread_count');
     final res = await FirebaseAuthedHttp.get(uri);
     if (res.statusCode < 200 || res.statusCode >= 300) {

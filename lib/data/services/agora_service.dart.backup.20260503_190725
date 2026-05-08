@@ -1,0 +1,208 @@
+import 'dart:convert';
+import 'dart:html' as html;
+import 'dart:js' as js;
+import 'package:http/http.dart' as http;
+import 'package:agora_rtc_engine/agora_rtc_engine.dart';
+import 'package:flutter/foundation.dart';
+import '../../app/config/app_env.dart';
+
+class AgoraConfig {
+  static String get appId => AppEnv.agoraAppId;
+  static const int uid = 0;
+}
+
+enum AgoraRole { broadcaster, audience }
+
+class AgoraService {
+  RtcEngine? _engine;
+  bool _initialized = false;
+
+  final ValueNotifier<bool> isJoined = ValueNotifier<bool>(false);
+  final ValueNotifier<bool> isMuted = ValueNotifier<bool>(false);
+  final ValueNotifier<bool> isVideoEnabled = ValueNotifier<bool>(true);
+  final ValueNotifier<int?> remoteUid = ValueNotifier<int?>(null);
+
+  /// WEB CRITICAL: Wait for Agora Web SDK to load from index.html
+  Future<void> _waitForWebSdk() async {
+    if (!kIsWeb) return;
+    for (int i = 0; i < 20; i++) {
+      try {
+        if (js.context['agoraReady'] == true) return;
+      } catch (_) {}
+      await Future.delayed(const Duration(milliseconds: 300));
+    }
+    throw Exception('Agora Web SDK not loaded. Check index.html has Agora script before flutter.js');
+  }
+
+  /// WEB CRITICAL: Request browser camera/mic permissions
+  Future<void> _requestWebPermissions() async {
+    if (!kIsWeb) return;
+    try {
+      await html.window.navigator.mediaDevices?.getUserMedia({"video": true, "audio": true});
+      debugPrint('✅ Web camera/mic permissions granted');
+    } catch (e) {
+      debugPrint('⚠️ Web permission error: $e');
+    }
+  }
+
+  Future<void> initialize() async {
+    if (_initialized && _engine != null) {
+      debugPrint('Agora: already initialized');
+      return;
+    }
+
+    // WEB: Wait for JS SDK to load first
+    if (kIsWeb) {
+      debugPrint('Agora Web: waiting for SDK...');
+      await _waitForWebSdk();
+      await _requestWebPermissions();
+    }
+
+    _engine = createAgoraRtcEngine();
+    await _engine!.initialize(RtcEngineContext(
+      appId: AgoraConfig.appId,
+      channelProfile: ChannelProfileType.channelProfileLiveBroadcasting,
+    ));
+
+    await _engine!.enableVideo();
+    await _engine!.enableAudio();
+
+    // WEB: Start preview so local video shows
+    if (kIsWeb) {
+      await _engine!.startPreview();
+    }
+
+    _setupEventHandlers();
+    _initialized = true;
+    debugPrint('Agora: initialized successfully');
+  }
+
+  void _setupEventHandlers() {
+    _engine!.registerEventHandler(RtcEngineEventHandler(
+      onJoinChannelSuccess: (connection, elapsed) {
+        debugPrint('Agora: joined ${connection.channelId}');
+        isJoined.value = true;
+      },
+      onLeaveChannel: (connection, stats) {
+        debugPrint('Agora: left channel');
+        isJoined.value = false;
+        remoteUid.value = null;
+      },
+      onUserJoined: (connection, uid, elapsed) {
+        debugPrint('Agora: remote user $uid joined');
+        remoteUid.value = uid;
+      },
+      onUserOffline: (connection, uid, reason) {
+        debugPrint('Agora: remote user $uid offline');
+        if (remoteUid.value == uid) remoteUid.value = null;
+      },
+      onError: (err, msg) {
+        debugPrint('AGORA ERROR: $err $msg');
+      },
+    ));
+  }
+
+  Future<String> _fetchAgoraToken(String channelName) async {
+    if (channelName.trim().isEmpty) {
+      throw Exception('Cannot fetch Agora token: channel name is empty');
+    }
+
+    final uri = Uri.parse(
+      'https://nxkutpjdoidfwpkjbwcm.supabase.co/functions/v1/agora-token',
+    ).replace(queryParameters: {
+      'channel': channelName.trim(),
+      'uid': AgoraConfig.uid.toString(),
+    });
+
+    final response = await http.post(
+      uri,
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer ${AppEnv.supabaseAnonKey}',
+        'apikey': AppEnv.supabaseAnonKey,
+      },
+    );
+
+    if (response.statusCode != 200) {
+      throw Exception('Failed to fetch Agora token: ${response.statusCode} ${response.body}');
+    }
+
+    final data = jsonDecode(response.body) as Map<String, dynamic>;
+    final token = data['token']?.toString();
+
+    if (token == null || token.isEmpty) {
+      throw Exception('Agora token missing from response');
+    }
+
+    return token;
+  }
+
+  Future<void> joinChannel({
+    required String channelName,
+    required AgoraRole role,
+    String? token,
+  }) async {
+    if (!_initialized) await initialize();
+
+    debugPrint("AGORA JOIN CHANNEL: $channelName");
+
+    await _engine!.setClientRole(
+      role: role == AgoraRole.broadcaster
+          ? ClientRoleType.clientRoleBroadcaster
+          : ClientRoleType.clientRoleAudience,
+    );
+
+    final rtcToken = token ?? await _fetchAgoraToken(channelName);
+
+    await _engine!.joinChannel(
+      token: rtcToken,
+      channelId: channelName,
+      uid: AgoraConfig.uid,
+      options: ChannelMediaOptions(
+        clientRoleType: role == AgoraRole.broadcaster
+            ? ClientRoleType.clientRoleBroadcaster
+            : ClientRoleType.clientRoleAudience,
+        publishCameraTrack: role == AgoraRole.broadcaster,
+        publishMicrophoneTrack: role == AgoraRole.broadcaster,
+        autoSubscribeVideo: true,
+        autoSubscribeAudio: true,
+      ),
+    );
+  }
+
+  Future<void> leaveChannel() async {
+    await _engine?.leaveChannel();
+    isJoined.value = false;
+    remoteUid.value = null;
+  }
+
+  Future<void> toggleMute() async {
+    isMuted.value = !isMuted.value;
+    await _engine?.muteLocalAudioStream(isMuted.value);
+  }
+
+  Future<void> toggleVideo() async {
+    isVideoEnabled.value = !isVideoEnabled.value;
+    await _engine?.muteLocalVideoStream(!isVideoEnabled.value);
+  }
+
+  Future<void> switchCamera() async {
+    if (kIsWeb) return; // Not supported on Web
+    await _engine?.switchCamera();
+  }
+
+  Future<void> dispose() async {
+    try {
+      await _engine?.leaveChannel();
+      await _engine?.release();
+    } catch (_) {}
+    _engine = null;
+    _initialized = false;
+  }
+
+  RtcEngine get engine {
+    final e = _engine;
+    if (e == null) throw StateError('Agora engine not initialized');
+    return e;
+  }
+}

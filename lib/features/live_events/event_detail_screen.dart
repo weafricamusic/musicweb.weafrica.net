@@ -216,10 +216,10 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
                                   borderRadius: BorderRadius.circular(14),
                                   child: Container(
                                     decoration: BoxDecoration(
-                                      color: AppColors.surface2.withValues(alpha: selected ? 0.55 : 0.35),
+                                      color: AppColors.surface2.withValues(alpha: 0.3),
                                       borderRadius: BorderRadius.circular(14),
                                       border: Border.all(
-                                        color: (selected ? AppColors.stageGold : AppColors.border).withValues(alpha: 0.35),
+                                        color: (selected ? AppColors.stageGold : AppColors.border).withValues(alpha: 0.3),
                                       ),
                                     ),
                                     padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
@@ -244,9 +244,9 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
                                         Container(
                                           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                                           decoration: BoxDecoration(
-                                            color: AppColors.stageGold.withValues(alpha: 0.14),
+                                            color: AppColors.stageGold.withValues(alpha: 0.3),
                                             borderRadius: BorderRadius.circular(999),
-                                            border: Border.all(color: AppColors.stageGold.withValues(alpha: 0.25)),
+                                            border: Border.all(color: AppColors.stageGold.withValues(alpha: 0.3)),
                                           ),
                                           child: Text(priceLabel, style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 12)),
                                         ),
@@ -451,11 +451,11 @@ class _HeroCard extends StatelessWidget {
                       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                       decoration: BoxDecoration(
                         color: details.isLive
-                            ? AppColors.brandPink.withValues(alpha: 0.16)
-                            : AppColors.stageGold.withValues(alpha: 0.14),
+                            ? AppColors.brandPink.withValues(alpha: 0.3)
+                            : AppColors.stageGold.withValues(alpha: 0.3),
                         borderRadius: BorderRadius.circular(999),
                         border: Border.all(
-                          color: (details.isLive ? AppColors.brandPink : AppColors.stageGold).withValues(alpha: 0.35),
+                          color: (details.isLive ? AppColors.brandPink : AppColors.stageGold).withValues(alpha: 0.3),
                         ),
                       ),
                       child: Text(

@@ -29,7 +29,7 @@ class BeatLibraryTile extends StatelessWidget {
       decoration: BoxDecoration(
         color: AppColors.surface,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: accent.withValues(alpha: isActive ? 0.40 : 0.18)),
+        border: Border.all(color: accent.withValues(alpha: 0.3)),
       ),
       child: ListTile(
         leading: Icon(Icons.audiotrack, color: accent),

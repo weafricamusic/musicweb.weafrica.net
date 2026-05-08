@@ -29,7 +29,7 @@ void main() {
   testWidgets(
     'E2E: email login reaches AppShell',
     (WidgetTester tester) async {
-      await app.main();
+      app.main();
       await tester.pump(const Duration(seconds: 2));
 
       // Make the test deterministic: always start signed-out.

@@ -25,7 +25,7 @@ class LibraryGridItem extends StatelessWidget {
         decoration: BoxDecoration(
           color: AppColors.surface2,
           borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: gold.withValues(alpha: 0.22)),
+          border: Border.all(color: gold.withValues(alpha: 0.3)),
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -63,9 +63,9 @@ class LibraryGridItem extends StatelessWidget {
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
                       decoration: BoxDecoration(
-                        color: gold.withValues(alpha: 0.12),
+                        color: gold.withValues(alpha: 0.3),
                         borderRadius: BorderRadius.circular(6),
-                        border: Border.all(color: gold.withValues(alpha: 0.25)),
+                        border: Border.all(color: gold.withValues(alpha: 0.3)),
                       ),
                       child: const Text(
                         'DOWNLOADED',
@@ -104,7 +104,7 @@ class _Cover extends StatelessWidget {
   Widget _fallback() {
     final icon = item is LibraryTrack ? Icons.music_note : Icons.library_music;
     return Center(
-      child: Icon(icon, size: 34, color: AppColors.stageGold.withValues(alpha: 0.25)),
+      child: Icon(icon, size: 34, color: AppColors.stageGold.withValues(alpha: 0.3)),
     );
   }
 }

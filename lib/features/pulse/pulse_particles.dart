@@ -169,7 +169,7 @@ class _ParticlesPainter extends CustomPainter {
       final a = (seed.alpha * (0.55 + e * 0.85) * opacity).clamp(0.0, 0.55);
 
       final paint = Paint()
-        ..color = color.withValues(alpha: a)
+        ..color = color.withValues(alpha: 0.3)
         ..style = PaintingStyle.fill;
 
       canvas.drawCircle(center.translate(dx, dy), seed.radius, paint);

@@ -73,7 +73,7 @@ class _QueueSheet extends StatelessWidget {
                           alignment: Alignment.centerRight,
                           padding: const EdgeInsets.only(right: 12),
                           decoration: BoxDecoration(
-                            color: Colors.redAccent.withValues(alpha: 0.18),
+                            color: Colors.redAccent.withValues(alpha: 0.3),
                             borderRadius: BorderRadius.circular(12),
                           ),
                           child: const Icon(Icons.delete_outline),
@@ -130,11 +130,11 @@ class _QueueSheet extends StatelessWidget {
                                       const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                                   decoration: BoxDecoration(
                                     color: AppColors.brandOrange
-                                        .withValues(alpha: 0.18),
+                                        .withValues(alpha: 0.3),
                                     borderRadius: BorderRadius.circular(999),
                                     border: Border.all(
                                       color: AppColors.brandOrange
-                                          .withValues(alpha: 0.45),
+                                          .withValues(alpha: 0.3),
                                     ),
                                   ),
                                   child: Text(

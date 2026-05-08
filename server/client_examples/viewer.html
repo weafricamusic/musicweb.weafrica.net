@@ -1,0 +1,33 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Agora Viewer Demo</title>
+</head>
+<body>
+  <div id="remote-player"></div>
+  <button id="join">Join as Viewer</button>
+
+  <script type="module">
+  // Replace CDN/module imports with correct Agora SDK paths per docs.
+  // Example placeholders for imports.
+
+  const APP_ID = '<YOUR_APP_ID>'; // replace
+  const TOKEN_SERVER = 'http://localhost:8080';
+  const CHANNEL = 'demo_channel';
+  const UID = `viewer_${Date.now()}`;
+
+  async function join() {
+    const rtcRes = await fetch(`${TOKEN_SERVER}/rtc-token?channel=${CHANNEL}&uid=${encodeURIComponent(UID)}`);
+    const { token: rtcToken } = await rtcRes.json();
+    const rtmRes = await fetch(`${TOKEN_SERVER}/rtm-token?account=${encodeURIComponent(UID)}`);
+    const { token: rtmToken } = await rtmRes.json();
+
+    console.log('RTC token', rtcToken, 'RTM token', rtmToken);
+    alert('Tokens fetched (demo). Integrate Agora SDK per docs to subscribe and listen for RTM messages.');
+  }
+
+  document.getElementById('join').onclick = join;
+  </script>
+</body>
+</html>

@@ -1,4 +1,3 @@
-import 'package:flutter/foundation.dart';
 import 'package:agora_rtc_engine/agora_rtc_engine.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:weafrica_music/app/config/app_env.dart';
@@ -39,6 +38,7 @@ class _AgoraServiceImpl extends AgoraService {
     super.onUserOffline,
   });
 
+  @override
   Future<void> initialize() async {
     if (_engine != null) return;
     _engine = createAgoraRtcEngine();
@@ -59,10 +59,12 @@ class _AgoraServiceImpl extends AgoraService {
     ));
   }
 
+  @override
   Future<void> requestPermissions() async {
     await [Permission.camera, Permission.microphone].request();
   }
 
+  @override
   Future<void> joinChannel(String channelName, {bool isHost = true}) async {
     if (_engine == null) {
       await initialize();
@@ -85,8 +87,11 @@ class _AgoraServiceImpl extends AgoraService {
     );
   }
 
+  @override
   Future<void> leaveChannel() async => _engine?.leaveChannel();
+  @override
   Future<void> dispose() async { await _engine?.release(); _engine = null; }
+  @override
   RtcEngine get engine {
     _engine ??= createAgoraRtcEngine();
     return _engine!;

@@ -177,7 +177,7 @@ class _WalletScreenState extends State<WalletScreen> {
             Text(
               subtitle,
               style: TextStyle(
-                color: Colors.white.withValues(alpha: 0.6),
+                color: Colors.white.withValues(alpha: 0.2),
                 fontSize: 12,
               ),
             ),
@@ -240,7 +240,7 @@ class _WalletScreenState extends State<WalletScreen> {
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                     decoration: BoxDecoration(
-                      color: const Color(0xFFD4AF37).withValues(alpha: 0.2),
+                      color: const Color(0xFFD4AF37).withValues(alpha: 0.3),
                       borderRadius: BorderRadius.circular(8),
                     ),
                     child: Text(
@@ -258,7 +258,7 @@ class _WalletScreenState extends State<WalletScreen> {
             subtitle: Text(
               '\$${package.priceUsd.toStringAsFixed(2)}',
               style: TextStyle(
-                color: Colors.white.withValues(alpha: 0.6),
+                color: Colors.white.withValues(alpha: 0.2),
                 fontSize: 14,
               ),
             ),
@@ -313,7 +313,7 @@ class _WalletScreenState extends State<WalletScreen> {
                   Text(
                     'Available',
                     style: TextStyle(
-                      color: Colors.white.withValues(alpha: 0.7),
+                      color: Colors.white.withValues(alpha: 0.2),
                       fontSize: 14,
                     ),
                   ),
@@ -383,7 +383,7 @@ class _WalletScreenState extends State<WalletScreen> {
         Text(
           label,
           style: TextStyle(
-            color: Colors.white.withValues(alpha: 0.6),
+            color: Colors.white.withValues(alpha: 0.2),
             fontSize: 12,
           ),
         ),
@@ -420,7 +420,7 @@ class _WalletScreenState extends State<WalletScreen> {
               ),
               subtitle: Text(
                 'Earn free coins',
-                style: TextStyle(color: Colors.white.withValues(alpha: 0.6)),
+                style: TextStyle(color: Colors.white.withValues(alpha: 0.2)),
               ),
               trailing: const Icon(Icons.arrow_forward_ios, color: Color(0xFF666666)),
               onTap: () {
@@ -439,7 +439,7 @@ class _WalletScreenState extends State<WalletScreen> {
               ),
               subtitle: Text(
                 'Instant delivery',
-                style: TextStyle(color: Colors.white.withValues(alpha: 0.6)),
+                style: TextStyle(color: Colors.white.withValues(alpha: 0.2)),
               ),
               trailing: const Icon(Icons.arrow_forward_ios, color: Color(0xFF666666)),
               onTap: () {

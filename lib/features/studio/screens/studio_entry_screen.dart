@@ -260,7 +260,7 @@ class _StudioEntryScreenState extends State<StudioEntryScreen>
                           color: AppColors.background,
                           borderRadius: BorderRadius.circular(18),
                           border: Border.all(
-                            color: AppColors.brandOrange.withValues(alpha: 0.55),
+                            color: AppColors.brandOrange.withValues(alpha: 0.3),
                           ),
                           boxShadow: [
                             BoxShadow(

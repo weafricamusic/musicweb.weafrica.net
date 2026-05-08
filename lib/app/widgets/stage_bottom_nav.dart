@@ -29,9 +29,9 @@ class StageBottomNav extends StatelessWidget {
         margin: const EdgeInsets.fromLTRB(16, 0, 16, 12),
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
         decoration: BoxDecoration(
-          color: WeAfricaColors.surfaceDark.withValues(alpha: 0.75),
+          color: WeAfricaColors.surfaceDark.withValues(alpha: 0.5),
           borderRadius: BorderRadius.circular(32),
-          border: Border.all(color: WeAfricaColors.gold.withValues(alpha: 0.18)),
+          border: Border.all(color: WeAfricaColors.gold.withValues(alpha: 0.5)),
         ),
         child: Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,

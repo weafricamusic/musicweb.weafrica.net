@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -5,7 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../../app/theme/weafrica_colors.dart';
 import '../player/player_routes.dart';
 import '../player/playback_controller.dart';
-import '../live/screens/live_watch_screen.dart';
+import '../live/presentation/screens/consumer_live_screen.dart';
 import '../videos/video.dart';
 import '../videos/screens/video_playback_screen.dart';
 import '../categories/screens/category_songs_screen.dart';
@@ -28,7 +29,9 @@ class _WeAfricaHomeV4State extends State<WeAfricaHomeV4>
   List<Map<String, dynamic>> _liveStreams = [];
   List<Map<String, dynamic>> _videosList = [];
   bool _loading = true;
+  bool _showRetryButton = false;
   int _selectedCategory = 0;
+  Timer? _retryTimer;
 
   final List<Map<String, dynamic>> _categories = [
     {"name": "Malawi", "icon": Icons.public, "type": "countries"},
@@ -45,6 +48,7 @@ class _WeAfricaHomeV4State extends State<WeAfricaHomeV4>
 
   @override
   void dispose() {
+    _retryTimer?.cancel();
     _animationController.dispose();
     super.dispose();
   }
@@ -57,6 +61,13 @@ class _WeAfricaHomeV4State extends State<WeAfricaHomeV4>
       duration: const Duration(milliseconds: 1200),
     );
     _loadData();
+    
+    // Show retry button after 10 seconds if still loading
+    _retryTimer = Timer(const Duration(seconds: 10), () {
+      if (mounted && _loading) {
+        setState(() => _showRetryButton = true);
+      }
+    });
   }
 
   Future<void> _loadData() async {
@@ -64,79 +75,145 @@ class _WeAfricaHomeV4State extends State<WeAfricaHomeV4>
       final supabase = Supabase.instance.client;
       final prefs = await SharedPreferences.getInstance();
 
-      // Fetch recently played songs
-      List<String> recentlyPlayedIds = prefs.getStringList('recently_played') ?? [];
+      // Set a timeout for the entire data loading operation
+      final loadDataFuture = _performDataLoad(supabase, prefs);
+      final timeout = const Duration(seconds: 15);
+      
+      await loadDataFuture.timeout(timeout, onTimeout: () {
+        debugPrint('Data loading timed out after ${timeout.inSeconds} seconds');
+        // Set minimal data to unblock the UI
+        _top10 = [];
+        _recentlyPlayed = [];
+        _recommendedForYou = [];
+        _featured = [];
+        _liveStreams = [];
+        _videosList = [];
+      });
 
-      if (recentlyPlayedIds.isNotEmpty) {
+      if (!mounted) return;
+      setState(() => _loading = false);
+      _animationController.forward();
+    } catch (e) {
+      debugPrint('Error loading data: $e');
+      // Ensure loading is set to false even on error
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        // Initialize with empty lists to prevent null errors
+        _top10 = _top10.isEmpty ? [] : _top10;
+        _recentlyPlayed = _recentlyPlayed.isEmpty ? [] : _recentlyPlayed;
+        _recommendedForYou = _recommendedForYou.isEmpty ? [] : _recommendedForYou;
+        _featured = _featured.isEmpty ? [] : _featured;
+        _liveStreams = _liveStreams.isEmpty ? [] : _liveStreams;
+        _videosList = _videosList.isEmpty ? [] : _videosList;
+      });
+    }
+  }
+
+  Future<void> _performDataLoad(SupabaseClient supabase, SharedPreferences prefs) async {
+    // Fetch recently played songs
+    List<String> recentlyPlayedIds = prefs.getStringList('recently_played') ?? [];
+
+    if (recentlyPlayedIds.isNotEmpty) {
+      try {
         final recent = await supabase
             .from('songs')
             .select('id, title, artist, thumbnail_url, audio_url')
             .inFilter('id', recentlyPlayedIds.take(8).toList());
         _recentlyPlayed = List<Map<String, dynamic>>.from(recent);
-      } else {
+      } catch (e) {
+        debugPrint('Error fetching recently played: $e');
+        _recentlyPlayed = [];
+      }
+    } else {
+      try {
         final defaultSongs = await supabase
             .from('songs')
             .select('id, title, artist, thumbnail_url, audio_url')
             .order('plays_count', ascending: false)
             .limit(8);
         _recentlyPlayed = List<Map<String, dynamic>>.from(defaultSongs);
+      } catch (e) {
+        debugPrint('Error fetching default songs: $e');
+        _recentlyPlayed = [];
       }
+    }
 
-      // Fetch recommended songs
+    // Fetch recommended songs
+    try {
       final rec = await supabase
           .from('songs')
           .select('id, title, artist, thumbnail_url, audio_url')
           .order('plays_count', ascending: false)
           .limit(10);
       _recommendedForYou = List<Map<String, dynamic>>.from(rec);
+    } catch (e) {
+      debugPrint('Error fetching recommended: $e');
+      _recommendedForYou = [];
+    }
 
-      // Fetch featured songs
+    // Fetch featured songs
+    try {
       final featured = await supabase
           .from('songs')
           .select('id, title, artist, thumbnail_url, audio_url')
           .order('plays_count', ascending: false)
           .limit(5);
       _featured = List<Map<String, dynamic>>.from(featured);
+    } catch (e) {
+      debugPrint('Error fetching featured: $e');
+      _featured = [];
+    }
 
-      // Fetch top 10 songs
+    // Fetch top 10 songs
+    try {
       final top = await supabase
           .from('songs')
           .select('id, title, artist, thumbnail_url, audio_url, plays_count')
           .order('plays_count', ascending: false)
           .limit(10);
       _top10 = List<Map<String, dynamic>>.from(top);
+    } catch (e) {
+      debugPrint('Error fetching top 10: $e');
+      _top10 = [];
+    }
 
-      // Fetch live streams
-        final live = await supabase
-            .from('live_sessions')
-            .select('id, channel_id, host_name, viewer_count, created_at')
-            .eq('is_live', true)
-            .order('created_at', ascending: false)
-            .limit(3);
+    // Fetch live streams - with extra caution as this might be the problematic query
+    try {
+      final live = await supabase
+          .from('live_sessions')
+          .select('id, channel_id, host_name, viewer_count, created_at')
+          .eq('is_live', true)
+          .order('created_at', ascending: false)
+          .limit(3);
       _liveStreams = List<Map<String, dynamic>>.from(live);
+    } catch (e) {
+      debugPrint('Error fetching live streams: $e');
+      _liveStreams = [];
+    }
 
-      // Fetch videos
+    // Fetch videos
+    try {
       final videos = await supabase
           .from('videos')
           .select('id, title, artist, thumbnail_url, views_count, video_url')
           .order('views_count', ascending: false)
           .limit(10);
       _videosList = List<Map<String, dynamic>>.from(videos);
-
-      setState(() => _loading = false);
-      _animationController.forward();
     } catch (e) {
-      debugPrint('Error loading data: $e');
-      setState(() => _loading = false);
+      debugPrint('Error fetching videos: $e');
+      _videosList = [];
     }
   }
 
   Future<void> _refreshData() async {
+    if (!mounted) return;
     setState(() => _loading = true);
     await _loadData();
   }
 
   void _onCategoryTap(int index) {
+    if (!mounted) return;
     setState(() => _selectedCategory = index);
     HapticFeedback.selectionClick();
     
@@ -219,6 +296,9 @@ class _WeAfricaHomeV4State extends State<WeAfricaHomeV4>
       }
     } catch (e) {
       debugPrint('Error playing song: $e');
+
+      if (!mounted) return;
+
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text("Failed to play song")),
       );
@@ -228,12 +308,15 @@ class _WeAfricaHomeV4State extends State<WeAfricaHomeV4>
   void _joinLiveStream(Map<String, dynamic> live) async {
     try {
       if (mounted) {
+        final user = Supabase.instance.client.auth.currentUser;
         Navigator.push(
           context,
           MaterialPageRoute(
-            builder: (context) => LiveWatchScreen(
-              channelId: live["channel_id"]?.toString() ?? '',
-              hostName: live["host_name"]?.toString() ?? 'Live Stream',
+            builder: (context) => ConsumerLiveScreen(
+              liveSessionId: live["id"]?.toString() ?? '',
+              channelName: live["channel_id"]?.toString() ?? '',
+              userId: user?.id ?? '',
+              userName: user?.userMetadata?['display_name']?.toString() ?? 'User',
             ),
           ),
         );
@@ -249,9 +332,56 @@ class _WeAfricaHomeV4State extends State<WeAfricaHomeV4>
   @override
   Widget build(BuildContext context) {
     if (_loading) {
-      return const Scaffold(
+      return Scaffold(
         backgroundColor: WeAfricaColors.stageBlack,
-        body: Center(child: CircularProgressIndicator(color: WeAfricaColors.gold)),
+        body: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const CircularProgressIndicator(color: WeAfricaColors.gold),
+              const SizedBox(height: 24),
+              const Text(
+                'Loading WeAfrica Music...',
+                style: TextStyle(
+                  color: Colors.white70,
+                  fontSize: 16,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'This should only take a moment',
+                style: TextStyle(
+                  color: Colors.white.withOpacity(0.5),
+                  fontSize: 13,
+                ),
+              ),
+              if (_showRetryButton) ...[
+                const SizedBox(height: 32),
+                Text(
+                  'Taking longer than expected?',
+                  style: TextStyle(
+                    color: Colors.white.withOpacity(0.4),
+                    fontSize: 12,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                ElevatedButton(
+                  onPressed: () => _refreshData(),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: WeAfricaColors.gold,
+                    foregroundColor: Colors.black,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 24,
+                      vertical: 12,
+                    ),
+                  ),
+                  child: const Text('Retry'),
+                ),
+              ],
+            ],
+          ),
+        ),
       );
     }
 
@@ -363,7 +493,7 @@ class _WeAfricaHomeV4State extends State<WeAfricaHomeV4>
                 height: 180,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  color: Colors.white.withValues(alpha: 0.1),
+                  color: Colors.white.withValues(alpha: 0.2),
                 ),
               ),
             ),
@@ -375,7 +505,7 @@ class _WeAfricaHomeV4State extends State<WeAfricaHomeV4>
                 height: 100,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  color: Colors.white.withValues(alpha: 0.08),
+                  color: Colors.white.withValues(alpha: 0.2),
                 ),
               ),
             ),
@@ -431,7 +561,7 @@ class _WeAfricaHomeV4State extends State<WeAfricaHomeV4>
                         Text(
                           topSong['artist'] ?? 'Driemo',
                           style: TextStyle(
-                            color: Colors.white.withValues(alpha: 0.8),
+                            color: Colors.white.withValues(alpha: 0.2),
                             fontSize: 14,
                             fontWeight: FontWeight.w500,
                           ),
@@ -493,7 +623,7 @@ class _WeAfricaHomeV4State extends State<WeAfricaHomeV4>
                 border: isSelected
                     ? null
                     : Border.all(
-                        color: Colors.white.withValues(alpha: 0.1),
+                        color: Colors.white.withValues(alpha: 0.2),
                       ),
               ),
               child: Row(
@@ -597,7 +727,7 @@ class _WeAfricaHomeV4State extends State<WeAfricaHomeV4>
                 Text(
                   '${_liveStreams[0]['viewer_count'] ?? 0} watching',
                   style: TextStyle(
-                    color: Colors.white.withValues(alpha: 0.8),
+                    color: Colors.white.withValues(alpha: 0.2),
                     fontSize: 14,
                   ),
                 ),
@@ -650,7 +780,7 @@ class _WeAfricaHomeV4State extends State<WeAfricaHomeV4>
                 Text(
                   subtitle,
                   style: TextStyle(
-                    color: Colors.white.withValues(alpha: 0.6),
+                    color: Colors.white.withValues(alpha: 0.2),
                     fontSize: 14,
                     fontWeight: FontWeight.w500,
                   ),
@@ -742,7 +872,7 @@ class _WeAfricaHomeV4State extends State<WeAfricaHomeV4>
                                   shape: BoxShape.circle,
                                   boxShadow: [
                                     BoxShadow(
-                                      color: WeAfricaColors.gold.withValues(alpha: 0.4),
+                                      color: WeAfricaColors.gold.withValues(alpha: 0.3),
                                       blurRadius: 8,
                                       offset: const Offset(0, 4),
                                     ),
@@ -773,7 +903,7 @@ class _WeAfricaHomeV4State extends State<WeAfricaHomeV4>
                       Text(
                         song['artist'] ?? 'Artist',
                         style: TextStyle(
-                          color: Colors.white.withValues(alpha: 0.6),
+                          color: Colors.white.withValues(alpha: 0.2),
                           fontSize: 12,
                           fontWeight: FontWeight.w500,
                         ),
@@ -847,7 +977,7 @@ class _WeAfricaHomeV4State extends State<WeAfricaHomeV4>
                             Container(
                               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                               decoration: BoxDecoration(
-                                color: WeAfricaColors.gold.withValues(alpha: 0.2),
+                                color: WeAfricaColors.gold.withValues(alpha: 0.3),
                                 borderRadius: BorderRadius.circular(6),
                               ),
                               child: const Text(
@@ -873,7 +1003,7 @@ class _WeAfricaHomeV4State extends State<WeAfricaHomeV4>
                             Text(
                               song['artist'] ?? 'Artist',
                               style: TextStyle(
-                                color: Colors.white.withValues(alpha: 0.6),
+                                color: Colors.white.withValues(alpha: 0.2),
                                 fontSize: 12,
                               ),
                               maxLines: 1,
@@ -949,7 +1079,7 @@ class _WeAfricaHomeV4State extends State<WeAfricaHomeV4>
                       Text(
                         song['artist'] ?? 'Artist',
                         style: TextStyle(
-                          color: Colors.white.withValues(alpha: 0.6),
+                          color: Colors.white.withValues(alpha: 0.2),
                           fontSize: 12,
                         ),
                         maxLines: 1,
@@ -979,14 +1109,14 @@ class _WeAfricaHomeV4State extends State<WeAfricaHomeV4>
                     children: [
                       Icon(
                         Icons.video_library_outlined,
-                        color: Colors.white.withValues(alpha: 0.3),
+                        color: Colors.white.withValues(alpha: 0.2),
                         size: 48,
                       ),
                       const SizedBox(height: 12),
                       Text(
                         'No videos available',
                         style: TextStyle(
-                          color: Colors.white.withValues(alpha: 0.5),
+                          color: Colors.white.withValues(alpha: 0.2),
                           fontSize: 14,
                         ),
                       ),
@@ -1041,7 +1171,7 @@ class _WeAfricaHomeV4State extends State<WeAfricaHomeV4>
                                   end: Alignment.bottomCenter,
                                   colors: [
                                     Colors.transparent,
-                                    Colors.black.withValues(alpha: 0.8),
+                                    Colors.black.withValues(alpha: 0.3),
                                   ],
                                 ),
                               ),
@@ -1067,7 +1197,7 @@ class _WeAfricaHomeV4State extends State<WeAfricaHomeV4>
                                   Text(
                                     video['artist'] ?? 'Artist',
                                     style: TextStyle(
-                                      color: Colors.white.withValues(alpha: 0.7),
+                                      color: Colors.white.withValues(alpha: 0.2),
                                       fontSize: 11,
                                     ),
                                     maxLines: 1,
@@ -1112,7 +1242,7 @@ class _WeAfricaHomeV4State extends State<WeAfricaHomeV4>
                     color: const Color(0xFF1B1530),
                     borderRadius: BorderRadius.circular(14),
                     border: Border.all(
-                      color: Colors.white.withValues(alpha: 0.05),
+                      color: Colors.white.withValues(alpha: 0.2),
                     ),
                   ),
                   child: Row(
@@ -1172,7 +1302,7 @@ class _WeAfricaHomeV4State extends State<WeAfricaHomeV4>
                             Text(
                               song['artist'] ?? 'Artist',
                               style: TextStyle(
-                                color: Colors.white.withValues(alpha: 0.6),
+                                color: Colors.white.withValues(alpha: 0.2),
                                 fontSize: 13,
                               ),
                               maxLines: 1,
@@ -1184,7 +1314,7 @@ class _WeAfricaHomeV4State extends State<WeAfricaHomeV4>
                         width: 40,
                         height: 40,
                         decoration: BoxDecoration(
-                          color: Colors.white.withValues(alpha: 0.1),
+                          color: Colors.white.withValues(alpha: 0.2),
                           shape: BoxShape.circle,
                         ),
                         child: const Icon(

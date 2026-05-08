@@ -1,7 +1,6 @@
 import 'package:flutter/foundation.dart';
 
 import 'coin_service.dart';
-import '../models/coin_transaction.dart';
 
 /// Gift item definition
 class GiftItem {

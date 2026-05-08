@@ -52,7 +52,7 @@ class AutoArtwork extends StatelessWidget {
               children: [
                 Icon(
                   icon,
-                  color: palette.foreground.withValues(alpha: 0.92),
+                  color: palette.foreground.withValues(alpha: 0.5),
                   size: iconSize,
                 ),
                 if (canShowText) ...[
@@ -62,7 +62,7 @@ class AutoArtwork extends StatelessWidget {
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: textStyleBase?.copyWith(
-                      color: palette.foreground.withValues(alpha: 0.92),
+                      color: palette.foreground.withValues(alpha: 0.5),
                       fontWeight: FontWeight.w900,
                       letterSpacing: isCompact ? 0.4 : 0.6,
                       height: 1.0,

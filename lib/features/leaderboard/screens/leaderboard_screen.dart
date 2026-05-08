@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 
-import '../../wallet/services/gift_service.dart';
 
 /// WeAfrica Leaderboard Screen
 /// 
@@ -116,7 +115,7 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
       trailingBuilder: (item) => Container(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
         decoration: BoxDecoration(
-          color: const Color(0xFFD4AF37).withValues(alpha: 0.2),
+          color: const Color(0xFFD4AF37).withValues(alpha: 0.3),
           borderRadius: BorderRadius.circular(12),
         ),
         child: Text(
@@ -221,7 +220,7 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
                     Text(
                       winner['battle'] as String,
                       style: TextStyle(
-                        color: Colors.white.withValues(alpha: 0.6),
+                        color: Colors.white.withValues(alpha: 0.2),
                         fontSize: 13,
                       ),
                     ),
@@ -234,7 +233,7 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
                             vertical: 4,
                           ),
                           decoration: BoxDecoration(
-                            color: const Color(0xFFD4AF37).withValues(alpha: 0.2),
+                            color: const Color(0xFFD4AF37).withValues(alpha: 0.3),
                             borderRadius: BorderRadius.circular(8),
                           ),
                           child: Text(
@@ -250,7 +249,7 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
                         Text(
                           '${winner['wins']} wins',
                           style: TextStyle(
-                            color: Colors.white.withValues(alpha: 0.6),
+                            color: Colors.white.withValues(alpha: 0.2),
                             fontSize: 12,
                           ),
                         ),
@@ -300,7 +299,7 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
             gradient: isTop3
                 ? LinearGradient(
                     colors: [
-                      const Color(0xFFD4AF37).withValues(alpha: 0.1),
+                      const Color(0xFFD4AF37).withValues(alpha: 0.3),
                       const Color(0xFF1A1A1A),
                     ],
                   )
@@ -348,7 +347,7 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
                     Text(
                       subtitleBuilder(item),
                       style: TextStyle(
-                        color: Colors.white.withValues(alpha: 0.6),
+                        color: Colors.white.withValues(alpha: 0.2),
                         fontSize: 13,
                       ),
                     ),
@@ -375,7 +374,7 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
         width: 36,
         height: 36,
         decoration: BoxDecoration(
-          color: colors[index].withValues(alpha: 0.2),
+          color: colors[index].withValues(alpha: 0.3),
           shape: BoxShape.circle,
           border: Border.all(color: colors[index], width: 2),
         ),

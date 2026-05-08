@@ -266,7 +266,7 @@ class _WaitingForOpponentScreenState extends State<WaitingForOpponentScreen> {
                   _isAccepted ? 'Opponent accepted. Starting…' : 'Waiting for opponent to accept…',
                   style: TextStyle(
                     fontSize: 16,
-                    color: Colors.white.withValues(alpha: 0.7),
+                    color: Colors.white.withValues(alpha: 0.2),
                   ),
                 ),
                 const SizedBox(height: 8),
@@ -274,7 +274,7 @@ class _WaitingForOpponentScreenState extends State<WaitingForOpponentScreen> {
                   'Invite your opponent from the battle dashboard',
                   style: TextStyle(
                     fontSize: 12,
-                    color: Colors.white.withValues(alpha: 0.5),
+                    color: Colors.white.withValues(alpha: 0.2),
                   ),
                 ),
                 const SizedBox(height: 32),
@@ -286,7 +286,7 @@ class _WaitingForOpponentScreenState extends State<WaitingForOpponentScreen> {
                   child: Text(
                     'Cancel Battle',
                     style: TextStyle(
-                      color: Colors.white.withValues(alpha: 0.6),
+                      color: Colors.white.withValues(alpha: 0.2),
                     ),
                   ),
                 ),

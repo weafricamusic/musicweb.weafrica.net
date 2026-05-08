@@ -22,10 +22,10 @@ class WalletPreviewCard extends StatelessWidget {
       child: Container(
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
-          color: AppColors.surface2.withValues(alpha: 0.75),
+          color: AppColors.surface2.withValues(alpha: 0.3),
           borderRadius: BorderRadius.circular(18),
           border: Border.all(
-            color: AppColors.stageGold.withValues(alpha: 0.25),
+            color: AppColors.stageGold.withValues(alpha: 0.3),
           ),
         ),
         child: Row(
@@ -35,9 +35,9 @@ class WalletPreviewCard extends StatelessWidget {
               height: 42,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                color: AppColors.stageGold.withValues(alpha: 0.14),
+                color: AppColors.stageGold.withValues(alpha: 0.3),
                 border: Border.all(
-                  color: AppColors.stageGold.withValues(alpha: 0.35),
+                  color: AppColors.stageGold.withValues(alpha: 0.3),
                 ),
               ),
               child: const Icon(

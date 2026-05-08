@@ -100,7 +100,7 @@ class BattleResultScreen extends StatelessWidget {
           boxShadow: isWinner
               ? [
                   BoxShadow(
-                    color: AppTheme.accentGold.withValues(alpha: ),
+                    color: AppTheme.accentGold.withValues(alpha: 0.5),
                     blurRadius: 20,
                   ),
                 ]
@@ -135,7 +135,7 @@ class BattleResultScreen extends StatelessWidget {
             Text(
               'points',
               style: TextStyle(
-                color: Colors.white.withValues(alpha: ),
+                color: Colors.white.withValues(alpha: 0.5),
                 fontSize: 12,
               ),
             ),
@@ -180,7 +180,7 @@ class BattleResultScreen extends StatelessWidget {
               Text(
                 stats[index]['label']!,
                 style: TextStyle(
-                  color: Colors.white.withValues(alpha: ),
+                  color: Colors.white.withValues(alpha: 0.5),
                   fontSize: 12,
                 ),
               ),
@@ -241,7 +241,7 @@ class BattleResultScreen extends StatelessWidget {
         decoration: BoxDecoration(
           gradient: isPrimary
               ? const LinearGradient(
-                  colors: [AppTheme.primaryPurple, AppTheme.accentPink],
+                  colors: [AppTheme.accentGold, Colors.orange],
                 )
               : null,
           color: color ?? (isPrimary ? null : AppTheme.surfaceColor),

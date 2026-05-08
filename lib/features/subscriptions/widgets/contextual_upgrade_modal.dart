@@ -163,9 +163,9 @@ class _ContextualUpgradeModalState extends State<_ContextualUpgradeModal> {
                   width: 44,
                   height: 44,
                   decoration: BoxDecoration(
-                    color: accent.withValues(alpha: 0.14),
+                    color: accent.withValues(alpha: 0.3),
                     borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: accent.withValues(alpha: 0.35)),
+                    border: Border.all(color: accent.withValues(alpha: 0.3)),
                   ),
                   child: Icon(widget.prompt.icon, color: accent),
                 ),
@@ -193,7 +193,7 @@ class _ContextualUpgradeModalState extends State<_ContextualUpgradeModal> {
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
                 decoration: BoxDecoration(
-                  color: WeAfricaColors.goldLight.withValues(alpha: 0.18),
+                  color: WeAfricaColors.goldLight.withValues(alpha: 0.3),
                   borderRadius: BorderRadius.circular(12),
                 ),
                 child: Row(

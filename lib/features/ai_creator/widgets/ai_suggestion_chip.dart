@@ -20,7 +20,7 @@ class AiSuggestionChip extends StatelessWidget {
       label: Text(label),
       onPressed: onTap,
       backgroundColor: AppColors.surface2,
-      side: BorderSide(color: accent.withValues(alpha: 0.28)),
+      side: BorderSide(color: accent.withValues(alpha: 0.3)),
       labelStyle: Theme.of(context).textTheme.labelMedium,
     );
   }

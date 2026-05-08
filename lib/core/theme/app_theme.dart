@@ -19,7 +19,6 @@ class AppTheme {
           primary: primaryPurple,
           secondary: accentPink,
           surface: surfaceColor,
-          background: darkBackground,
           error: dangerRed,
         ),
       );

@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 
-import '../../../app/theme.dart';
 import '../playback_controller.dart';
 
 /// WeAfrica Music Mini Player
@@ -59,7 +58,7 @@ class MiniPlayer extends StatelessWidget {
                 ),
                 boxShadow: [
                   BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.4),
+                    color: Colors.black.withValues(alpha: 0.3),
                     blurRadius: 12,
                     offset: const Offset(0, 4),
                   ),
@@ -129,7 +128,7 @@ class MiniPlayer extends StatelessWidget {
           color: const Color(0xFF2A3F2A),
           borderRadius: BorderRadius.circular(10),
           border: Border.all(
-            color: const Color(0xFFD4AF37).withValues(alpha: 0.2),
+            color: const Color(0xFFD4AF37).withValues(alpha: 0.3),
           ),
         ),
         clipBehavior: Clip.antiAlias,
@@ -169,7 +168,7 @@ class MiniPlayer extends StatelessWidget {
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
           style: TextStyle(
-            color: Colors.white.withValues(alpha: 0.7),
+            color: Colors.white.withValues(alpha: 0.2),
             fontSize: 11,
             fontWeight: FontWeight.w600,
           ),
@@ -186,7 +185,7 @@ class MiniPlayer extends StatelessWidget {
       tooltip: 'Output Device',
       icon: Icon(
         Icons.speaker_outlined,
-        color: const Color(0xFFD4AF37).withValues(alpha: 0.8),
+        color: const Color(0xFFD4AF37).withValues(alpha: 0.3),
         size: 20,
       ),
       constraints: const BoxConstraints.tightFor(width: 36, height: 36),
@@ -205,8 +204,8 @@ class MiniPlayer extends StatelessWidget {
       icon: Icon(
         Icons.add_circle_outline,
         color: track == null
-            ? Colors.white.withValues(alpha: 0.3)
-            : const Color(0xFFD4AF37).withValues(alpha: 0.9),
+            ? Colors.white.withValues(alpha: 0.2)
+            : const Color(0xFFD4AF37).withValues(alpha: 0.3),
         size: 22,
       ),
       constraints: const BoxConstraints.tightFor(width: 40, height: 40),
@@ -256,7 +255,7 @@ class _MusicIcon extends StatelessWidget {
     return Center(
       child: Icon(
         Icons.music_note,
-        color: const Color(0xFFD4AF37).withValues(alpha: 0.5),
+        color: const Color(0xFFD4AF37).withValues(alpha: 0.3),
         size: 24,
       ),
     );

@@ -1,4 +1,3 @@
-import 'package:supabase_flutter/supabase_flutter.dart';
 import 'supabase_service.dart';
 
 /// Service for managing gifts in live sessions
@@ -55,6 +54,6 @@ class GiftService {
         .order('amount', ascending: false)
         .limit(10);
 
-    return response as List<Map<String, dynamic>>;
+    return response;
   }
 }

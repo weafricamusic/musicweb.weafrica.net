@@ -66,17 +66,17 @@ class _BeatStudioKnobState extends State<BeatStudioKnob> {
           shape: BoxShape.circle,
           gradient: RadialGradient(
             colors: [
-              accent.withValues(alpha: 0.22),
+              accent.withValues(alpha: 0.3),
               bg,
             ],
           ),
           border: Border.all(
-            color: accent.withValues(alpha: 0.45),
+            color: accent.withValues(alpha: 0.3),
             width: 2,
           ),
           boxShadow: [
             BoxShadow(
-              color: accent.withValues(alpha: _isDragging ? 0.28 : 0.12),
+              color: accent.withValues(alpha: 0.3),
               blurRadius: 22,
               spreadRadius: 4,
             ),
@@ -128,7 +128,7 @@ class _KnobPainter extends CustomPainter {
     final radius = size.width / 2 - 6;
 
     final track = Paint()
-      ..color = accent.withValues(alpha: 0.18)
+      ..color = accent.withValues(alpha: 0.3)
       ..style = PaintingStyle.stroke
       ..strokeWidth = 2;
 

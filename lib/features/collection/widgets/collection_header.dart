@@ -79,8 +79,8 @@ class CollectionHeader extends StatelessWidget {
               begin: Alignment.topCenter,
               end: Alignment.bottomCenter,
               colors: [
-                AppColors.background.withValues(alpha: 0.15),
-                AppColors.background.withValues(alpha: 0.85),
+                AppColors.background.withValues(alpha: 0.3),
+                AppColors.background.withValues(alpha: 0.3),
                 AppColors.background,
               ],
             ),
@@ -97,10 +97,10 @@ class CollectionHeader extends StatelessWidget {
                 child: Container(
                   padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
                   decoration: BoxDecoration(
-                    color: AppColors.background.withValues(alpha: 0.35),
+                    color: AppColors.background.withValues(alpha: 0.3),
                     borderRadius: BorderRadius.circular(18),
                     border: Border.all(
-                      color: scheme.primary.withValues(alpha: 0.22),
+                      color: scheme.primary.withValues(alpha: 0.3),
                     ),
                   ),
                   child: Column(
@@ -163,8 +163,8 @@ class _TypeBadge extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: scheme.primary.withValues(alpha: 0.35)),
-        color: scheme.primary.withValues(alpha: 0.12),
+        border: Border.all(color: scheme.primary.withValues(alpha: 0.3)),
+        color: scheme.primary.withValues(alpha: 0.3),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,

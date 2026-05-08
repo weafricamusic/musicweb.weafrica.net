@@ -2,8 +2,8 @@ import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 
+// import '../auth/firebase_idtoken_provider.dart';
 import '../config/api_env.dart';
 
 class StorageUploadResult {
@@ -63,18 +63,23 @@ class StorageUploadApi {
 
     final ordered = <String>[trimmed];
 
+    // Common near-duplicate bucket IDs seen in this codebase / Supabase console.
     if (trimmed == 'song-thumbnails') ordered.add('song_thumbnails');
     if (trimmed == 'song_thumbnails') ordered.add('song-thumbnails');
 
+    // DJ sets naming sometimes differs by environment.
     if (trimmed == 'dj-sets') ordered.add('dj-mixes');
     if (trimmed == 'dj-mixes') ordered.add('dj-sets');
 
+    // Video bucket naming sometimes differs by environment.
     if (trimmed == 'media') ordered.add('videos');
     if (trimmed == 'videos') ordered.add('media');
 
+    // Video thumbnail bucket naming sometimes differs by environment.
     if (trimmed == 'thumbnails') ordered.add('video_thumbnails');
     if (trimmed == 'video_thumbnails') ordered.add('thumbnails');
 
+    // De-dup while preserving order.
     final seen = <String>{};
     return ordered.where((b) => seen.add(b)).toList(growable: false);
   }
@@ -89,33 +94,25 @@ class StorageUploadApi {
     String? prefix,
     required String fileName,
     required Uint8List fileBytes,
+    // 90 seconds is too aggressive for mobile uploads on slower networks.
+    // Keep a timeout to avoid hanging forever, but default to a more realistic value.
     Duration timeout = const Duration(minutes: 30),
     void Function(int sent, int total)? onSendProgress,
     CancelToken? cancelToken,
   }) async {
     final uri = Uri.parse('${ApiEnv.baseUrl}/api/uploads/storage');
 
-    Future<Response<dynamic>> send({
+    Future<Response> send({
       required String bucketValue,
       required bool forceRefreshToken,
     }) async {
-      final user = FirebaseAuth.instance.currentUser;
+      final String bearer = '';
 
-      if (user == null) {
-        throw StorageUploadApiException(
-          statusCode: 401,
-          bucket: bucketValue,
-          message: 'User not authenticated',
-        );
-      }
-
-      final bearer = await user.getIdToken(forceRefreshToken);
-
-      final dio = Dio()
-        ..options.connectTimeout = timeout
-        ..options.receiveTimeout = timeout
-        ..options.sendTimeout = timeout;
-
+      final dio = Dio();
+      dio.options.connectTimeout = timeout;
+      dio.options.receiveTimeout = timeout;
+      dio.options.sendTimeout = timeout;
+      
       final formData = FormData.fromMap({
         'bucket': bucketValue.trim(),
         'file': MultipartFile.fromBytes(fileBytes, filename: fileName),
@@ -123,11 +120,7 @@ class StorageUploadApi {
       });
 
       try {
-        print(
-          '📤 Upload START bucket=$bucketValue file=$fileName bytes=${fileBytes.length}',
-        );
-
-        final response = await dio.post<dynamic>(
+        final response = await dio.post(
           uri.toString(),
           data: formData,
           options: Options(
@@ -141,27 +134,22 @@ class StorageUploadApi {
           onSendProgress: onSendProgress,
           cancelToken: cancelToken,
         );
-
-        print(
-          '📥 Upload DONE status=${response.statusCode} data=${response.data}',
-        );
         return response;
       } on DioException catch (e) {
-        if (CancelToken.isCancel(e)) rethrow;
-
+        if (CancelToken.isCancel(e)) {
+          rethrow;
+        }
         if (e.type == DioExceptionType.connectionTimeout ||
             e.type == DioExceptionType.sendTimeout ||
             e.type == DioExceptionType.receiveTimeout) {
           final mins = timeout.inMinutes;
           final secs = timeout.inSeconds;
-
           throw TimeoutException(
             mins > 0
                 ? 'Upload timed out after $mins minutes ($secs s). Try a smaller file or a faster connection.'
                 : 'Upload timed out after $secs seconds. Try a smaller file or a faster connection.',
           );
         }
-
         rethrow;
       }
     }
@@ -176,25 +164,17 @@ class StorageUploadApi {
     for (var i = 0; i < bucketsToTry.length; i++) {
       final attemptBucket = bucketsToTry[i];
 
-      Response<dynamic> response = await send(
-        bucketValue: attemptBucket,
-        forceRefreshToken: false,
-      );
-
+      Response response = await send(bucketValue: attemptBucket, forceRefreshToken: false);
       if (response.statusCode == 401 || response.statusCode == 403) {
-        response = await send(
-          bucketValue: attemptBucket,
-          forceRefreshToken: true,
-        );
+        response = await send(bucketValue: attemptBucket, forceRefreshToken: true);
       }
 
-      final decoded = response.data;
+      final dynamic decoded = response.data;
+
       final status = response.statusCode ?? 0;
 
       if (status < 200 || status >= 300) {
-        final msg =
-            (decoded is Map &&
-                (decoded['message'] != null || decoded['error'] != null))
+        final msg = (decoded is Map && (decoded['message'] != null || decoded['error'] != null))
             ? (decoded['message'] ?? decoded['error']).toString()
             : 'Upload failed ($status)';
 
@@ -223,14 +203,10 @@ class StorageUploadApi {
         throw Exception('Invalid upload response (expected JSON object).');
       }
 
-      final result = StorageUploadResult.fromJson(
-        Map<String, dynamic>.from(decoded),
-      );
-
+      final result = StorageUploadResult.fromJson(Map<String, dynamic>.from(decoded));
       if (result.bucket.trim().isEmpty || result.path.trim().isEmpty) {
         throw Exception('Upload response missing bucket/path.');
       }
-
       if (result.bestUrl.isEmpty) {
         throw Exception('Upload response missing public_url/signed_url.');
       }
@@ -238,6 +214,7 @@ class StorageUploadApi {
       return result;
     }
 
+    // Should be unreachable, but keep a safe fallback.
     throw lastError ?? Exception('Upload failed.');
   }
 }

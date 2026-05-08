@@ -1336,7 +1336,7 @@ class _PushTokenDebugScreenState extends State<_PushTokenDebugScreen> {
         children: [
           _infoTile(
             title: 'Push service',
-            value: effectiveBaseUrl.isEmpty ? '(not configured)' : effectiveBaseUrl,
+            value: (effectiveBaseUrl ?? '').isEmpty ? '(not configured)' : effectiveBaseUrl!,
           ),
           const SizedBox(height: 10),
           _infoTile(
@@ -1433,18 +1433,25 @@ class _PushTokenDebugScreenState extends State<_PushTokenDebugScreen> {
                       });
                       try {
                         final messenger = ScaffoldMessenger.of(context);
-                        final result = await service.registerDeviceTokenNow();
+                        await service.registerDeviceTokenNow();
                         if (!mounted) return;
-                        setState(() => _lastResult = result.message);
+                        setState(() => _lastResult = 'Success');
                         messenger.showSnackBar(
-                          SnackBar(
-                            content: Text(result.message),
-                            backgroundColor: result.ok
-                                ? const Color(0xFFD4AF37)
-                                : Colors.red,
+                          const SnackBar(
+                            content: Text('Token registered successfully'),
+                            backgroundColor: Color(0xFFD4AF37),
                           ),
                         );
                         await _refreshDebugState();
+                      } catch (e) {
+                        if (!mounted) return;
+                        setState(() => _lastResult = 'Error: $e');
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text('Failed: $e'),
+                            backgroundColor: Colors.red,
+                          ),
+                        );
                       } finally {
                         if (mounted) setState(() => _busy = false);
                       }

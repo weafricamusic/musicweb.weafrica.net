@@ -39,9 +39,9 @@ class BeatStatusCard extends StatelessWidget {
 
     return Container(
       decoration: BoxDecoration(
-        color: scheme.surface.withValues(alpha: 0.9),
+        color: scheme.surface.withValues(alpha: 0.3),
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: accent.withValues(alpha: 0.25)),
+        border: Border.all(color: accent.withValues(alpha: 0.3)),
       ),
       padding: const EdgeInsets.all(14),
       child: Column(
@@ -84,7 +84,7 @@ class BeatStatusCard extends StatelessWidget {
               child: LinearProgressIndicator(
                 minHeight: 6,
                 valueColor: AlwaysStoppedAnimation<Color>(accent),
-                backgroundColor: accent.withValues(alpha: 0.14),
+                backgroundColor: accent.withValues(alpha: 0.3),
               ),
             ),
           ],
@@ -102,9 +102,9 @@ class BeatStatusCard extends StatelessWidget {
               runSpacing: 6,
               children: [
                 if (job?.outputMime != null)
-                  _pill(context, 'Format', job!.outputMime!, accent.withValues(alpha: 0.18)),
+                  _pill(context, 'Format', job!.outputMime!, accent.withValues(alpha: 0.3)),
                 if (job?.outputBytes != null)
-                  _pill(context, 'Size', '${job!.outputBytes} bytes', accent.withValues(alpha: 0.18)),
+                  _pill(context, 'Size', '${job!.outputBytes} bytes', accent.withValues(alpha: 0.3)),
               ],
             ),
           ],

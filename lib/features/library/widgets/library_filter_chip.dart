@@ -26,10 +26,10 @@ class LibraryFilterChip extends StatelessWidget {
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
           decoration: BoxDecoration(
-            color: isSelected ? gold.withValues(alpha: 0.12) : AppColors.surface2,
+            color: isSelected ? gold.withValues(alpha: 0.3) : AppColors.surface2,
             borderRadius: BorderRadius.circular(999),
             border: Border.all(
-              color: isSelected ? gold : gold.withValues(alpha: 0.25),
+              color: isSelected ? gold : gold.withValues(alpha: 0.3),
               width: isSelected ? 1.2 : 1,
             ),
           ),

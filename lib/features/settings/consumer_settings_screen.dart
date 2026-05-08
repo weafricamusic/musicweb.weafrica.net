@@ -132,7 +132,7 @@ class _ConsumerSettingsScreenState extends State<ConsumerSettingsScreen> {
             child: Text(
               'WeAfrica Music v1.0.0',
               style: TextStyle(
-                color: Colors.white.withValues(alpha: 0.3),
+                color: Colors.white.withValues(alpha: 0.2),
                 fontSize: 12,
               ),
             ),
@@ -175,7 +175,7 @@ class _ConsumerSettingsScreenState extends State<ConsumerSettingsScreen> {
           color: const Color(0xFF1B1530),
           borderRadius: BorderRadius.circular(12),
           border: Border.all(
-            color: Colors.white.withValues(alpha: 0.05),
+            color: Colors.white.withValues(alpha: 0.2),
           ),
         ),
         child: Icon(
@@ -195,7 +195,7 @@ class _ConsumerSettingsScreenState extends State<ConsumerSettingsScreen> {
       subtitle: Text(
         subtitle,
         style: TextStyle(
-          color: Colors.white.withValues(alpha: 0.5),
+          color: Colors.white.withValues(alpha: 0.2),
           fontSize: 13,
         ),
       ),
@@ -220,7 +220,7 @@ class _ConsumerSettingsScreenState extends State<ConsumerSettingsScreen> {
           color: const Color(0xFF1B1530),
           borderRadius: BorderRadius.circular(12),
           border: Border.all(
-            color: Colors.white.withValues(alpha: 0.05),
+            color: Colors.white.withValues(alpha: 0.2),
           ),
         ),
         child: Icon(
@@ -240,14 +240,14 @@ class _ConsumerSettingsScreenState extends State<ConsumerSettingsScreen> {
       subtitle: Text(
         subtitle,
         style: TextStyle(
-          color: Colors.white.withValues(alpha: 0.5),
+          color: Colors.white.withValues(alpha: 0.2),
           fontSize: 13,
         ),
       ),
       trailing: Switch(
         value: value,
         onChanged: onChanged,
-        activeColor: WeAfricaColors.gold,
+        activeThumbColor: WeAfricaColors.gold,
       ),
     );
   }
@@ -256,7 +256,7 @@ class _ConsumerSettingsScreenState extends State<ConsumerSettingsScreen> {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
       decoration: BoxDecoration(
-        color: WeAfricaColors.gold.withValues(alpha: 0.2),
+        color: WeAfricaColors.gold.withValues(alpha: 0.3),
         borderRadius: BorderRadius.circular(8),
       ),
       child: Text(
@@ -274,7 +274,7 @@ class _ConsumerSettingsScreenState extends State<ConsumerSettingsScreen> {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
       decoration: BoxDecoration(
-        color: WeAfricaColors.gold.withValues(alpha: 0.2),
+        color: WeAfricaColors.gold.withValues(alpha: 0.3),
         borderRadius: BorderRadius.circular(8),
       ),
       child: Text(
@@ -336,7 +336,7 @@ class _ConsumerSettingsScreenState extends State<ConsumerSettingsScreen> {
       subtitle: Text(
         subtitle,
         style: TextStyle(
-          color: Colors.white.withValues(alpha: 0.5),
+          color: Colors.white.withValues(alpha: 0.2),
           fontSize: 13,
         ),
       ),

@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="UTF-8">
+    <title>Token Test</title>
+</head>
+
+<body>
+    <h1>Token Server Test</h1>
+    <button onclick="testToken()">Fetch Token</button>
+    <div id="result"></div>
+
+    <script>
+        const HOST_IP = '192.168.1.111';
+        const IS_LOCALHOST = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+        const TOKEN_URL = IS_LOCALHOST
+            ? 'http://localhost:3000/rtc/test/123/publisher'
+            : 'http://' + HOST_IP + ':3000/rtc/test/123/publisher';
+
+        async function testToken() {
+            const resultDiv = document.getElementById('result');
+            resultDiv.innerHTML = 'Fetching...';
+            try {
+                console.log('Fetching from:', TOKEN_URL);
+                const res = await fetch(TOKEN_URL);
+                if (!res.ok) throw new Error('HTTP ' + res.status);
+                const text = await res.text();
+                resultDiv.innerHTML = '<b>Success!</b><br>URL: ' + TOKEN_URL + '<br>Token: ' + text.substring(0, 50) + '...';
+            } catch (e) {
+                resultDiv.innerHTML = '<b>Error:</b> ' + e.message + '<br>Attempted URL: ' + TOKEN_URL;
+                console.error(e);
+            }
+        }
+    </script>
+</body>
+
+</html>

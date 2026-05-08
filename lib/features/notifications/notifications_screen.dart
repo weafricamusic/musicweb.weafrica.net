@@ -161,9 +161,9 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
       margin: const EdgeInsets.fromLTRB(12, 12, 12, 8),
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       decoration: BoxDecoration(
-        color: Colors.amber.withValues(alpha: 0.14),
+        color: Colors.amber.withValues(alpha: 0.3),
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.amber.withValues(alpha: 0.55)),
+        border: Border.all(color: Colors.amber.withValues(alpha: 0.3)),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -197,7 +197,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                 style: const TextStyle(color: Colors.white),
                 decoration: InputDecoration(
                   hintText: 'Search notifications',
-                  hintStyle: TextStyle(color: Colors.white.withValues(alpha: 0.6)),
+                  hintStyle: TextStyle(color: Colors.white.withValues(alpha: 0.2)),
                   border: InputBorder.none,
                   isDense: true,
                   prefixIcon: const Icon(Icons.search, color: Colors.white70),
@@ -283,7 +283,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                 final time = _timeLabel(context, n.createdAt);
                 final tileColor = n.read
                     ? AppColors.surface2
-                    : Theme.of(context).colorScheme.primary.withValues(alpha: 0.10);
+                    : Theme.of(context).colorScheme.primary.withValues(alpha: 0.3);
 
                 return ListTile(
                   tileColor: tileColor,

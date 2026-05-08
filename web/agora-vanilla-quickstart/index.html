@@ -1,0 +1,397 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- Agora Web SDK NG v4.24.3 (live mode quickstart) -->
+    <script src="https://cdn.agora.io/sdk/release/AgoraRTC_N-4.24.3.js"></script>
+    <script>
+        // Defensive check: ensure Agora SDK loaded before any page logic runs
+        (function checkAgoraReady() {
+            if (typeof window.AgoraRTC === 'undefined' || !window.AgoraRTC.createClient) {
+                window.addEventListener('DOMContentLoaded', function () {
+                    const notice = document.createElement('div');
+                    notice.style.cssText = 'background:#b00020;color:#fff;padding:1rem;text-align:center;font-family:sans-serif;';
+                    notice.textContent = 'Agora SDK failed to load. Check your internet connection / CDN availability and reload.';
+                    document.body.prepend(notice);
+                });
+            }
+        })();
+    </script>
+    <title>Agora Live Quickstart</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            font-family: system-ui, -apple-system, sans-serif;
+        }
+
+        body {
+            background: #111;
+            color: #eee;
+            margin: 0;
+            padding: 1rem;
+        }
+
+        h3 {
+            margin-top: 0;
+        }
+
+        .controls {
+            display: flex;
+            flex-wrap: wrap;
+            gap: .5rem;
+            align-items: center;
+            margin-bottom: 1rem;
+        }
+
+        .controls label {
+            font-size: .85rem;
+        }
+
+        input,
+        select {
+            padding: .35rem .5rem;
+            border-radius: 4px;
+            border: 1px solid #444;
+            background: #222;
+            color: #eee;
+        }
+
+        button {
+            padding: .45rem .9rem;
+            border-radius: 6px;
+            border: none;
+            cursor: pointer;
+            font-weight: 600;
+        }
+
+        #joinBtn {
+            background: #2ecc71;
+            color: #000;
+        }
+
+        #leaveBtn {
+            background: #e74c3c;
+            color: #fff;
+        }
+
+        #switchRoleBtn {
+            background: #f39c12;
+            color: #000;
+        }
+
+        button:disabled {
+            opacity: .45;
+            cursor: not-allowed;
+        }
+
+        #videos {
+            display: flex;
+            flex-wrap: wrap;
+            gap: .5rem;
+        }
+
+        .player {
+            width: 320px;
+            height: 240px;
+            background: #222;
+            border-radius: 8px;
+            overflow: hidden;
+            position: relative;
+        }
+
+        .player-label {
+            position: absolute;
+            bottom: 6px;
+            left: 8px;
+            background: rgba(0, 0, 0, .6);
+            color: #fff;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: .75rem;
+            pointer-events: none;
+        }
+
+        .notice {
+            font-size: .8rem;
+            color: #aaa;
+            margin-top: .5rem;
+        }
+    </style>
+</head>
+
+<body>
+    <h3>Agora Live Quickstart</h3>
+
+    <div class="controls">
+        <label>App ID:</label>
+        <span id="appId">21a9549ec323484ca5983aadbd3839af</span>
+    </div>
+
+    <div class="controls">
+        <label>Channel:</label>
+        <input id="channel" value="testChannel" />
+        <label>UID:</label>
+        <input id="uid" value="0" type="number" />
+        <label>Role:</label>
+        <select id="role">
+            <option value="host">host</option>
+            <option value="audience">audience</option>
+        </select>
+
+        <button id="joinBtn">Join</button>
+        <button id="leaveBtn" disabled>Leave</button>
+        <button id="switchRoleBtn" disabled>Switch Role</button>
+    </div>
+
+    <div id="videos"></div>
+    <div class="notice">
+        Open this page in two browser tabs. Choose <strong>host</strong> in one and <strong>audience</strong> in the
+        other (or host in both for a battle). Tokens are fetched from your token server.<br><br>
+        <strong>Token Server:</strong> <span id="tokenServerUrl"></span>
+    </div>
+
+    <script>
+        // ============================================
+        // CONFIGURATION - Token server always on host machine
+        // ============================================
+        // Your Mac's local IP - token server runs here
+        const HOST_IP = '192.168.1.111';
+        const TOKEN_SERVER_URL = 'http://' + HOST_IP + ':3000';
+
+        // App ID is REQUIRED by Agora SDK even with tokens
+        const AGORA_APP_ID = '21a9549ec323484ca5983aadbd3839af';
+
+        // Display token server URL
+        document.getElementById('tokenServerUrl').textContent = TOKEN_SERVER_URL;
+        console.log('Page loaded. Token server URL:', TOKEN_SERVER_URL);
+
+        // ============================================
+        // STATE
+        // ============================================
+        let client = null;
+        const localTracks = { audioTrack: null, videoTrack: null };
+        let currentRole = 'audience';
+
+        // ============================================
+        // HELPERS
+        // ============================================
+        function createPlayerContainer(id, labelText) {
+            const container = document.createElement('div');
+            container.id = id;
+            container.className = 'player';
+            const label = document.createElement('div');
+            label.className = 'player-label';
+            label.textContent = labelText;
+            container.appendChild(label);
+            document.getElementById('videos').appendChild(container);
+            return container;
+        }
+
+        function removeElementById(id) {
+            const el = document.getElementById(id);
+            if (el) el.remove();
+        }
+
+        function resetLocalTracks() {
+            localTracks.audioTrack = null;
+            localTracks.videoTrack = null;
+        }
+
+        // ============================================
+        // JOIN HANDLER
+        // ============================================
+        document.getElementById('joinBtn').onclick = async function () {
+            const channelEl = document.getElementById('channel');
+            const uidEl = document.getElementById('uid');
+            const roleEl = document.getElementById('role');
+
+            if (!channelEl || !uidEl || !roleEl) {
+                alert('Error: Form elements not found');
+                console.error('Missing elements:', { channelEl, uidEl, roleEl });
+                return;
+            }
+
+            const channelVal = channelEl.value;
+            const uidVal = uidEl.value;
+            const roleVal = roleEl.value;
+
+            console.log('Form values:', { channelVal, uidVal, roleVal });
+
+            const channel = String(channelVal || '').trim();
+            const uidInput = Number(uidVal) || 0;
+            const role = String(roleVal);
+            currentRole = role;
+
+            if (!channel) {
+                alert('Please enter a channel name.');
+                return;
+            }
+
+            console.log('Parsed values:', { channel, uidInput, role, TOKEN_SERVER_URL });
+
+            // Clean up any previous session
+            if (client) {
+                await leaveChannel();
+            }
+
+            try {
+                // 1. Create Agora client in LIVE mode
+                client = AgoraRTC.createClient({ mode: 'live', codec: 'vp8' });
+                client.setClientRole(role === 'host' ? 'host' : 'audience');
+
+                // 2. Fetch a temporary token from your server
+                const tokenRole = role === 'host' ? 'publisher' : 'subscriber';
+                const url = TOKEN_SERVER_URL + '/rtc/' + encodeURIComponent(channel) + '/' + uidInput + '/' + tokenRole;
+                console.log('Fetching token from:', url);
+
+                const tokenRes = await fetch(url);
+                if (!tokenRes.ok) throw new Error('Token server returned ' + tokenRes.status);
+                const token = await tokenRes.text();
+                console.log('Got token:', token.substring(0, 50) + '...');
+
+                // 3. Set up remote-user event handlers BEFORE joining
+                client.on('user-published', async function (user, mediaType) {
+                    await client.subscribe(user, mediaType);
+                    if (mediaType === 'video') {
+                        const container = createPlayerContainer(user.uid, 'User ' + user.uid);
+                        user.videoTrack.play(container);
+                    }
+                    if (mediaType === 'audio') {
+                        user.audioTrack.play();
+                    }
+                });
+
+                client.on('user-unpublished', function (user) {
+                    removeElementById(user.uid);
+                });
+
+                // 4. Join the channel (App ID is required!)
+                await client.join(AGORA_APP_ID, channel, token, uidInput);
+                console.log('Joined channel "' + channel + '" as ' + role + ' (uid: ' + uidInput + ')');
+
+                // 5. If host, create local tracks and publish
+                if (role === 'host') {
+                    localTracks.audioTrack = await AgoraRTC.createMicrophoneAudioTrack();
+                    localTracks.videoTrack = await AgoraRTC.createCameraVideoTrack();
+
+                    const localContainer = createPlayerContainer('local-player', 'You (Host)');
+                    localTracks.videoTrack.play(localContainer);
+
+                    await client.publish([localTracks.audioTrack, localTracks.videoTrack]);
+                    console.log('Published local tracks');
+                }
+
+                // UI updates
+                document.getElementById('joinBtn').disabled = true;
+                document.getElementById('leaveBtn').disabled = false;
+                document.getElementById('switchRoleBtn').disabled = false;
+
+            } catch (err) {
+                console.error('Join failed:', err);
+                alert('Join failed: ' + (err.message || String(err)));
+                await leaveChannel();
+            }
+        };
+
+        // ============================================
+        // LEAVE HANDLER
+        // ============================================
+        document.getElementById('leaveBtn').onclick = async function () {
+            await leaveChannel();
+        };
+
+        async function leaveChannel() {
+            try {
+                if (localTracks.audioTrack) {
+                    localTracks.audioTrack.stop();
+                    localTracks.audioTrack.close();
+                }
+                if (localTracks.videoTrack) {
+                    localTracks.videoTrack.stop();
+                    localTracks.videoTrack.close();
+                }
+                resetLocalTracks();
+
+                if (client) {
+                    await client.leave();
+                    client = null;
+                }
+
+                document.getElementById('videos').innerHTML = '';
+                document.getElementById('joinBtn').disabled = false;
+                document.getElementById('leaveBtn').disabled = true;
+                document.getElementById('switchRoleBtn').disabled = true;
+            } catch (err) {
+                console.error('Leave error:', err);
+            }
+        }
+
+        // ============================================
+        // ROLE SWITCHING
+        // ============================================
+        document.getElementById('switchRoleBtn').onclick = async function () {
+            if (!client) return;
+
+            const channelEl = document.getElementById('channel');
+            const uidEl = document.getElementById('uid');
+            const channel = String(channelEl.value || '').trim();
+            const uidInput = Number(uidEl.value) || 0;
+            const newRole = currentRole === 'host' ? 'audience' : 'host';
+            currentRole = newRole;
+
+            try {
+                document.getElementById('role').value = newRole;
+                client.setClientRole(newRole === 'host' ? 'host' : 'audience');
+
+                if (newRole === 'host') {
+                    const url = TOKEN_SERVER_URL + '/rtc/' + encodeURIComponent(channel) + '/' + uidInput + '/publisher';
+                    const tokenRes = await fetch(url);
+                    if (!tokenRes.ok) throw new Error('Token server returned ' + tokenRes.status);
+                    const token = await tokenRes.text();
+
+                    try { await client.renewToken(token); } catch (e) { }
+
+                    localTracks.audioTrack = await AgoraRTC.createMicrophoneAudioTrack();
+                    localTracks.videoTrack = await AgoraRTC.createCameraVideoTrack();
+
+                    const localContainer = createPlayerContainer('local-player', 'You (Host)');
+                    localTracks.videoTrack.play(localContainer);
+
+                    await client.publish([localTracks.audioTrack, localTracks.videoTrack]);
+                    console.log('Switched to host and published tracks');
+                } else {
+                    if (localTracks.audioTrack || localTracks.videoTrack) {
+                        await client.unpublish(Object.values(localTracks).filter(Boolean));
+                    }
+                    if (localTracks.audioTrack) {
+                        localTracks.audioTrack.stop();
+                        localTracks.audioTrack.close();
+                    }
+                    if (localTracks.videoTrack) {
+                        localTracks.videoTrack.stop();
+                        localTracks.videoTrack.close();
+                    }
+                    resetLocalTracks();
+                    removeElementById('local-player');
+                    console.log('Switched to audience');
+                }
+            } catch (err) {
+                console.error('Role switch failed:', err);
+                alert('Role switch failed: ' + err.message);
+            }
+        };
+
+        // ============================================
+        // CLEANUP ON PAGE UNLOAD
+        // ============================================
+        window.addEventListener('beforeunload', function () {
+            if (localTracks.audioTrack) localTracks.audioTrack.close();
+            if (localTracks.videoTrack) localTracks.videoTrack.close();
+            if (client) client.leave();
+        });
+    </script>
+</body>
+
+</html>

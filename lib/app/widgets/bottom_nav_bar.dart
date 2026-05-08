@@ -20,7 +20,7 @@ class ModernBottomNavBar extends StatelessWidget {
           begin: Alignment.topCenter,
           end: Alignment.bottomCenter,
           colors: [
-            WeAfricaColors.surfaceDark.withValues(alpha: 0.9),
+            WeAfricaColors.surfaceDark.withValues(alpha: 0.5),
             WeAfricaColors.surfaceDark,
           ],
         ),

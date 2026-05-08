@@ -1,0 +1,37 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Agora Host Demo</title>
+</head>
+<body>
+  <div id="local-player"></div>
+  <button id="start">Start Stream</button>
+
+  <script type="module">
+  // Replace CDN/module imports with correct Agora SDK paths per docs.
+  // Example placeholders:
+  // import AgoraRTC from 'https://unpkg.com/agora-rtc-sdk-ng/dist/agora-rtc-sdk-ng.js';
+  // import AgoraRTM from 'https://unpkg.com/agora-rtm-sdk@1.5.2/dist/agora-rtm-sdk.min.js';
+
+  const APP_ID = '<YOUR_APP_ID>'; // replace
+  const TOKEN_SERVER = 'http://localhost:8080';
+  const CHANNEL = 'demo_channel';
+  const UID = `host_${Date.now()}`;
+
+  async function start() {
+    // 1) Fetch tokens
+    const rtcRes = await fetch(`${TOKEN_SERVER}/rtc-token?channel=${CHANNEL}&uid=${encodeURIComponent(UID)}`);
+    const { token: rtcToken } = await rtcRes.json();
+    const rtmRes = await fetch(`${TOKEN_SERVER}/rtm-token?account=${encodeURIComponent(UID)}`);
+    const { token: rtmToken } = await rtmRes.json();
+
+    // 2) Join RTC and publish (pseudo-code - replace with actual AgoraRTC usage)
+    console.log('RTC token', rtcToken, 'RTM token', rtmToken);
+    alert('Tokens fetched (demo). Integrate Agora SDK per docs to join and publish.');
+  }
+
+  document.getElementById('start').onclick = start;
+  </script>
+</body>
+</html>

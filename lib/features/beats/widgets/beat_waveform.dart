@@ -51,7 +51,7 @@ class _WaveformPainter extends CustomPainter {
     final centerY = size.height / 2;
 
     final paint = Paint()
-      ..color = color.withValues(alpha: isPlaying ? 1.0 : 0.55)
+      ..color = color.withValues(alpha: 0.3)
       ..style = PaintingStyle.fill;
 
     for (int i = 0; i < data.length; i++) {
@@ -73,7 +73,7 @@ class _WaveformPainter extends CustomPainter {
     final t = playheadT;
     if (isPlaying && t != null) {
       final playheadPaint = Paint()
-        ..color = Colors.white.withValues(alpha: 0.9)
+        ..color = Colors.white.withValues(alpha: 0.2)
         ..style = PaintingStyle.stroke
         ..strokeWidth = 2;
 

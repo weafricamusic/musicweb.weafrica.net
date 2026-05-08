@@ -1,0 +1,198 @@
+import 'dart:convert';
+import 'package:http/http.dart' as http;
+import 'package:agora_rtc_engine/agora_rtc_engine.dart';
+import 'package:flutter/foundation.dart';
+import '../../app/config/app_env.dart';
+
+/// Lightweight Agora wrapper used by the vertical slice.
+/// Replace `YOUR_AGORA_APP_ID` with the real App ID in a secure config.
+class AgoraConfig {
+  static String get appId => AppEnv.agoraAppId;
+  static const int uid = 0; // let Agora assign if needed
+}
+
+enum AgoraRole { broadcaster, audience }
+
+class AgoraService {
+  RtcEngine? _engine;
+  bool _initialized = false;
+
+  final ValueNotifier<bool> isJoined = ValueNotifier<bool>(false);
+  final ValueNotifier<bool> isMuted = ValueNotifier<bool>(false);
+  final ValueNotifier<bool> isVideoEnabled = ValueNotifier<bool>(true);
+  final ValueNotifier<int?> remoteUid = ValueNotifier<int?>(null);
+
+  Future<void> initialize() async {
+    if (kIsWeb) {
+      debugPrint('AGORA WEB BYPASS: skipping Agora engine initialization on web');
+      return;
+    }
+
+    if (_initialized && _engine != null) {
+      debugPrint('Agora: already initialized');
+      return;
+    }
+
+    _engine = createAgoraRtcEngine();
+    await _engine!.initialize(RtcEngineContext(
+      appId: AgoraConfig.appId,
+      channelProfile: ChannelProfileType.channelProfileLiveBroadcasting,
+    ));
+
+    await _engine!.enableVideo();
+    await _engine!.startPreview();
+
+    _setupEventHandlers();
+    _initialized = true;
+  }
+
+  void _setupEventHandlers() {
+    _engine!.registerEventHandler(RtcEngineEventHandler(
+      onJoinChannelSuccess: (connection, elapsed) {
+        debugPrint('Agora: joined ${connection.channelId}');
+        isJoined.value = true;
+      },
+      onLeaveChannel: (connection, stats) {
+        debugPrint('Agora: left channel');
+        isJoined.value = false;
+        remoteUid.value = null;
+      },
+      onUserJoined: (connection, uid, elapsed) {
+        debugPrint('Agora: remote user $uid joined');
+        remoteUid.value = uid;
+      },
+      onUserOffline: (connection, uid, reason) {
+        debugPrint('Agora: remote user $uid offline');
+        if (remoteUid.value == uid) remoteUid.value = null;
+      },
+      onConnectionStateChanged: (connection, state, reason) {
+          debugPrint('Agora: connection state $state reason $reason');
+        },
+        onError: (err, msg) {
+          debugPrint('AGORA ERROR: $err $msg');
+        },
+    ));
+  }
+
+
+  Future<String> _fetchAgoraToken(String channelName) async {
+    // Validate channel name before making request
+    if (channelName == null || channelName.trim().isEmpty) {
+      throw Exception('Cannot fetch Agora token: channel name is empty');
+    }
+
+    debugPrint('AGORA: Fetching token for channel: "$channelName"');
+
+    // The Supabase Edge Function expects channel and uid as URL query parameters
+    final uri = Uri.parse(
+      'https://nxkutpjdoidfwpkjbwcm.supabase.co/functions/v1/agora-token',
+    ).replace(queryParameters: {
+      'channel': channelName.trim(),
+      'uid': AgoraConfig.uid.toString(),
+    });
+
+    debugPrint('AGORA: Request URI: $uri');
+
+    final response = await http.post(
+      uri,
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer ${AppEnv.supabaseAnonKey}',
+        'apikey': AppEnv.supabaseAnonKey,
+      },
+    );
+
+    debugPrint('AGORA: Response status: ${response.statusCode}');
+    debugPrint('AGORA: Response body: ${response.body}');
+
+    if (response.statusCode != 200) {
+      throw Exception(
+        'Failed to fetch Agora token: ${response.statusCode} ${response.body}',
+      );
+    }
+
+    final data = jsonDecode(response.body) as Map<String, dynamic>;
+    final token = data['token']?.toString();
+
+    if (token == null || token.isEmpty) {
+      throw Exception('Agora token missing from response');
+    }
+
+    debugPrint('AGORA TOKEN FETCHED successfully');
+    return token;
+  }
+
+  Future<void> joinChannel({
+    required String channelName,
+    required AgoraRole role,
+    String? token,
+  }) async {
+    if (!_initialized) await initialize();
+
+    debugPrint("AGORA JOIN CHANNEL: $channelName");
+
+    // Request permissions before joining
+    await _engine!.enableVideo();
+    await _engine!.enableAudio();
+
+    await _engine!.setClientRole(
+      role: role == AgoraRole.broadcaster
+          ? ClientRoleType.clientRoleBroadcaster
+          : ClientRoleType.clientRoleAudience,
+    );
+
+    final rtcToken = token ?? await _fetchAgoraToken(channelName);
+
+    await _engine!.joinChannel(
+      token: rtcToken,
+      channelId: channelName,
+      uid: AgoraConfig.uid,
+      options: ChannelMediaOptions(
+        clientRoleType: role == AgoraRole.broadcaster
+            ? ClientRoleType.clientRoleBroadcaster
+            : ClientRoleType.clientRoleAudience,
+        publishCameraTrack: role == AgoraRole.broadcaster,
+        publishMicrophoneTrack: role == AgoraRole.broadcaster,
+        autoSubscribeVideo: true,
+        autoSubscribeAudio: true,
+      ),
+    );
+  }
+
+  Future<void> leaveChannel() async {
+    await _engine?.leaveChannel();
+    isJoined.value = false;
+    remoteUid.value = null;
+  }
+
+  Future<void> toggleMute() async {
+    isMuted.value = !isMuted.value;
+    await _engine?.muteLocalAudioStream(isMuted.value);
+  }
+
+  Future<void> toggleVideo() async {
+    isVideoEnabled.value = !isVideoEnabled.value;
+    await _engine?.muteLocalVideoStream(!isVideoEnabled.value);
+  }
+
+  Future<void> switchCamera() async {
+    await _engine?.switchCamera();
+  }
+
+  Future<void> dispose() async {
+    try {
+      await _engine?.release();
+    } catch (_) {}
+
+    _engine = null;
+    _initialized = false;
+  }
+
+  RtcEngine get engine {
+    final e = _engine;
+    if (e == null) {
+      throw StateError('Agora engine has not been initialized yet.');
+    }
+    return e;
+  }
+}

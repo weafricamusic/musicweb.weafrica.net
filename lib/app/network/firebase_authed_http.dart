@@ -175,7 +175,7 @@ class FirebaseAuthedHttp {
       if (user != null) {
         token = await user.getIdToken(forceRefresh);
         if (kDebugMode) {
-          debugPrint('🔑 Firebase token obtained: ${token != null ? "Yes (${token!.length} chars)" : "No"}');
+          debugPrint('🔑 Firebase token obtained: ${token != null ? "Yes (${token.length} chars)" : "No"}');
         }
       } else {
         if (kDebugMode) {

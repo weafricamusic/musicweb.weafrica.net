@@ -19,7 +19,7 @@ class BattleRequestButton extends StatelessWidget {
           borderRadius: BorderRadius.circular(24),
           boxShadow: [
             BoxShadow(
-              color: AppTheme.accentGold.withValues(alpha: ),
+              color: AppTheme.accentGold.withValues(alpha: 0.5),
               blurRadius: 12,
               spreadRadius: 2,
             ),

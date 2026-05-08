@@ -741,8 +741,8 @@ class _PulseTabState extends State<PulseTab> with WidgetsBindingObserver {
     final selected = await showModalBottomSheet<String>(
       context: context,
       showDragHandle: true,
-      backgroundColor: Colors.black.withValues(alpha: 0.85),
-      barrierColor: Colors.black.withValues(alpha: 0.55),
+      backgroundColor: Colors.black.withValues(alpha: 0.3),
+      barrierColor: Colors.black.withValues(alpha: 0.3),
       builder: (context) {
         return SafeArea(
           child: Column(
@@ -761,7 +761,7 @@ class _PulseTabState extends State<PulseTab> with WidgetsBindingObserver {
                 (r) => ListTile(
                   leading: Icon(
                     Icons.flag_outlined,
-                    color: Colors.white.withValues(alpha: 0.85),
+                    color: Colors.white.withValues(alpha: 0.2),
                   ),
                   title: Text(
                     r.label,
@@ -802,8 +802,8 @@ class _PulseTabState extends State<PulseTab> with WidgetsBindingObserver {
     await showModalBottomSheet<void>(
       context: context,
       showDragHandle: true,
-      backgroundColor: Colors.black.withValues(alpha: 0.85),
-      barrierColor: Colors.black.withValues(alpha: 0.55),
+      backgroundColor: Colors.black.withValues(alpha: 0.3),
+      barrierColor: Colors.black.withValues(alpha: 0.3),
       builder: (context) {
         final uid = _firebaseUid;
         final isSaved = _savedVideoIds.contains(video.id);
@@ -824,7 +824,7 @@ class _PulseTabState extends State<PulseTab> with WidgetsBindingObserver {
               ListTile(
                 leading: Icon(
                   isSaved ? Icons.bookmark : Icons.bookmark_border,
-                  color: Colors.white.withValues(alpha: 0.85),
+                  color: Colors.white.withValues(alpha: 0.2),
                 ),
                 title: Text(
                   isSaved ? 'Unsave' : 'Save',
@@ -872,7 +872,7 @@ class _PulseTabState extends State<PulseTab> with WidgetsBindingObserver {
               ListTile(
                 leading: Icon(
                   Icons.block_outlined,
-                  color: Colors.white.withValues(alpha: 0.85),
+                  color: Colors.white.withValues(alpha: 0.2),
                 ),
                 title: const Text(
                   'Not interested',
@@ -928,7 +928,7 @@ class _PulseTabState extends State<PulseTab> with WidgetsBindingObserver {
               ListTile(
                 leading: Icon(
                   Icons.flag_outlined,
-                  color: Colors.white.withValues(alpha: 0.85),
+                  color: Colors.white.withValues(alpha: 0.2),
                 ),
                 title: const Text(
                   'Report',
@@ -942,7 +942,7 @@ class _PulseTabState extends State<PulseTab> with WidgetsBindingObserver {
               ListTile(
                 leading: Icon(
                   Icons.link,
-                  color: Colors.white.withValues(alpha: 0.85),
+                  color: Colors.white.withValues(alpha: 0.2),
                 ),
                 title: const Text(
                   'Copy link',
@@ -968,7 +968,7 @@ class _PulseTabState extends State<PulseTab> with WidgetsBindingObserver {
               ListTile(
                 leading: Icon(
                   Icons.download_outlined,
-                  color: Colors.white.withValues(alpha: 0.85),
+                  color: Colors.white.withValues(alpha: 0.2),
                 ),
                 title: const Text(
                   'Download',
@@ -1386,7 +1386,7 @@ class _LikeAction extends StatelessWidget {
               isLiked ? Icons.favorite : Icons.favorite_border,
               color: isLiked
                   ? AppColors.stageGold
-                  : Colors.white.withValues(alpha: 0.82),
+                  : Colors.white.withValues(alpha: 0.2),
               size: 27,
             ),
           ),
@@ -1395,7 +1395,7 @@ class _LikeAction extends StatelessWidget {
             countLabel,
             style: TextStyle(
               fontSize: 12,
-              color: Colors.white.withValues(alpha: 0.70),
+              color: Colors.white.withValues(alpha: 0.2),
               fontWeight: FontWeight.w700,
             ),
           ),
@@ -1421,14 +1421,14 @@ class _CommentAction extends StatelessWidget {
           Icon(
             Icons.chat_bubble_outline,
             size: 26,
-            color: Colors.white.withValues(alpha: 0.82),
+            color: Colors.white.withValues(alpha: 0.2),
           ),
           const SizedBox(height: 4),
           Text(
             countLabel,
             style: TextStyle(
               fontSize: 12,
-              color: Colors.white.withValues(alpha: 0.70),
+              color: Colors.white.withValues(alpha: 0.2),
               fontWeight: FontWeight.w700,
             ),
           ),
@@ -1453,7 +1453,7 @@ class _ShareAction extends StatelessWidget {
           Icon(
             Icons.share_outlined,
             size: 26,
-            color: Colors.white.withValues(alpha: 0.82),
+            color: Colors.white.withValues(alpha: 0.2),
           ),
         ],
       ),
@@ -1476,7 +1476,7 @@ class _MoreAction extends StatelessWidget {
           Icon(
             Icons.more_horiz,
             size: 26,
-            color: Colors.white.withValues(alpha: 0.82),
+            color: Colors.white.withValues(alpha: 0.2),
           ),
         ],
       ),

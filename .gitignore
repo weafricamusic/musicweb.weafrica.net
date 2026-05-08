@@ -40,6 +40,8 @@ migrate_working_dir/
 .env
 .env.*
 .env.local
+backend/.env
+web/agora-vanilla-quickstart/.env
 admin_dashboard/.next/
 admin_dashboard/node_modules/
 tool/supabase.env.json

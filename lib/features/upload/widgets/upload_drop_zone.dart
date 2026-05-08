@@ -102,7 +102,7 @@ class _UploadDropZoneState extends State<UploadDropZone> {
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        Icon(widget.icon, color: scheme.primary.withValues(alpha: 0.8)),
+                        Icon(widget.icon, color: scheme.primary.withValues(alpha: 0.3)),
                         const SizedBox(height: 8),
                         Text(
                           !widget.enabled

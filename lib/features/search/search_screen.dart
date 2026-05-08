@@ -223,7 +223,7 @@ class _SearchScreenState extends State<SearchScreen> {
         color: const Color(0xFF0B0617),
         border: Border(
           bottom: BorderSide(
-            color: Colors.white.withValues(alpha: 0.05),
+            color: Colors.white.withValues(alpha: 0.2),
           ),
         ),
       ),
@@ -239,7 +239,7 @@ class _SearchScreenState extends State<SearchScreen> {
                 color: const Color(0xFF1B1530),
                 borderRadius: BorderRadius.circular(12),
                 border: Border.all(
-                  color: Colors.white.withValues(alpha: 0.1),
+                  color: Colors.white.withValues(alpha: 0.2),
                 ),
               ),
               child: const Icon(
@@ -258,7 +258,7 @@ class _SearchScreenState extends State<SearchScreen> {
                 color: const Color(0xFF1B1530),
                 borderRadius: BorderRadius.circular(12),
                 border: Border.all(
-                  color: Colors.white.withValues(alpha: 0.1),
+                  color: Colors.white.withValues(alpha: 0.2),
                 ),
               ),
               child: TextField(
@@ -277,7 +277,7 @@ class _SearchScreenState extends State<SearchScreen> {
                 decoration: InputDecoration(
                   hintText: 'Search songs, artists...',
                   hintStyle: TextStyle(
-                    color: Colors.white.withValues(alpha: 0.4),
+                    color: Colors.white.withValues(alpha: 0.2),
                     fontSize: 16,
                   ),
                   prefixIcon: const Icon(
@@ -333,7 +333,7 @@ class _SearchScreenState extends State<SearchScreen> {
             Text(
               'Search for songs and artists',
               style: TextStyle(
-                color: Colors.white.withValues(alpha: 0.5),
+                color: Colors.white.withValues(alpha: 0.2),
                 fontSize: 16,
               ),
             ),
@@ -383,7 +383,7 @@ class _SearchScreenState extends State<SearchScreen> {
         ),
         child: Icon(
           Icons.history,
-          color: Colors.white.withValues(alpha: 0.5),
+          color: Colors.white.withValues(alpha: 0.2),
           size: 20,
         ),
       ),
@@ -397,7 +397,7 @@ class _SearchScreenState extends State<SearchScreen> {
       ),
       trailing: Icon(
         Icons.north_west,
-        color: Colors.white.withValues(alpha: 0.3),
+        color: Colors.white.withValues(alpha: 0.2),
         size: 18,
       ),
       onTap: () => _applyQueryAndSearch(query),
@@ -418,14 +418,14 @@ class _SearchScreenState extends State<SearchScreen> {
           children: [
             Icon(
               Icons.error_outline,
-              color: Colors.white.withValues(alpha: 0.3),
+              color: Colors.white.withValues(alpha: 0.2),
               size: 64,
             ),
             const SizedBox(height: 16),
             Text(
               _error!,
               style: TextStyle(
-                color: Colors.white.withValues(alpha: 0.7),
+                color: Colors.white.withValues(alpha: 0.2),
                 fontSize: 16,
               ),
             ),
@@ -450,14 +450,14 @@ class _SearchScreenState extends State<SearchScreen> {
           children: [
             Icon(
               Icons.search_off,
-              color: Colors.white.withValues(alpha: 0.3),
+              color: Colors.white.withValues(alpha: 0.2),
               size: 64,
             ),
             const SizedBox(height: 16),
             Text(
               'No results found',
               style: TextStyle(
-                color: Colors.white.withValues(alpha: 0.7),
+                color: Colors.white.withValues(alpha: 0.2),
                 fontSize: 18,
                 fontWeight: FontWeight.w600,
               ),
@@ -466,7 +466,7 @@ class _SearchScreenState extends State<SearchScreen> {
             Text(
               'Try a different search term',
               style: TextStyle(
-                color: Colors.white.withValues(alpha: 0.5),
+                color: Colors.white.withValues(alpha: 0.2),
                 fontSize: 14,
               ),
             ),
@@ -495,7 +495,7 @@ class _SearchScreenState extends State<SearchScreen> {
           color: const Color(0xFF1B1530),
           borderRadius: BorderRadius.circular(16),
           border: Border.all(
-            color: Colors.white.withValues(alpha: 0.05),
+            color: Colors.white.withValues(alpha: 0.2),
           ),
         ),
         child: Row(
@@ -548,7 +548,7 @@ class _SearchScreenState extends State<SearchScreen> {
                   Text(
                     song['artist'] ?? 'Unknown Artist',
                     style: TextStyle(
-                      color: Colors.white.withValues(alpha: 0.6),
+                      color: Colors.white.withValues(alpha: 0.2),
                       fontSize: 14,
                     ),
                     maxLines: 1,
@@ -561,7 +561,7 @@ class _SearchScreenState extends State<SearchScreen> {
                         Text(
                           song['genre'],
                           style: TextStyle(
-                            color: WeAfricaColors.gold.withValues(alpha: 0.8),
+                            color: WeAfricaColors.gold.withValues(alpha: 0.3),
                             fontSize: 12,
                             fontWeight: FontWeight.w500,
                           ),
@@ -571,13 +571,13 @@ class _SearchScreenState extends State<SearchScreen> {
                       Icon(
                         Icons.play_arrow,
                         size: 14,
-                        color: Colors.white.withValues(alpha: 0.4),
+                        color: Colors.white.withValues(alpha: 0.2),
                       ),
                       const SizedBox(width: 4),
                       Text(
                         _formatNumber(song['plays_count']),
                         style: TextStyle(
-                          color: Colors.white.withValues(alpha: 0.5),
+                          color: Colors.white.withValues(alpha: 0.2),
                           fontSize: 12,
                         ),
                       ),

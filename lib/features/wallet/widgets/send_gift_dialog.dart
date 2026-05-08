@@ -89,7 +89,7 @@ class SendGiftDialog extends StatelessWidget {
                     child: Container(
                       padding: const EdgeInsets.all(12),
                       decoration: BoxDecoration(
-                        color: const Color(0xFFD4AF37).withValues(alpha: 0.1),
+                        color: const Color(0xFFD4AF37).withValues(alpha: 0.3),
                         borderRadius: BorderRadius.circular(16),
                         border: Border.all(
                           color: const Color(0xFFD4AF37).withValues(alpha: 0.3),
@@ -119,7 +119,7 @@ class SendGiftDialog extends StatelessWidget {
                               vertical: 2,
                             ),
                             decoration: BoxDecoration(
-                              color: const Color(0xFFD4AF37).withValues(alpha: 0.2),
+                              color: const Color(0xFFD4AF37).withValues(alpha: 0.3),
                               borderRadius: BorderRadius.circular(8),
                             ),
                             child: Text(
@@ -147,7 +147,7 @@ class SendGiftDialog extends StatelessWidget {
               child: Text(
                 'Cancel',
                 style: TextStyle(
-                  color: Colors.white.withValues(alpha: 0.7),
+                  color: Colors.white.withValues(alpha: 0.2),
                   fontSize: 14,
                 ),
               ),

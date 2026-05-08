@@ -33,7 +33,7 @@ class AboutWeAfricaMusicPage extends StatelessWidget {
                       width: 54,
                       height: 54,
                       decoration: BoxDecoration(
-                        color: AppColors.brandOrange.withValues(alpha: 0.12),
+                        color: AppColors.brandOrange.withValues(alpha: 0.3),
                         borderRadius: BorderRadius.circular(14),
                         border: Border.all(color: AppColors.border),
                       ),

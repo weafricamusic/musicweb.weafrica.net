@@ -90,13 +90,13 @@ class _PulseRingPainter extends CustomPainter {
     final breathe = 0.85 + (sin(progress * pi * 2) * 0.15);
 
     final glowPaint = Paint()
-      ..color = color.withValues(alpha: (0.18 * breathe * opacity).clamp(0.0, 1.0))
+      ..color = color.withValues(alpha: 0.5)
       ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 18)
       ..style = PaintingStyle.stroke
       ..strokeWidth = 6;
 
     final ringPaint = Paint()
-      ..color = color.withValues(alpha: (0.45 * breathe * opacity).clamp(0.0, 1.0))
+      ..color = color.withValues(alpha: 0.5)
       ..style = PaintingStyle.stroke
       ..strokeWidth = 2.2;
 

@@ -1,21 +1,36 @@
 import 'package:flutter/material.dart';
 
-import 'live_battle_swipe_screen.dart';
-
-/// Dedicated entry point for TikTok-style vertical battle feed browsing.
-///
-/// This wrapper keeps battle rendering logic centralized in
-/// [LiveBattleSwipeScreen], which already uses a vertical PageView.
+/// Stub: Vertical battle feed screen - full-screen vertical battle viewing.
 class VerticalBattleFeedScreen extends StatelessWidget {
-  const VerticalBattleFeedScreen({
-    super.key,
-    this.initialChannelId,
-  });
-
   final String? initialChannelId;
+
+  const VerticalBattleFeedScreen({super.key, this.initialChannelId});
 
   @override
   Widget build(BuildContext context) {
-    return LiveBattleSwipeScreen(initialChannelId: initialChannelId);
+    return Scaffold(
+      backgroundColor: Colors.black,
+      body: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(Icons.sports_mma, size: 64, color: Colors.white54),
+            const SizedBox(height: 16),
+            const Text(
+              'Battle feed coming soon',
+              style: TextStyle(color: Colors.white54, fontSize: 18),
+            ),
+            if (initialChannelId != null && initialChannelId!.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Text(
+                  'Channel: $initialChannelId',
+                  style: const TextStyle(color: Colors.white38, fontSize: 14),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
   }
 }

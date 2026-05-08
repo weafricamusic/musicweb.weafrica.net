@@ -292,8 +292,8 @@ class _MenuRow extends StatelessWidget {
 
     final effectiveEnabled = enabled && onTap != null;
     final baseTextColor = isSelected ? AppColors.stageGold : AppColors.textMuted;
-    final textColor = effectiveEnabled ? baseTextColor : AppColors.textMuted.withValues(alpha: 0.55);
-    final iconColor = effectiveEnabled ? (isSelected ? AppColors.stageGold : AppColors.textMuted) : AppColors.textMuted.withValues(alpha: 0.55);
+    final textColor = effectiveEnabled ? baseTextColor : AppColors.textMuted.withValues(alpha: 0.5);
+    final iconColor = effectiveEnabled ? (isSelected ? AppColors.stageGold : AppColors.textMuted) : AppColors.textMuted.withValues(alpha: 0.5);
 
     return InkWell(
       onTap: effectiveEnabled ? onTap : null,
@@ -301,9 +301,9 @@ class _MenuRow extends StatelessWidget {
         margin: EdgeInsets.fromLTRB(16 + indent, 4, 16, 4),
         padding: EdgeInsets.symmetric(horizontal: 14, vertical: compact ? 10 : 12),
         decoration: BoxDecoration(
-          color: isSelected ? AppColors.stageGold.withValues(alpha: 0.10) : Colors.transparent,
+          color: isSelected ? AppColors.stageGold.withValues(alpha: 0.5) : Colors.transparent,
           borderRadius: BorderRadius.circular(12),
-          border: isSelected ? Border.all(color: AppColors.stageGold.withValues(alpha: 0.28)) : null,
+          border: isSelected ? Border.all(color: AppColors.stageGold.withValues(alpha: 0.5)) : null,
         ),
         child: Row(
           children: [
@@ -556,7 +556,7 @@ class _UserFooter extends StatelessWidget {
             decoration: BoxDecoration(
               color: AppColors.surface2,
               borderRadius: BorderRadius.circular(30),
-              border: Border.all(color: AppColors.stageGold.withValues(alpha: 0.65)),
+              border: Border.all(color: AppColors.stageGold.withValues(alpha: 0.5)),
             ),
             child: const Icon(Icons.person, color: AppColors.stageGold, size: 20),
           ),

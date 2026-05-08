@@ -1,0 +1,22 @@
+{
+    "name": "agora-vanilla-quickstart",
+    "version": "1.0.0",
+    "description": "Minimal Agora Web Live Quickstart: vanilla HTML client + Node.js token server",
+    "private": true,
+    "scripts": {
+        "server": "node token-server.js",
+        "open": "npx serve . -p 5500",
+        "test-token": "node -e \"console.log('Test the token server manually: curl http://localhost:3000/rtc/testChannel/123/publisher')\""
+    },
+    "dependencies": {
+        "agora-access-token": "^2.0.4",
+        "dotenv": "^16.0.0",
+        "express": "^4.18.2"
+    },
+    "devDependencies": {
+        "serve": "^14.2.0"
+    },
+    "engines": {
+        "node": ">=16.0.0"
+    }
+}

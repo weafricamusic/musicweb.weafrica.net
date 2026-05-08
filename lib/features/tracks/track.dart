@@ -23,23 +23,6 @@ class Track {
     this.promotionEndsAt,
   });
 
-  /// Convenience factory for simple track creation with string URLs
-  factory Track.simple({
-    required String id,
-    required String title,
-    required String artist,
-    String? audioUrl,
-    String? artworkUrl,
-  }) {
-    return Track(
-      id: id,
-      title: title,
-      artist: artist,
-      audioUri: audioUrl != null && audioUrl.isNotEmpty ? Uri.tryParse(audioUrl) : null,
-      artworkUri: artworkUrl != null && artworkUrl.isNotEmpty ? Uri.tryParse(artworkUrl) : null,
-    );
-  }
-
   final String? id;
   final String title;
   final String artist;
@@ -63,6 +46,24 @@ class Track {
     if (plan == 'premium') return 'PROMOTED';
     if (plan == 'pro') return 'BOOSTED';
     return 'SPONSORED';
+  }
+
+  factory Track.simple({
+    required String id,
+    required String title,
+    required String artist,
+    String? audioUrl,
+    String? artworkUrl,
+    Duration? duration,
+  }) {
+    return Track(
+      id: id,
+      title: title,
+      artist: artist,
+      audioUri: audioUrl != null ? Uri.tryParse(audioUrl) : null,
+      artworkUri: artworkUrl != null ? Uri.tryParse(artworkUrl) : null,
+      duration: duration,
+    );
   }
 
   factory Track.fromSupabase(Map<String, dynamic> row) {

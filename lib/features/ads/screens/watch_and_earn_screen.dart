@@ -130,7 +130,7 @@ class _WatchAndEarnScreenState extends State<WatchAndEarnScreen> {
                 'Watch short ads to earn coins and support your favorite artists',
                 textAlign: TextAlign.center,
                 style: TextStyle(
-                  color: Colors.white.withValues(alpha: 0.7),
+                  color: Colors.white.withValues(alpha: 0.2),
                   fontSize: 16,
                   fontWeight: FontWeight.w600,
                 ),
@@ -162,7 +162,7 @@ class _WatchAndEarnScreenState extends State<WatchAndEarnScreen> {
                         Text(
                           'Watch 1 Ad',
                           style: TextStyle(
-                            color: Colors.white.withValues(alpha: 0.9),
+                            color: Colors.white.withValues(alpha: 0.2),
                             fontSize: 18,
                             fontWeight: FontWeight.w700,
                           ),
@@ -176,7 +176,7 @@ class _WatchAndEarnScreenState extends State<WatchAndEarnScreen> {
                         Container(
                           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                           decoration: BoxDecoration(
-                            color: const Color(0xFFD4AF37).withValues(alpha: 0.2),
+                            color: const Color(0xFFD4AF37).withValues(alpha: 0.3),
                             borderRadius: BorderRadius.circular(12),
                             border: Border.all(
                               color: const Color(0xFFD4AF37).withValues(alpha: 0.3),
@@ -209,7 +209,7 @@ class _WatchAndEarnScreenState extends State<WatchAndEarnScreen> {
                     
                     // Divider
                     Divider(
-                      color: Colors.white.withValues(alpha: 0.1),
+                      color: Colors.white.withValues(alpha: 0.2),
                       height: 1,
                     ),
                     
@@ -221,14 +221,14 @@ class _WatchAndEarnScreenState extends State<WatchAndEarnScreen> {
                       children: [
                         Icon(
                           Icons.info_outline,
-                          color: Colors.white.withValues(alpha: 0.5),
+                          color: Colors.white.withValues(alpha: 0.2),
                           size: 16,
                         ),
                         const SizedBox(width: 8),
                         Text(
                           '$availableAds ads remaining today',
                           style: TextStyle(
-                            color: Colors.white.withValues(alpha: 0.6),
+                            color: Colors.white.withValues(alpha: 0.2),
                             fontSize: 14,
                             fontWeight: FontWeight.w600,
                           ),

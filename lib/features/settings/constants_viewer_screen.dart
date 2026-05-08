@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import '../../app/config/api_env.dart';
-import '../../app/config/app_env.dart';
+import 'package:weafrica_music/app/config/app_env.dart';
 import '../../app/config/firebase_web_env.dart';
 import '../../app/config/supabase_env.dart';
 import '../../app/theme.dart';
@@ -185,7 +185,7 @@ class _InfoRow extends StatelessWidget {
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
               decoration: BoxDecoration(
-                color: Theme.of(context).colorScheme.secondary.withValues(alpha: 0.12),
+                color: Theme.of(context).colorScheme.secondary.withValues(alpha: 0.3),
                 borderRadius: BorderRadius.circular(8),
               ),
               child: Text(

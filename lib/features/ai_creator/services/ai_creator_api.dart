@@ -5,7 +5,7 @@ import 'dart:io';
 import 'package:http/http.dart' as http;
 
 import '../../../app/config/api_env.dart';
-import '../../../app/config/app_env.dart';
+import 'package:weafrica_music/app/config/app_env.dart';
 import '../../../app/network/firebase_authed_http.dart';
 import '../../auth/user_role.dart';
 import '../models/ai_creator_models.dart';

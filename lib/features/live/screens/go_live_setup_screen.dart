@@ -1,677 +1,608 @@
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
-import '../../../shared/theme/app_colors.dart';
-import '../../../shared/theme/app_gradients.dart';
-import '../../auth/user_role.dart';
+import 'package:flutter/foundation.dart';
 import 'package:camera/camera.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
-import '../../../screens/battle_live_screen.dart';
-import '../../../screens/solo_live_screen.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-class GoLiveSetupScreen extends StatefulWidget {
+import '../../auth/user_role.dart';
+import '../providers/live_session_provider.dart';
+import '../presentation/screens/artist_live_screen.dart';
+
+class GoLiveSetupScreen extends ConsumerStatefulWidget {
   final UserRole role;
-  final String? hostId;
-  final String? hostName;
-  final bool? initialBattleModeEnabled;
+  final String hostId;
+  final String hostName;
+  final bool battleModeEnabled;
 
   const GoLiveSetupScreen({
-    super.key, 
-    required this.role, 
-    this.hostId, 
-    this.hostName,
-    this.initialBattleModeEnabled,
+    super.key,
+    required this.role,
+    required this.hostId,
+    required this.hostName,
+    this.battleModeEnabled = false,
   });
 
   @override
-  State<GoLiveSetupScreen> createState() => _GoLiveSetupScreenState();
+  ConsumerState<GoLiveSetupScreen> createState() => _GoLiveSetupScreenState();
 }
 
-class _GoLiveSetupScreenState extends State<GoLiveSetupScreen> with SingleTickerProviderStateMixin {
-  late TabController _tabController;
-  CameraController? _cameraController;
-  bool _isBattleMode = false;
-  bool _allowComments = true;
-  bool _allowGifts = true;
-  bool _recordStream = false;
-  bool _isPublic = true;
-  String _selectedCategory = 'Music';
-  String _streamTitle = '';
+class _GoLiveSetupScreenState extends ConsumerState<GoLiveSetupScreen> {
   final TextEditingController _titleController = TextEditingController();
-  String? _selectedGoal;
-  int _goalTarget = 100;
-  String _goalReward = '';
 
-  final List<String> _categories = [
-    'Music', 'DJ Set', 'Battle', 'Talk Show', 'Tutorial', 'Other'
+  String _selectedCategory = 'Live Performance';
+  String _selectedQuality = 'High';
+  bool _battleMode = false;
+  bool _isLoading = false;
+
+  CameraController? _cameraController;
+  bool _cameraReady = false;
+
+  final List<String> _categories = const [
+    'Live Performance',
+    'DJ Mix',
+    'Freestyle',
+    'Afrobeats',
+    'Amapiano',
+    'Hip Hop',
+    'Gospel',
+    'Reggae / Dancehall',
+    'New Song Preview',
+    'Behind the Music',
+    'Fan Q&A',
+    'Battle',
   ];
+
+  final List<Map<String, String>> _qualities = const [
+    {'label': 'Low', 'rate': '64kbps'},
+    {'label': 'Standard', 'rate': '128kbps'},
+    {'label': 'High', 'rate': '256kbps'},
+  ];
+
+  static const Color _bg = Color(0xFF08080C);
+  static const Color _surface = Color(0xFF121218);
+  static const Color _gold = Color(0xFFFFC850);
+  static const Color _goldDark = Color(0xFFC49420);
+  static const Color _red = Color(0xFFFF3C3C);
 
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 2, vsync: this);
-    _isBattleMode = widget.initialBattleModeEnabled ?? false;
-    _initializeCamera();
+    _battleMode = widget.battleModeEnabled;
+    _initCamera();
   }
 
-  Future<void> _initializeCamera() async {
+  Future<void> _initCamera() async {
     try {
       final cameras = await availableCameras();
+
       final frontCamera = cameras.firstWhere(
         (camera) => camera.lensDirection == CameraLensDirection.front,
         orElse: () => cameras.first,
       );
-      
+
       _cameraController = CameraController(
         frontCamera,
         ResolutionPreset.medium,
+        enableAudio: false,
       );
-      
-      await _cameraController?.initialize();
-      if (mounted) setState(() {});
+
+      await _cameraController!.initialize();
+
+      if (mounted) {
+        setState(() => _cameraReady = true);
+      }
     } catch (e) {
-      // Camera permission not granted or not available
+      debugPrint('GO LIVE CAMERA ERROR: $e');
     }
   }
 
   @override
   void dispose() {
-    _cameraController?.dispose();
-    _tabController.dispose();
+    if (!kIsWeb) _cameraController?.dispose();
     _titleController.dispose();
     super.dispose();
   }
 
-  void _startLiveStream() async {
-    // First dispose camera controller to release hardware resources
-    await _cameraController?.dispose();
-    
-    // Navigate to appropriate live screen
-      if (_isBattleMode) {
-        try {
-          final user = FirebaseAuth.instance.currentUser;
-            if (user == null) {
-              throw Exception('Supabase user is not logged in. Please log in again.');
-            }
+  Future<void> _startLive() async {
+    final title = _titleController.text.trim();
 
-            final channelId = 'battle_${user.uid}_${DateTime.now().millisecondsSinceEpoch}';
+    if (title.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please enter a title for your stream')),
+      );
+      return;
+    }
 
-          debugPrint('🔴 START LIVE user=${user.uid} email=${user.email} channel=$channelId');
+    setState(() => _isLoading = true);
 
-            final response = await Supabase.instance.client
-              .from('live_sessions')
-              .insert({
-                'host_id': user.uid,
-                'host_name': user.displayName ?? widget.hostName ?? 'Live Host',
-                'title': _titleController.text.trim().isEmpty
-                    ? 'Battle Live'
-                    : _titleController.text.trim(),
-                'channel_id': channelId,
-                'thumbnail_url': user.photoURL,
-                'is_live': true,
-                  'status': 'live',
-                'live_type': 'battle',
-                'viewer_count': 0,
-                'gift_count': 0,
-              })
-              .select('id')
-              .single();
-
-          final sessionId = response['id'] as String;
-
-          if (!mounted) return;
-
-          Navigator.pushReplacement(
-            context,
-            MaterialPageRoute(
-              builder: (_) => BattleLiveScreen(
-                liveSessionId: sessionId,
-                channelId: channelId,
-              ),
-            ),
-          );
-        } catch (e) {
-          debugPrint('FAILED TO CREATE BATTLE LIVE SESSION: $e');
-          if (!mounted) return;
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Failed to create battle live session: $e')),
-          );
-        }
-      } else {
-        try {
-          final user = FirebaseAuth.instance.currentUser;
-            if (user == null) {
-              throw Exception('Supabase user is not logged in. Please log in again.');
-            }
-
-            final channelId = 'solo_${user.uid}_${DateTime.now().millisecondsSinceEpoch}';
-
-          debugPrint('🔴 START LIVE user=${user.uid} email=${user.email} channel=$channelId');
-
-            final response = await Supabase.instance.client
-              .from('live_sessions')
-              .insert({
-                'host_id': user.uid,
-                'host_name': user.displayName ?? widget.hostName ?? 'Live Host',
-                'title': _titleController.text.trim().isEmpty
-                    ? 'Live Now'
-                    : _titleController.text.trim(),
-                'channel_id': channelId,
-                'thumbnail_url': user.photoURL,
-                'is_live': true,
-                  'status': 'live',
-                'live_type': 'solo',
-                'viewer_count': 0,
-                'gift_count': 0,
-              })
-              .select('id')
-              .single();
-
-          final sessionId = response['id'] as String;
-
-          if (!mounted) return;
-
-          Navigator.pushReplacement(
-            context,
-            MaterialPageRoute(
-              builder: (_) => SoloLiveScreen(
-                liveSessionId: sessionId,
-                channelId: channelId,
-              ),
-            ),
-          );
-        } catch (e) {
-          debugPrint('FAILED TO CREATE LIVE SESSION: $e');
-          if (!mounted) return;
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Failed to create live session: $e')),
-          );
-        }
-      }
+    if (!mounted) return;
+    Navigator.of(context).pushReplacement(
+      MaterialPageRoute(
+        builder: (_) => ArtistLiveScreen(
+          userId: widget.hostId,
+          userName: widget.hostName,
+          title: title,
+          category: _selectedCategory,
+        ),
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: AppColors.grassDark,
-      body: Column(
+      backgroundColor: _bg,
+      body: Stack(
         children: [
-          // Camera Preview Area
-          Container(
-            height: MediaQuery.of(context).size.height * 0.45,
-            width: double.infinity,
-            color: Colors.black,
-            child: _cameraController != null && _cameraController!.value.isInitialized
+          Positioned.fill(
+            child: _cameraReady && _cameraController != null
                 ? CameraPreview(_cameraController!)
-                : const Center(
+                : Container(color: Colors.black),
+          ),
+
+          Positioned.fill(
+            child: Container(color: Colors.black.withOpacity(0.55)),
+          ),
+
+          SafeArea(
+            child: Column(
+              children: [
+                _header(context),
+                Expanded(
+                  child: SingleChildScrollView(
+                    padding: const EdgeInsets.only(bottom: 30),
                     child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        Icon(Icons.videocam_off, size: 60, color: Colors.white30),
-                        SizedBox(height: 12),
-                        Text(
-                          'Camera not available',
-                          style: TextStyle(color: Colors.white38, fontSize: 14),
+                        _hero(),
+                        _section(label: 'STREAM TITLE', child: _titleInput()),
+                        _section(label: 'CATEGORY', child: _categoryChips()),
+                        _section(
+                          label: 'AUDIO QUALITY',
+                          child: _qualityCards(),
                         ),
+                        _section(label: 'BATTLE', child: _battleToggle()),
+                        _goLiveButton(),
+                        _tipsCard(),
                       ],
                     ),
                   ),
-          ),
-
-          // Tab Bar
-          Container(
-            color: AppColors.grassDark,
-            child: TabBar(
-              controller: _tabController,
-              indicatorColor: AppColors.grassMint,
-              labelColor: Colors.white,
-              unselectedLabelColor: Colors.white54,
-              tabs: const [
-                Tab(text: 'SOLO LIVE'),
-                Tab(text: 'BATTLE'),
-              ],
-            ),
-          ),
-
-          // Content
-          Expanded(
-            child: TabBarView(
-              controller: _tabController,
-              children: [
-                // Solo Live Setup
-                _buildSoloSetup(),
-                // Battle Setup
-                _buildBattleSetup(),
-              ],
-            ),
-          ),
-
-          // Start Button
-          Padding(
-            padding: const EdgeInsets.all(16),
-            child: GestureDetector(
-              onTap: _startLiveStream,
-              child: Container(
-                width: double.infinity,
-                padding: const EdgeInsets.symmetric(vertical: 18),
-                decoration: BoxDecoration(
-                  gradient: AppGradients.primaryButton,
-                  borderRadius: BorderRadius.circular(20),
-                  boxShadow: [
-                    BoxShadow(
-                      color: AppColors.grassBright.withValues(alpha: ),
-                      blurRadius: 15,
-                      offset: const Offset(0, 4),
-                    ),
-                  ],
                 ),
-                child: const Row(
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _header(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(20, 14, 20, 16),
+      color: _surface,
+      child: Row(
+        children: [
+          InkWell(
+            onTap: () => Navigator.of(context).maybePop(),
+            borderRadius: BorderRadius.circular(14),
+            child: Container(
+              width: 36,
+              height: 36,
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.05),
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: const Icon(
+                Icons.chevron_left,
+                color: Colors.white,
+                size: 24,
+              ),
+            ),
+          ),
+          const Expanded(
+            child: Text(
+              'GO LIVE',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 15,
+                fontWeight: FontWeight.w800,
+                letterSpacing: 1.5,
+              ),
+            ),
+          ),
+          const SizedBox(width: 36),
+        ],
+      ),
+    );
+  }
+
+  Widget _hero() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(24, 18, 24, 18),
+      child: Center(
+        child: Container(
+          width: 88,
+          height: 88,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            color: Colors.black.withOpacity(0.28),
+            border: Border.all(color: _gold, width: 2),
+            boxShadow: [
+              BoxShadow(
+                color: _gold.withOpacity(0.22),
+                blurRadius: 18,
+                spreadRadius: 1,
+              ),
+            ],
+          ),
+          child: const Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              _LiveDot(),
+              SizedBox(height: 7),
+              Text(
+                'LIVE',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: 2,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _ring(double size) {
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        border: Border.all(color: _gold.withOpacity(0.08)),
+      ),
+    );
+  }
+
+  Widget _section({required String label, required Widget child}) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(24, 0, 24, 28),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            label,
+            style: TextStyle(
+              color: Colors.white.withOpacity(0.40),
+              fontSize: 11,
+              fontWeight: FontWeight.w800,
+              letterSpacing: 1.2,
+            ),
+          ),
+          const SizedBox(height: 12),
+          child,
+        ],
+      ),
+    );
+  }
+
+  Widget _titleInput() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 4),
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.05),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.white.withOpacity(0.08)),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.mic, color: _gold.withOpacity(0.65), size: 22),
+          const SizedBox(width: 12),
+          Expanded(
+            child: TextField(
+              controller: _titleController,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 15,
+                fontWeight: FontWeight.w600,
+              ),
+              decoration: InputDecoration(
+                hintText: 'Example: DJ mix, new song preview, fan Q&A...',
+                hintStyle: TextStyle(color: Colors.white.withOpacity(0.35)),
+                border: InputBorder.none,
+              ),
+            ),
+          ),
+          if (_titleController.text.isNotEmpty)
+            IconButton(
+              onPressed: () => setState(() => _titleController.clear()),
+              icon: Icon(
+                Icons.close,
+                color: Colors.white.withOpacity(0.35),
+                size: 20,
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _categoryChips() {
+    return Wrap(
+      spacing: 10,
+      runSpacing: 10,
+      children: _categories.map((cat) {
+        final active = _selectedCategory == cat;
+
+        return ChoiceChip(
+          label: Text(cat),
+          selected: active,
+          onSelected: (_) => setState(() => _selectedCategory = cat),
+          backgroundColor: Colors.white.withOpacity(0.05),
+          selectedColor: _gold.withOpacity(0.15),
+          side: BorderSide(
+            color: active ? _gold : Colors.white.withOpacity(0.08),
+          ),
+          labelStyle: TextStyle(
+            color: active ? _gold : Colors.white.withOpacity(0.70),
+            fontWeight: active ? FontWeight.w800 : FontWeight.w600,
+            fontSize: 13,
+          ),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20),
+          ),
+        );
+      }).toList(),
+    );
+  }
+
+  Widget _qualityCards() {
+    return Row(
+      children: _qualities.map((q) {
+        final label = q['label']!;
+        final active = _selectedQuality == label;
+
+        return Expanded(
+          child: GestureDetector(
+            onTap: () => setState(() => _selectedQuality = label),
+            child: Container(
+              margin: EdgeInsets.only(right: label == 'High' ? 0 : 10),
+              padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 10),
+              decoration: BoxDecoration(
+                color: active
+                    ? _gold.withOpacity(0.10)
+                    : Colors.white.withOpacity(0.05),
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(
+                  color: active
+                      ? _gold.withOpacity(0.50)
+                      : Colors.white.withOpacity(0.08),
+                ),
+              ),
+              child: Column(
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      if (active)
+                        Container(
+                          width: 14,
+                          height: 14,
+                          margin: const EdgeInsets.only(right: 4),
+                          decoration: const BoxDecoration(
+                            color: _gold,
+                            shape: BoxShape.circle,
+                          ),
+                          child: const Icon(
+                            Icons.check,
+                            color: Colors.black,
+                            size: 10,
+                          ),
+                        ),
+                      Text(
+                        label,
+                        style: TextStyle(
+                          color: active ? _gold : Colors.white,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    q['rate']!,
+                    style: TextStyle(
+                      color: Colors.white.withOpacity(0.40),
+                      fontSize: 10,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      }).toList(),
+    );
+  }
+
+  Widget _battleToggle() {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.03),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.white.withOpacity(0.06)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 44,
+            height: 44,
+            decoration: BoxDecoration(
+              color: _gold.withOpacity(0.10),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: const Icon(Icons.groups_2, color: _gold),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Battle Mode',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  'Invite another artist to battle',
+                  style: TextStyle(
+                    color: Colors.white.withOpacity(0.40),
+                    fontSize: 11,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Switch(
+            value: _battleMode,
+            onChanged: (v) => setState(() => _battleMode = v),
+            activeColor: _gold,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _goLiveButton() {
+    return GestureDetector(
+      onTap: _isLoading ? null : _startLive,
+      child: Container(
+        height: 56,
+        margin: const EdgeInsets.fromLTRB(24, 0, 24, 24),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(28),
+          gradient: const LinearGradient(
+            colors: [_gold, _goldDark],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: _gold.withOpacity(0.30),
+              blurRadius: 30,
+              offset: const Offset(0, 8),
+            ),
+          ],
+        ),
+        child: Center(
+          child: _isLoading
+              ? const SizedBox(
+                  width: 22,
+                  height: 22,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2.4,
+                    color: Colors.black,
+                  ),
+                )
+              : const Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    Icon(Icons.fiber_manual_record, color: Colors.white, size: 20),
+                    _LiveDot(size: 8),
                     SizedBox(width: 10),
                     Text(
-                      'START LIVE',
+                      'START BROADCAST',
                       style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 16,
-                        fontWeight: FontWeight.w700,
+                        color: Colors.black,
+                        fontSize: 15,
+                        fontWeight: FontWeight.w900,
                         letterSpacing: 1,
                       ),
                     ),
                   ],
                 ),
-              ),
-            ),
-          ),
-        ],
+        ),
       ),
     );
   }
 
-  Widget _buildSoloSetup() {
-    return ListView(
-      padding: const EdgeInsets.all(20),
-      children: [
-        // Stream Title
-        const Text(
-          'Stream Title',
-          style: TextStyle(
-            color: Colors.white,
-            fontSize: 14,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-        const SizedBox(height: 8),
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 16),
-          decoration: BoxDecoration(
-            color: Colors.white.withValues(alpha: ),
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: Colors.white.withValues(alpha: )),
-          ),
-          child: TextField(
-            controller: _titleController,
-            style: const TextStyle(color: Colors.white),
-            decoration: const InputDecoration(
-              hintText: 'What are you streaming today?',
-              hintStyle: TextStyle(color: Colors.white38),
-              border: InputBorder.none,
-            ),
-          ),
-        ),
-
-        const SizedBox(height: 20),
-
-        // Category
-        const Text(
-          'Category',
-          style: TextStyle(
-            color: Colors.white,
-            fontSize: 14,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-        const SizedBox(height: 12),
-        SizedBox(
-          height: 40,
-          child: ListView.builder(
-            scrollDirection: Axis.horizontal,
-            itemCount: _categories.length,
-            itemBuilder: (context, index) {
-              final category = _categories[index];
-              final isSelected = _selectedCategory == category;
-              return GestureDetector(
-                onTap: () {
-                  setState(() => _selectedCategory = category);
-                },
-                child: Container(
-                  margin: const EdgeInsets.only(right: 10),
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  decoration: BoxDecoration(
-                    color: isSelected ? AppColors.grassMint.withValues(alpha: ) : Colors.white.withValues(alpha: ),
-                    borderRadius: BorderRadius.circular(20),
-                    border: Border.all(
-                      color: isSelected ? AppColors.grassMint : Colors.white.withValues(alpha: ),
-                    ),
-                  ),
-                  child: Center(
-                    child: Text(
-                      category,
-                      style: TextStyle(
-                        color: isSelected ? AppColors.grassMint : Colors.white70,
-                        fontSize: 13,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
-                ),
-              );
-            },
-          ),
-        ),
-
-        const SizedBox(height: 24),
-
-        // Settings Toggles
-        _buildToggleRow('Allow Comments', _allowComments, (value) {
-          setState(() => _allowComments = value);
-        }),
-        const SizedBox(height: 12),
-        _buildToggleRow('Allow Gifts', _allowGifts, (value) {
-          setState(() => _allowGifts = value);
-        }),
-        const SizedBox(height: 12),
-        _buildToggleRow('Record Stream', _recordStream, (value) {
-          setState(() => _recordStream = value);
-        }),
-        const SizedBox(height: 12),
-        _buildToggleRow('Public Stream', _isPublic, (value) {
-          setState(() => _isPublic = value);
-        }),
-
-        const SizedBox(height: 24),
-
-        // Goal Setup
-        const Text(
-          'Stream Goal',
-          style: TextStyle(
-            color: Colors.white,
-            fontSize: 14,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-        const SizedBox(height: 12),
-        
-        Row(
-          children: [
-            Expanded(
-              child: _goalButton('🌹 Roses', _selectedGoal == 'rose', () {
-                setState(() => _selectedGoal = 'rose');
-              }),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: _goalButton('🔥 Fire', _selectedGoal == 'fire', () {
-                setState(() => _selectedGoal = 'fire');
-              }),
-            ),
-          ],
-        ),
-
-        const SizedBox(height: 16),
-
-        const Text(
-          'Target Amount',
-          style: TextStyle(
-            color: Colors.white,
-            fontSize: 14,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-        const SizedBox(height: 12),
-
-        Row(
-          children: [
-            Expanded(child: _targetButton('50', _goalTarget == 50, () => setState(() => _goalTarget = 50))),
-            const SizedBox(width: 10),
-            Expanded(child: _targetButton('100', _goalTarget == 100, () => setState(() => _goalTarget = 100))),
-            const SizedBox(width: 10),
-            Expanded(child: _targetButton('500', _goalTarget == 500, () => setState(() => _goalTarget = 500))),
-          ],
-        ),
-
-        const SizedBox(height: 16),
-
-        // Reward Text
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 16),
-          decoration: BoxDecoration(
-            color: Colors.white.withValues(alpha: ),
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: Colors.white.withValues(alpha: )),
-          ),
-          child: TextField(
-            style: const TextStyle(color: Colors.white),
-            decoration: const InputDecoration(
-              hintText: 'Reward when goal achieved (eg: Dance)',
-              hintStyle: TextStyle(color: Colors.white38),
-              border: InputBorder.none,
-            ),
-            onChanged: (value) => _goalReward = value,
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildBattleSetup() {
-    return ListView(
-      padding: const EdgeInsets.all(20),
-      children: [
-        Container(
-          padding: const EdgeInsets.all(20),
-          decoration: BoxDecoration(
-            color: AppColors.battleAmber.withValues(alpha: ),
-            borderRadius: BorderRadius.circular(20),
-            border: Border.all(color: AppColors.battleAmber.withValues(alpha: )),
-          ),
-          child: Column(
-            children: [
-              Row(
-                children: [
-                  Container(
-                    padding: const EdgeInsets.all(10),
-                    decoration: BoxDecoration(
-                      color: AppColors.battleAmber.withValues(alpha: ),
-                      shape: BoxShape.circle,
-                    ),
-                    child: const Icon(Icons.bolt, color: AppColors.battleAmber, size: 24),
-                  ),
-                  const SizedBox(width: 14),
-                  const Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'Battle Mode',
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 16,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                        Text(
-                          'Compete live with another artist',
-                          style: TextStyle(color: Colors.white60, fontSize: 12),
-                        ),
-                      ],
-                    ),
-                  ),
-                  Switch(
-                    value: _isBattleMode,
-                    onChanged: (value) {
-                      setState(() => _isBattleMode = value);
-                    },
-                    activeColor: AppColors.battleAmber,
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ),
-
-        const SizedBox(height: 24),
-
-        if (_isBattleMode) ...[
-          const Text(
-            'Select Opponent',
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: 14,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          const SizedBox(height: 12),
-          
-          // Opponent selector placeholder
-          Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: ),
-              borderRadius: BorderRadius.circular(16),
-            ),
-            child: const Row(
-              children: [
-                Icon(Icons.search, color: Colors.white38),
-                SizedBox(width: 12),
-                Text(
-                  'Search for opponent...',
-                  style: TextStyle(color: Colors.white38, fontSize: 14),
-                ),
-              ],
-            ),
-          ),
-
-          const SizedBox(height: 20),
-
-          const Text(
-            'Battle Duration',
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: 14,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          const SizedBox(height: 12),
-          Row(
-            children: [
-              Expanded(child: _durationButton('10 min', false)),
-              const SizedBox(width: 10),
-              Expanded(child: _durationButton('20 min', true)),
-              const SizedBox(width: 10),
-              Expanded(child: _durationButton('30 min', false)),
-            ],
-          ),
-        ],
-      ],
-    );
-  }
-
-  Widget _buildToggleRow(String label, bool value, ValueChanged<bool> onChanged) {
+  Widget _tipsCard() {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      margin: const EdgeInsets.fromLTRB(24, 0, 24, 40),
+      padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: ),
+        color: Colors.white.withOpacity(0.03),
         borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.white.withOpacity(0.06)),
       ),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            label,
-            style: const TextStyle(color: Colors.white, fontSize: 14),
+          const Row(
+            children: [
+              Text('💡', style: TextStyle(fontSize: 16)),
+              SizedBox(width: 8),
+              Text(
+                'STREAM TIPS',
+                style: TextStyle(
+                  color: _gold,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: 1,
+                ),
+              ),
+            ],
           ),
-          const Spacer(),
-          Switch(
-            value: value,
-            onChanged: onChanged,
-            activeColor: AppColors.grassMint,
-          ),
+          const SizedBox(height: 12),
+          _tip('Use headphones to prevent echo'),
+          _tip('Check your internet connection'),
+          _tip('Keep background noise minimal'),
         ],
       ),
     );
   }
 
-  Widget _durationButton(String label, bool isSelected) {
-    return Container(
-      padding: const EdgeInsets.symmetric(vertical: 12),
-      decoration: BoxDecoration(
-        color: isSelected ? AppColors.battleAmber.withValues(alpha: ) : Colors.white.withValues(alpha: ),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(
-          color: isSelected ? AppColors.battleAmber : Colors.white.withValues(alpha: ),
-        ),
-      ),
+  Widget _tip(String text) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
       child: Text(
-        label,
-        textAlign: TextAlign.center,
+        '• $text',
         style: TextStyle(
-          color: isSelected ? AppColors.battleAmber : Colors.white70,
-          fontSize: 13,
-          fontWeight: FontWeight.w600,
-        ),
-      ),
-    );
-  }
-
-  Widget _goalButton(String label, bool isSelected, VoidCallback onPressed) {
-    return GestureDetector(
-      onTap: onPressed,
-      child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 12),
-        decoration: BoxDecoration(
-          color: isSelected ? AppColors.grassMint.withValues(alpha: ) : Colors.white.withValues(alpha: ),
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(
-            color: isSelected ? AppColors.grassMint : Colors.white.withValues(alpha: ),
-          ),
-        ),
-        child: Text(
-          label,
-          textAlign: TextAlign.center,
-          style: TextStyle(
-            color: isSelected ? AppColors.grassMint : Colors.white70,
-            fontSize: 13,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _targetButton(String label, bool isSelected, VoidCallback onPressed) {
-    return GestureDetector(
-      onTap: onPressed,
-      child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 12),
-        decoration: BoxDecoration(
-          color: isSelected ? AppColors.grassMint.withValues(alpha: ) : Colors.white.withValues(alpha: ),
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(
-            color: isSelected ? AppColors.grassMint : Colors.white.withValues(alpha: ),
-          ),
-        ),
-        child: Text(
-          label,
-          textAlign: TextAlign.center,
-          style: TextStyle(
-            color: isSelected ? AppColors.grassMint : Colors.white70,
-            fontSize: 13,
-            fontWeight: FontWeight.w600,
-          ),
+          color: Colors.white.withOpacity(0.42),
+          fontSize: 12,
+          height: 1.3,
         ),
       ),
     );
   }
 }
 
+class _LiveDot extends StatelessWidget {
+  final double size;
 
+  const _LiveDot({this.size = 8});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        color: Color(0xFFFF3C3C),
+        shape: BoxShape.circle,
+        boxShadow: [
+          BoxShadow(color: Color(0xFFFF3C3C).withOpacity(0.65), blurRadius: 12),
+        ],
+      ),
+    );
+  }
+}

@@ -11,7 +11,7 @@ import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../app/config/api_env.dart';
-import '../../app/config/app_env.dart';
+import 'package:weafrica_music/app/config/app_env.dart';
 import '../../app/config/debug_flags.dart';
 import 'checkout_webview_screen.dart';
 import 'models/subscription_me.dart';

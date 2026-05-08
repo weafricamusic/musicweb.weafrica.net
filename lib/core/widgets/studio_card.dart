@@ -98,9 +98,9 @@ class StudioMetricCard extends StatelessWidget {
                 Container(
                   padding: EdgeInsets.all(iconPadding),
                   decoration: BoxDecoration(
-                    color: effectiveAccent.withValues(alpha: 0.12),
+                    color: effectiveAccent.withValues(alpha: 0.5),
                     borderRadius: BorderRadius.circular(iconRadius),
-                    border: Border.all(color: effectiveAccent.withValues(alpha: 0.25)),
+                    border: Border.all(color: effectiveAccent.withValues(alpha: 0.5)),
                   ),
                   child: Icon(icon, size: iconSize, color: effectiveAccent),
                 ),
@@ -143,7 +143,7 @@ class StudioMetricCard extends StatelessWidget {
           gradient: LinearGradient(
             colors: <Color>[
               AppColors.surface2,
-              effectiveAccent.withValues(alpha: 0.06),
+              effectiveAccent.withValues(alpha: 0.5),
             ],
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,

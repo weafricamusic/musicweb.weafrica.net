@@ -94,7 +94,7 @@ class MediaCard extends StatelessWidget {
                           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                           decoration: BoxDecoration(
                             color: (badgeColor ?? AppColors.brandOrange)
-                                .withValues(alpha: 0.92),
+                                .withValues(alpha: 0.5),
                             borderRadius: BorderRadius.circular(999),
                           ),
                           child: Text(

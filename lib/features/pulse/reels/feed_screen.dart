@@ -1510,7 +1510,7 @@ class _ReelFeedScreenState extends State<ReelFeedScreen> {
           mainAxisSize: MainAxisSize.min,
           children: [
             Material(
-              color: Colors.black.withValues(alpha: 0.35),
+              color: Colors.black.withValues(alpha: 0.3),
               shape: const CircleBorder(),
               child: InkWell(
                 customBorder: const CircleBorder(),
@@ -1604,7 +1604,7 @@ class _ReelFeedScreenState extends State<ReelFeedScreen> {
                         child: Container(
                           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                           decoration: BoxDecoration(
-                            color: Colors.black.withValues(alpha: 0.45),
+                            color: Colors.black.withValues(alpha: 0.3),
                             borderRadius: BorderRadius.circular(999),
                           ),
                           child: const Text(
@@ -1630,10 +1630,10 @@ class _ReelFeedScreenState extends State<ReelFeedScreen> {
                   begin: Alignment.topCenter,
                   end: Alignment.bottomCenter,
                   colors: [
-                    Colors.black.withValues(alpha: 0.35),
+                    Colors.black.withValues(alpha: 0.3),
                     Colors.transparent,
                     Colors.transparent,
-                    Colors.black.withValues(alpha: 0.78),
+                    Colors.black.withValues(alpha: 0.3),
                   ],
                   stops: const [0.0, 0.24, 0.55, 1.0],
                 ),
@@ -1661,7 +1661,7 @@ class _ReelFeedScreenState extends State<ReelFeedScreen> {
                           alignment: Alignment.centerLeft,
                           child: Navigator.of(context).canPop()
                               ? Material(
-                                  color: Colors.black.withValues(alpha: 0.38),
+                                  color: Colors.black.withValues(alpha: 0.3),
                                   shape: const CircleBorder(),
                                   child: InkWell(
                                     customBorder: const CircleBorder(),
@@ -1686,7 +1686,7 @@ class _ReelFeedScreenState extends State<ReelFeedScreen> {
                         Align(
                           alignment: Alignment.centerRight,
                           child: Material(
-                            color: Colors.black.withValues(alpha: 0.38),
+                            color: Colors.black.withValues(alpha: 0.3),
                             shape: const CircleBorder(),
                             child: InkWell(
                               customBorder: const CircleBorder(),
@@ -1832,7 +1832,7 @@ class _ReelFeedScreenState extends State<ReelFeedScreen> {
                             visualDensity: VisualDensity.compact,
                             minimumSize: const Size(0, 32),
                             padding: const EdgeInsets.symmetric(horizontal: 12),
-                            backgroundColor: Colors.white.withValues(alpha: 0.18),
+                            backgroundColor: Colors.white.withValues(alpha: 0.2),
                             foregroundColor: Colors.white,
                           ),
                         ),

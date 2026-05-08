@@ -126,7 +126,7 @@ class _MessageTile extends StatelessWidget {
         decoration: BoxDecoration(
           color: msg.isRead
               ? AppColors.surface2
-              : Theme.of(context).colorScheme.primary.withValues(alpha: 0.1),
+              : Theme.of(context).colorScheme.primary.withValues(alpha: 0.3),
           borderRadius: BorderRadius.circular(12),
           border: Border.all(color: AppColors.border),
         ),

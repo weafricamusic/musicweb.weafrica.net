@@ -12,10 +12,10 @@ class CreatorTierBadge extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(
-        color: AppColors.stageGold.withValues(alpha: 0.12),
+        color: AppColors.stageGold.withValues(alpha: 0.3),
         borderRadius: BorderRadius.circular(999),
         border: Border.all(
-          color: AppColors.stageGold.withValues(alpha: 0.35),
+          color: AppColors.stageGold.withValues(alpha: 0.3),
           width: 1,
         ),
       ),

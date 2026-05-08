@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Agora Test</title>
+
+  <script src="https://unpkg.com/agora-rtc-sdk-ng@4.24.3/AgoraRTC_N-production.js"></script>
+</head>
+<body style="background:black;color:white;font-family:sans-serif;">
+
+<h1>Agora SDK Test</h1>
+
+<script>
+  console.log("Testing Agora...");
+
+  if (typeof AgoraRTC !== 'undefined') {
+    console.log("✅ AgoraRTC loaded");
+    console.log("Version:", AgoraRTC.VERSION);
+
+    document.body.innerHTML += `
+      <p style="color:lime;">Agora Loaded Successfully</p>
+      <p>Version: ${AgoraRTC.VERSION}</p>
+    `;
+  } else {
+    console.error("❌ AgoraRTC missing");
+
+    document.body.innerHTML += `
+      <p style="color:red;">Agora SDK FAILED</p>
+    `;
+  }
+</script>
+
+</body>
+</html>

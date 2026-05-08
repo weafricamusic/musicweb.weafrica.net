@@ -63,7 +63,7 @@ class UploadProgressCard extends StatelessWidget {
               builder: (context, value, _) {
                 return LinearProgressIndicator(
                   value: value > 0 ? value : null,
-                  backgroundColor: Colors.white.withValues(alpha: 0.08),
+                  backgroundColor: Colors.white.withValues(alpha: 0.2),
                   valueColor: AlwaysStoppedAnimation<Color>(scheme.primary),
                   minHeight: 7,
                 );

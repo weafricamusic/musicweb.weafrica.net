@@ -180,7 +180,7 @@ class _HeaderIconButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Material(
-      color: Colors.white.withValues(alpha: 0.08),
+      color: Colors.white.withValues(alpha: 0.2),
       shape: const CircleBorder(),
       child: IconButton(
         onPressed: onTap,

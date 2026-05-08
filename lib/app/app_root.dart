@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'app_bootstrap.dart';
 import 'navigation/app_navigator.dart';
@@ -10,15 +11,16 @@ import '../features/splash/splash_screen.dart';
 import '../features/auth/auth_gate.dart';
 import '../features/dj_dashboard/screens/dj_dashboard_screen.dart';
 import '../features/artist_dashboard/screens/artist_dashboard_screen.dart';
-import '../features/live/screens/live_feed_screen.dart';
 import '../features/live/screens/battle_lobby_screen.dart';
 import 'widgets/firebase_setup_screen.dart';
 import 'widgets/supabase_setup_screen.dart';
 import '../services/battle_invite_manager.dart';
 import '../features/settings/constants_viewer_screen.dart';
+import '../features/live/providers/presence_provider.dart';
 
 import 'package:weafrica_music/features/live_old/screens/live_feed_screen.dart';
-class MyApp extends StatefulWidget {
+
+class MyApp extends ConsumerStatefulWidget {
   const MyApp({
     super.key,
     this.homeOverride,
@@ -27,10 +29,10 @@ class MyApp extends StatefulWidget {
   final Widget? homeOverride;
 
   @override
-  State<MyApp> createState() => _MyAppState();
+  ConsumerState<MyApp> createState() => _MyAppState();
 }
 
-class _MyAppState extends State<MyApp> {
+class _MyAppState extends ConsumerState<MyApp> {
   ValueNotifier<String>? _bootstrapProgress;
   Future<AppBootstrapResult>? _bootstrapFuture;
   final _battleInviteManager = BattleInviteManager();
@@ -45,6 +47,9 @@ class _MyAppState extends State<MyApp> {
         _bootstrapProgress?.value = msg;
       },
     );
+
+    // Start presence reconciliation after bootstrap
+    ref.read(presenceReconciliationServiceProvider).start();
 
     final remaining = _minSplashDuration - stopwatch.elapsed;
     if (remaining > Duration.zero) {

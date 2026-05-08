@@ -3,12 +3,12 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:provider/provider.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'audio/audio.dart';
 import 'app/app_root.dart';
 import 'app/config/app_env.dart';
 import 'features/creator_dashboard/providers/creator_dashboard_provider.dart';
-import 'home/providers/audio_provider.dart';
 import 'services/notification_service.dart';
 
 Future<void> main() async {
@@ -33,12 +33,13 @@ Future<void> main() async {
   await initWeAfricaAudio();
 
   runApp(
-    MultiProvider(
-      providers: [
-        ChangeNotifierProvider(create: (_) => AudioProvider()..init()),
-        ChangeNotifierProvider(create: (_) => CreatorDashboardProvider()),
-      ],
-      child: const MyApp(),
+    ProviderScope(
+      child: MultiProvider(
+        providers: [
+          ChangeNotifierProvider(create: (_) => CreatorDashboardProvider()),
+        ],
+        child: const MyApp(),
+      ),
     ),
   );
 }

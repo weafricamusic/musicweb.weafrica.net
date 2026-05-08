@@ -291,7 +291,7 @@ class _VotesCard extends StatelessWidget {
       decoration: BoxDecoration(
         color: AppColors.surface,
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: highlight ? cs.primary.withValues(alpha: 102) : AppColors.border),
+        border: Border.all(color: highlight ? cs.primary.withValues(alpha: 0.3) : AppColors.border),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,

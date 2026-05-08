@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import '../auth/user_role.dart';
-import '../auth/user_role_intent_store.dart';
 import 'consumer_settings_screen.dart';
 
 class RoleBasedSettingsScreen extends StatelessWidget {

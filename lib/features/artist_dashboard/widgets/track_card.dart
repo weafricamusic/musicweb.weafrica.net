@@ -36,7 +36,7 @@ class TrackCard extends StatelessWidget {
                     ? Container(
                         color: AppColors.surface,
                         child: Center(
-                          child: Icon(Icons.music_note, color: AppColors.textMuted.withValues(alpha: 179), size: 32),
+                          child: Icon(Icons.music_note, color: AppColors.textMuted.withValues(alpha: 0.3), size: 32),
                         ),
                       )
                     : Image.network(
@@ -48,7 +48,7 @@ class TrackCard extends StatelessWidget {
                             color: AppColors.surface,
                             child: Center(
                               child: Icon(Icons.broken_image_outlined,
-                                  color: AppColors.textMuted.withValues(alpha: 179), size: 28),
+                                  color: AppColors.textMuted.withValues(alpha: 0.3), size: 28),
                             ),
                           );
                         },

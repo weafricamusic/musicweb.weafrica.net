@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 
-import '../providers/ads_provider.dart';
 import '../services/analytics_ad_service.dart';
 import '../screens/watch_and_earn_screen.dart';
 
@@ -43,7 +42,7 @@ class SoftPaywall extends StatelessWidget {
           ),
           borderRadius: BorderRadius.circular(24),
           border: Border.all(
-            color: const Color(0xFFD4AF37).withValues(alpha: 0.5),
+            color: const Color(0xFFD4AF37).withValues(alpha: 0.3),
             width: 2,
           ),
         ),
@@ -55,7 +54,7 @@ class SoftPaywall extends StatelessWidget {
               width: 80,
               height: 80,
               decoration: BoxDecoration(
-                color: const Color(0xFFD4AF37).withValues(alpha: 0.2),
+                color: const Color(0xFFD4AF37).withValues(alpha: 0.3),
                 shape: BoxShape.circle,
               ),
               child: const Icon(
@@ -83,7 +82,7 @@ class SoftPaywall extends StatelessWidget {
               message,
               textAlign: TextAlign.center,
               style: TextStyle(
-                color: Colors.white.withValues(alpha: 0.8),
+                color: Colors.white.withValues(alpha: 0.2),
                 fontSize: 14,
                 fontWeight: FontWeight.w600,
               ),
@@ -94,7 +93,7 @@ class SoftPaywall extends StatelessWidget {
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
               decoration: BoxDecoration(
-                color: Colors.red.withValues(alpha: 0.2),
+                color: Colors.red.withValues(alpha: 0.3),
                 borderRadius: BorderRadius.circular(12),
                 border: Border.all(
                   color: Colors.red.withValues(alpha: 0.3),
@@ -164,7 +163,7 @@ class SoftPaywall extends StatelessWidget {
                 style: OutlinedButton.styleFrom(
                   foregroundColor: Colors.white,
                   side: BorderSide(
-                    color: Colors.white.withValues(alpha: 0.3),
+                    color: Colors.white.withValues(alpha: 0.2),
                   ),
                   padding: const EdgeInsets.symmetric(vertical: 16),
                   shape: RoundedRectangleBorder(
@@ -192,7 +191,7 @@ class SoftPaywall extends StatelessWidget {
               child: Text(
                 'Maybe Later',
                 style: TextStyle(
-                  color: Colors.white.withValues(alpha: 0.6),
+                  color: Colors.white.withValues(alpha: 0.2),
                   fontSize: 14,
                 ),
               ),

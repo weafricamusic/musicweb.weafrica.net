@@ -10,7 +10,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../../app/auth/jwt_debug.dart';
 import '../../../app/auth/firebase_id_token_provider.dart';
 import '../../../app/config/api_env.dart';
-import '../../../app/config/app_env.dart';
+import 'package:weafrica_music/app/config/app_env.dart';
 import '../../../app/config/supabase_env.dart';
 import '../../../app/network/firebase_authed_http.dart';
 import '../models/subscription_me.dart';

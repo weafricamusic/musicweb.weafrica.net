@@ -416,19 +416,19 @@ const aiBeatsBucket = (Deno.env.get("WEAFRICA_AI_BEATS_BUCKET") ?? "ai_beats").t
 
 const stabilityApiKey = (
   Deno.env.get("STABILITY_API_KEY") ??
-  Deno.env.get("STABILITY_API_TOKEN") ??
-  Deno.env.get("WEAFRICA_STABILITY_API_KEY") ??
-  ""
+    Deno.env.get("STABILITY_API_TOKEN") ??
+    Deno.env.get("WEAFRICA_STABILITY_API_KEY") ??
+    ""
 ).trim();
 const stabilityAudioUrl = (
   Deno.env.get("WEAFRICA_STABILITY_AUDIO_URL") ??
-  Deno.env.get("STABILITY_AUDIO_URL") ??
-  ""
+    Deno.env.get("STABILITY_AUDIO_URL") ??
+    ""
 ).trim();
 const stabilityStatusUrl = (
   Deno.env.get("WEAFRICA_STABILITY_STATUS_URL") ??
-  Deno.env.get("STABILITY_STATUS_URL") ??
-  ""
+    Deno.env.get("STABILITY_STATUS_URL") ??
+    ""
 ).trim();
 const stabilityTimeoutMsRaw = Number(Deno.env.get("WEAFRICA_STABILITY_TIMEOUT_MS") ?? NaN);
 const stabilityTimeoutMs = Number.isFinite(stabilityTimeoutMsRaw) ? Math.max(5_000, Math.min(120_000, Math.floor(stabilityTimeoutMsRaw))) : 45_000;
@@ -913,8 +913,8 @@ async function tryConsumeWeeklyCreatorUsage(
   const used = typeof usedRaw === "number" && Number.isFinite(usedRaw)
     ? usedRaw
     : usedRaw === null || usedRaw === undefined
-      ? null
-      : Number(usedRaw);
+    ? null
+    : Number(usedRaw);
   const weekStartRaw = payload.week_start ?? payload.weekStart ?? null;
   const weekStart = weekStartRaw ? String(weekStartRaw) : null;
 
@@ -2824,10 +2824,10 @@ async function logCreatorJourneyEvent(opts: {
     const templateKey = metric === "plays"
       ? "milestone_plays"
       : metric === "followers"
-        ? "milestone_followers"
-        : metric === "earnings"
-          ? "milestone_earnings"
-          : "";
+      ? "milestone_followers"
+      : metric === "earnings"
+      ? "milestone_earnings"
+      : "";
 
     if (templateKey && threshold > 0) {
       await enqueueJourneyPushes(sb, uid, [
@@ -3154,13 +3154,13 @@ function normalizeConsumerGiftingTier(raw: unknown): ConsumerGiftingTierId | und
 function resolveConsumerGiftingTier(context: SubscriptionEntitlementContext): ConsumerGiftingTierId {
   const explicit = normalizeConsumerGiftingTier(
     getNestedString(context.features, "engagement.gifting.tier") ??
-    getNestedString(context.features, "gifting.tier") ??
-    getNestedString(context.features, "live.gifts.tier") ??
-    getNestedString(context.features, "gifting") ??
-    getNestedString(context.perks, "engagement.gifting.tier") ??
-    getNestedString(context.perks, "gifting.tier") ??
-    getNestedString(context.perks, "live.gifts.tier") ??
-    getNestedString(context.perks, "gifting"),
+      getNestedString(context.features, "gifting.tier") ??
+      getNestedString(context.features, "live.gifts.tier") ??
+      getNestedString(context.features, "gifting") ??
+      getNestedString(context.perks, "engagement.gifting.tier") ??
+      getNestedString(context.perks, "gifting.tier") ??
+      getNestedString(context.perks, "live.gifts.tier") ??
+      getNestedString(context.perks, "gifting"),
   );
 
   if (explicit) return explicit;
@@ -3366,7 +3366,7 @@ function requireSupabaseAdmin() {
       501,
       "not_configured",
       `SUPABASE_SERVICE_ROLE_KEY must be a service_role key (observed role=${meta.role}). ` +
-      "Open Supabase Dashboard → Project Settings → API → service_role key, then update the Edge Function secret.",
+        "Open Supabase Dashboard → Project Settings → API → service_role key, then update the Edge Function secret.",
     );
   }
 
@@ -3377,7 +3377,7 @@ function requireSupabaseAdmin() {
       501,
       "not_configured",
       `SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY point to different projects (urlRef=${urlRef}, keyRef=${meta.ref}). ` +
-      "Fix Edge Function secrets so both refer to the same Supabase project.",
+        "Fix Edge Function secrets so both refer to the same Supabase project.",
     );
   }
 
@@ -3608,7 +3608,8 @@ function tryDecodeJwtPayload(token: string): Record<string, unknown> | null {
   }
 }
 
-async function requireFirebaseUser(req: Request): Promise<{ uid: string; email?: string }> {
+async function requireFirebaseUser(req: Request): Promise<{ uid: string; email?: string }>
+{
   const token = bearerToken(req);
   if (!token) {
     throw new HttpError(401, "unauthorized", "Missing Authorization: Bearer <Firebase ID token>");
@@ -3640,8 +3641,8 @@ async function requireFirebaseUser(req: Request): Promise<{ uid: string; email?:
       401,
       "unauthorized",
       `Firebase token verification failed: ${e instanceof Error ? e.message : String(e)}. ` +
-      `Check Edge Function env FIREBASE_PROJECT_ID. Expected iss=${expectedIss} aud=${firebaseProjectId}. ` +
-      `Observed iss=${observedIss || "(unknown)"} aud=${observedAud || "(unknown)"}`,
+        `Check Edge Function env FIREBASE_PROJECT_ID. Expected iss=${expectedIss} aud=${firebaseProjectId}. ` +
+        `Observed iss=${observedIss || "(unknown)"} aud=${observedAud || "(unknown)"}`,
     );
   }
 
@@ -5402,9 +5403,9 @@ Deno.serve(async (req: Request) => {
         const title = `${aName} vs ${bName}`;
         const thumb = String(
           profileById[hostAId]?.avatar_url ??
-          profileById[hostAId]?.photo_url ??
-          profileById[hostAId]?.image_url ??
-          ''
+            profileById[hostAId]?.photo_url ??
+            profileById[hostAId]?.image_url ??
+            ''
         ).trim() || null;
 
         const now = new Date().toISOString();
@@ -7677,7 +7678,7 @@ Deno.serve(async (req: Request) => {
       (normalized === "/consumer/dj/ai/generate" || normalized === "/consumer/artist/ai/generate")
     ) {
       const role = normalized.includes("/consumer/dj/") ? "dj" : "artist";
-      const { uid } = await requireFirebaseUser(req);
+        const { uid } = await requireFirebaseUser(req);
       await requireCreatorRole(uid, role);
 
       const sb = requireSupabaseAdmin();
@@ -7864,7 +7865,7 @@ Deno.serve(async (req: Request) => {
       (normalized === "/consumer/dj/ai/generations" || normalized === "/consumer/artist/ai/generations")
     ) {
       const role = normalized.includes("/consumer/dj/") ? "dj" : "artist";
-      const { uid } = await requireFirebaseUser(req);
+        const { uid } = await requireFirebaseUser(req);
       await requireCreatorRole(uid, role);
 
       const sb = requireSupabaseAdmin();
@@ -8874,13 +8875,13 @@ Deno.serve(async (req: Request) => {
         requireTestAccess(req);
         uid = String(
           body.from_user_id ??
-          body.fromUserId ??
-          body.uid ??
-          body.user_id ??
-          body.userId ??
-          body.firebase_uid ??
-          body.firebaseUid ??
-          "",
+            body.fromUserId ??
+            body.uid ??
+            body.user_id ??
+            body.userId ??
+            body.firebase_uid ??
+            body.firebaseUid ??
+            "",
         ).trim();
         if (!uid) {
           throw new HttpError(400, "bad_request", "uid is required (dev/test mode)");
@@ -10210,9 +10211,9 @@ Deno.serve(async (req: Request) => {
           if (existingChannel && existingChannel !== channelId) {
             const hbRaw = String(
               (existingLive as any).last_heartbeat_at ??
-              (existingLive as any).updated_at ??
-              (existingLive as any).started_at ??
-              ''
+                (existingLive as any).updated_at ??
+                (existingLive as any).started_at ??
+                ''
             ).trim();
             const hbMs = hbRaw ? Date.parse(hbRaw) : NaN;
             const isStale = Number.isFinite(hbMs) ? (Date.now() - hbMs) > 90_000 : false;
@@ -10400,10 +10401,10 @@ Deno.serve(async (req: Request) => {
         throw new HttpError(400, 'bad_request', 'Missing channel_id');
       }
 
-      // Allow the client to pass a channel_id for logging, but end the
-      // currently active session for the authenticated host. This avoids
-      // brittle channel-id format checks and handles channel formats like
-      // "solo_<uid>_<timestamp>" used by the client.
+      const allowedLiveChannels = new Set([`live_${uid}`, `weafrica_live_${uid}`]);
+      if (!allowedLiveChannels.has(channelId)) {
+        throw new HttpError(403, 'forbidden', 'Invalid live channel for this host');
+      }
 
       const { error } = await sb
         .from('live_sessions')
@@ -10413,8 +10414,8 @@ Deno.serve(async (req: Request) => {
           last_heartbeat_at: now,
           updated_at: now,
         })
-        .eq('host_id', uid)
-        .eq('is_live', true);
+        .eq('channel_id', channelId)
+        .eq('host_id', uid);
 
       if (error) {
         throw new HttpError(500, 'db_error', `Failed to end live: ${error.message ?? error}`);
@@ -10842,8 +10843,8 @@ Deno.serve(async (req: Request) => {
         ? (emailLower === "artist1@weafrica.test"
           ? "artist_pro"
           : emailLower === "dj1@weafrica.test"
-            ? "dj_pro"
-            : "")
+          ? "dj_pro"
+          : "")
         : "";
 
       if (forcedPlanId) {
@@ -10901,8 +10902,8 @@ Deno.serve(async (req: Request) => {
       const now = new Date();
 
       const sub = subRow as any;
-      const rawPlanId = normalizePlanId(sub?.plan_id ?? sub?.planId ?? sub?.plan ?? "free") || "free";
-      const planId = await resolveCreatorFallbackPlanId(sb, uid, rawPlanId);
+  const rawPlanId = normalizePlanId(sub?.plan_id ?? sub?.planId ?? sub?.plan ?? "free") || "free";
+  const planId = await resolveCreatorFallbackPlanId(sb, uid, rawPlanId);
       const rawStatus = String(sub?.status ?? sub?.state ?? "inactive").trim() || "inactive";
 
       const endRaw =
@@ -14336,181 +14337,6 @@ Deno.serve(async (req: Request) => {
       return json({ ok: true, ads: list });
     }
 
-    // ADS: Get user ad frequency state (for free users with 3-2-5 pattern)
-    // GET /api/ads/frequency
-    // Auth: Bearer <Firebase ID token>
-    if (req.method === "GET" && normalized === "/ads/frequency") {
-      const { uid } = await requireFirebaseUser(req);
-      const sb = requireSupabaseAdmin();
-
-      try {
-        const { data, error } = await sb.rpc("get_user_ad_frequency_stats", {
-          p_user_id: uid,
-        });
-
-        if (error) {
-          if (error.code === "42883") {
-            return json({
-              ok: true,
-              songs_since_last_ad: 0,
-              current_pattern_index: 0,
-              current_pattern_songs_needed: 3,
-              total_ads_shown: 0,
-              should_show_ad: false,
-            });
-          }
-          throw new HttpError(500, "db_error", `Failed to get ad frequency: ${error.message}`);
-        }
-
-        const stats = Array.isArray(data) ? (data[0] as any) : (data as any);
-        const songsSinceLastAd = Number(stats?.songs_since_last_ad ?? 0);
-        const currentPatternIndex = Number(stats?.current_pattern_index ?? 0);
-        const songsNeeded = Number(stats?.current_pattern_songs_needed ?? 3);
-
-        return json({
-          ok: true,
-          songs_since_last_ad: songsSinceLastAd,
-          current_pattern_index: currentPatternIndex,
-          current_pattern_songs_needed: songsNeeded,
-          total_ads_shown: Number(stats?.total_ads_shown ?? 0),
-          should_show_ad: songsSinceLastAd >= songsNeeded,
-          pattern_description: currentPatternIndex === 0 ? "3 songs" : currentPatternIndex === 1 ? "2 songs" : "5 songs",
-        });
-      } catch (e) {
-        if (e instanceof HttpError) throw e;
-        throw new HttpError(500, "error", `Failed to get ad frequency: ${e}`);
-      }
-    }
-
-    // ADS: Increment song play count for user
-    // POST /api/ads/song-played
-    // Auth: Bearer <Firebase ID token>
-    if (req.method === "POST" && normalized === "/ads/song-played") {
-      const { uid } = await requireFirebaseUser(req);
-      const sb = requireSupabaseAdmin();
-
-      try {
-        const { data, error } = await sb.rpc("increment_song_play_count", {
-          p_user_id: uid,
-        });
-
-        if (error) {
-          if (error.code === "42883") {
-            return json({
-              ok: true,
-              songs_since_last_ad: 1,
-              should_show_ad: false,
-              tracked: false,
-              reason: "function_not_available",
-            });
-          }
-          throw new HttpError(500, "db_error", `Failed to increment song count: ${error.message}`);
-        }
-
-        const state = Array.isArray(data) ? (data[0] as any) : (data as any);
-        const songsSinceLastAd = Number(state?.songs_since_last_ad ?? 1);
-        const currentPatternIndex = Number(state?.current_pattern_index ?? 0);
-        const songsNeeded = currentPatternIndex === 0 ? 3 : currentPatternIndex === 1 ? 2 : 5;
-
-        return json({
-          ok: true,
-          songs_since_last_ad: songsSinceLastAd,
-          songs_needed: songsNeeded,
-          should_show_ad: songsSinceLastAd >= songsNeeded,
-          tracked: true,
-        });
-      } catch (e) {
-        if (e instanceof HttpError) throw e;
-        throw new HttpError(500, "error", `Failed to increment song count: ${e}`);
-      }
-    }
-
-    // ADS: Reset ad frequency after showing an ad
-    // POST /api/ads/reset-frequency
-    // Auth: Bearer <Firebase ID token>
-    if (req.method === "POST" && normalized === "/ads/reset-frequency") {
-      const { uid } = await requireFirebaseUser(req);
-      const sb = requireSupabaseAdmin();
-
-      try {
-        const { data, error } = await sb.rpc("reset_ad_frequency_after_ad", {
-          p_user_id: uid,
-        });
-
-        if (error) {
-          if (error.code === "42883") {
-            return json({
-              ok: true,
-              reset: false,
-              reason: "function_not_available",
-            });
-          }
-          throw new HttpError(500, "db_error", `Failed to reset ad frequency: ${error.message}`);
-        }
-
-        const state = Array.isArray(data) ? (data[0] as any) : (data as any);
-        const nextPatternIndex = Number(state?.current_pattern_index ?? 0);
-        const nextSongsNeeded = nextPatternIndex === 0 ? 3 : nextPatternIndex === 1 ? 2 : 5;
-
-        return json({
-          ok: true,
-          reset: true,
-          next_pattern_index: nextPatternIndex,
-          next_pattern_songs_needed: nextSongsNeeded,
-          next_pattern_description: nextPatternIndex === 0 ? "3 songs" : nextPatternIndex === 1 ? "2 songs" : "5 songs",
-          total_ads_shown: Number(state?.total_ads_shown ?? 0),
-        });
-      } catch (e) {
-        if (e instanceof HttpError) throw e;
-        throw new HttpError(500, "error", `Failed to reset ad frequency: ${e}`);
-      }
-    }
-
-    // ADS: Check if ad should be shown (convenience endpoint)
-    // POST /api/ads/check
-    // Auth: Bearer <Firebase ID token>
-    // Body: { increment: boolean } - if true, increments song count first
-    if (req.method === "POST" && normalized === "/ads/check") {
-      const { uid } = await requireFirebaseUser(req);
-      const sb = requireSupabaseAdmin();
-      const body = await readJson(req);
-      const shouldIncrement = Boolean(body.increment === true);
-
-      try {
-        if (shouldIncrement) {
-          await sb.rpc("increment_song_play_count", {
-            p_user_id: uid,
-          });
-        }
-
-        const { data, error } = await sb.rpc("should_show_ad_for_user", {
-          p_user_id: uid,
-        });
-
-        if (error) {
-          if (error.code === "42883") {
-            return json({
-              ok: true,
-              should_show_ad: false,
-              reason: "function_not_available",
-            });
-          }
-          throw new HttpError(500, "db_error", `Failed to check ad: ${error.message}`);
-        }
-
-        const shouldShowAd = data === true;
-
-        return json({
-          ok: true,
-          should_show_ad: shouldShowAd,
-          incremented: shouldIncrement,
-        });
-      } catch (e) {
-        if (e instanceof HttpError) throw e;
-        throw new HttpError(500, "error", `Failed to check ad: ${e}`);
-      }
-    }
-
     // POST /api/ads/create
     // Auth: Bearer <Firebase ID token>
     // Body: {
@@ -15612,9 +15438,9 @@ Deno.serve(async (req: Request) => {
 
       const rankingType = String(
         url.searchParams.get("ranking_type") ??
-        url.searchParams.get("type") ??
-        url.searchParams.get("rankingType") ??
-        "",
+          url.searchParams.get("type") ??
+          url.searchParams.get("rankingType") ??
+          "",
       )
         .trim()
         .toLowerCase();
@@ -15706,9 +15532,9 @@ Deno.serve(async (req: Request) => {
 
       const rankingType = String(
         url.searchParams.get("ranking_type") ??
-        url.searchParams.get("type") ??
-        url.searchParams.get("rankingType") ??
-        "",
+          url.searchParams.get("type") ??
+          url.searchParams.get("rankingType") ??
+          "",
       )
         .trim()
         .toLowerCase();
@@ -16097,8 +15923,8 @@ Deno.serve(async (req: Request) => {
             503,
             "not_configured",
             "Creator provision succeeded but the artists backing row could not be created/resolved. " +
-            `Last error: ${msg}. ` +
-            "Ensure the public.artists table exists and supports Firebase UIDs (user_id TEXT and/or firebase_uid TEXT), then refresh PostgREST schema cache.",
+              `Last error: ${msg}. ` +
+              "Ensure the public.artists table exists and supports Firebase UIDs (user_id TEXT and/or firebase_uid TEXT), then refresh PostgREST schema cache.",
           );
         }
       }
@@ -16217,8 +16043,8 @@ Deno.serve(async (req: Request) => {
             503,
             "not_configured",
             "Creator provision succeeded but the djs backing row could not be created/resolved. " +
-            `Last error: ${msg}. ` +
-            "Ensure the public.djs table exists and supports Firebase UIDs (user_id TEXT and/or firebase_uid TEXT), then refresh PostgREST schema cache.",
+              `Last error: ${msg}. ` +
+              "Ensure the public.djs table exists and supports Firebase UIDs (user_id TEXT and/or firebase_uid TEXT), then refresh PostgREST schema cache.",
           );
         }
       }
@@ -17032,8 +16858,8 @@ function defaultEntitlementsForPlanId(rawPlanId: string): {
   const adsEnabled = typeof adsFromFeatures === "boolean"
     ? adsFromFeatures
     : typeof adsFromPerks === "boolean"
-      ? adsFromPerks
-      : isFreeLikePlanId(planId);
+    ? adsFromPerks
+    : isFreeLikePlanId(planId);
 
   return {
     plan_id: planId,
@@ -17373,8 +17199,8 @@ function readPlansFromEnv(): Plan[] | null {
   const list = Array.isArray(decoded)
     ? decoded
     : (decoded && typeof decoded === "object" && Array.isArray((decoded as Record<string, unknown>).plans))
-      ? (decoded as Record<string, unknown>).plans as unknown[]
-      : null;
+    ? (decoded as Record<string, unknown>).plans as unknown[]
+    : null;
 
   if (!list) return null;
 
@@ -17563,8 +17389,8 @@ function readPromotionsFromEnv(): Promotion[] | null {
   const list = Array.isArray(decoded)
     ? decoded
     : (decoded && typeof decoded === "object" && Array.isArray((decoded as Record<string, unknown>).promotions))
-      ? (decoded as Record<string, unknown>).promotions as unknown[]
-      : null;
+    ? (decoded as Record<string, unknown>).promotions as unknown[]
+    : null;
 
   if (!list) return null;
 

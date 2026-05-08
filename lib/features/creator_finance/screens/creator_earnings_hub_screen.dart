@@ -567,7 +567,7 @@ class _CreatorEarningsHubScreenState extends State<CreatorEarningsHubScreen> {
                             height: 42,
                             width: 42,
                             decoration: BoxDecoration(
-                              color: AppColors.brandOrange.withValues(alpha: 0.16),
+                              color: AppColors.brandOrange.withValues(alpha: 0.3),
                               borderRadius: BorderRadius.circular(14),
                             ),
                             child: const Icon(

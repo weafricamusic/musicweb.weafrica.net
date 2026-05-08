@@ -161,14 +161,14 @@ class _OpponentSelectionScreenState extends State<OpponentSelectionScreen> {
                       Icon(
                         Icons.people_outline,
                         size: 64,
-                        color: Colors.white.withValues(alpha: 0.3),
+                        color: Colors.white.withValues(alpha: 0.2),
                       ),
                       const SizedBox(height: 16),
                       Text(
                         'No opponents available',
                         style: TextStyle(
                           fontSize: 18,
-                          color: Colors.white.withValues(alpha: 0.6),
+                          color: Colors.white.withValues(alpha: 0.2),
                         ),
                       ),
                       const SizedBox(height: 8),
@@ -176,7 +176,7 @@ class _OpponentSelectionScreenState extends State<OpponentSelectionScreen> {
                         'Check back later for other artists',
                         style: TextStyle(
                           fontSize: 14,
-                          color: Colors.white.withValues(alpha: 0.4),
+                          color: Colors.white.withValues(alpha: 0.2),
                         ),
                       ),
                       const SizedBox(height: 24),
@@ -216,12 +216,12 @@ class _OpponentSelectionScreenState extends State<OpponentSelectionScreen> {
                               decoration: BoxDecoration(
                                 color: isSelected
                                     ? WeAfricaColors.goldWithOpacity(0.15)
-                                    : Colors.white.withValues(alpha: 0.05),
+                                    : Colors.white.withValues(alpha: 0.2),
                                 borderRadius: BorderRadius.circular(12),
                                 border: Border.all(
                                   color: isSelected
                                       ? WeAfricaColors.gold
-                                      : Colors.white.withValues(alpha: 0.1),
+                                      : Colors.white.withValues(alpha: 0.2),
                                 ),
                               ),
                               child: Row(
@@ -262,7 +262,7 @@ class _OpponentSelectionScreenState extends State<OpponentSelectionScreen> {
                                           category.isNotEmpty ? category : 'Artist',
                                           style: TextStyle(
                                             fontSize: 12,
-                                            color: Colors.white.withValues(alpha: 0.6),
+                                            color: Colors.white.withValues(alpha: 0.2),
                                           ),
                                         ),
                                       ],
@@ -291,10 +291,10 @@ class _OpponentSelectionScreenState extends State<OpponentSelectionScreen> {
                     Container(
                       padding: const EdgeInsets.all(16),
                       decoration: BoxDecoration(
-                        color: Colors.white.withValues(alpha: 0.05),
+                        color: Colors.white.withValues(alpha: 0.2),
                         border: Border(
                           top: BorderSide(
-                            color: Colors.white.withValues(alpha: 0.1),
+                            color: Colors.white.withValues(alpha: 0.2),
                           ),
                         ),
                       ),

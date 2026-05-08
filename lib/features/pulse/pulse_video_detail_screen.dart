@@ -460,9 +460,9 @@ class _PulseVideoDetailScreenState extends State<PulseVideoDetailScreen>
                       begin: Alignment.topCenter,
                       end: Alignment.bottomCenter,
                       colors: [
-                        Colors.black.withValues(alpha: 0.18),
+                        Colors.black.withValues(alpha: 0.3),
                         Colors.transparent,
-                        Colors.black.withValues(alpha: 0.55),
+                        Colors.black.withValues(alpha: 0.3),
                       ],
                     ),
                   ),
@@ -475,7 +475,7 @@ class _PulseVideoDetailScreenState extends State<PulseVideoDetailScreen>
                   right: 12,
                   child: Container(
                     decoration: BoxDecoration(
-                      color: Colors.black.withValues(alpha: 0.35),
+                      color: Colors.black.withValues(alpha: 0.3),
                       borderRadius: BorderRadius.circular(999),
                     ),
                     child: IconButton(
@@ -635,7 +635,7 @@ class _ActionIcon extends StatelessWidget {
               height: 42,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                color: Colors.black.withValues(alpha: 0.4),
+                color: Colors.black.withValues(alpha: 0.3),
               ),
               child: Icon(icon, color: color, size: 24),
             ),

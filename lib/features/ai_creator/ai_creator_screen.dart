@@ -328,7 +328,7 @@ class _AiCreatorScreenState extends State<AiCreatorScreen> with TickerProviderSt
                       begin: Alignment.topLeft,
                       end: Alignment.bottomRight,
                       colors: [
-                        accent.withValues(alpha: 0.18),
+                        accent.withValues(alpha: 0.3),
                         Colors.transparent,
                       ],
                     ),
@@ -483,9 +483,9 @@ class _AiCreatorScreenState extends State<AiCreatorScreen> with TickerProviderSt
                             Container(
                               padding: const EdgeInsets.all(12),
                               decoration: BoxDecoration(
-                                color: accent.withValues(alpha: 0.10),
+                                color: accent.withValues(alpha: 0.3),
                                 borderRadius: BorderRadius.circular(12),
-                                border: Border.all(color: accent.withValues(alpha: 0.18)),
+                                border: Border.all(color: accent.withValues(alpha: 0.3)),
                               ),
                               child: Row(
                                 children: [
@@ -692,7 +692,7 @@ class _SkeletonLine extends StatelessWidget {
       width: width,
       height: height,
       decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.08),
+        color: Colors.white.withValues(alpha: 0.2),
         borderRadius: BorderRadius.circular(6),
       ),
     );
@@ -730,7 +730,7 @@ class _EmptyState extends StatelessWidget {
                 height: 82,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  border: Border.all(color: accent.withValues(alpha: 0.30), width: 2),
+                  border: Border.all(color: accent.withValues(alpha: 0.3), width: 2),
                 ),
                 child: Icon(Icons.auto_awesome, size: 40, color: accent),
               ),
@@ -772,9 +772,9 @@ class _ErrorState extends StatelessWidget {
     return Container(
       height: 200,
       decoration: BoxDecoration(
-        color: accent.withValues(alpha: 0.08),
+        color: accent.withValues(alpha: 0.3),
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: accent.withValues(alpha: 0.18)),
+        border: Border.all(color: accent.withValues(alpha: 0.3)),
       ),
       child: Center(
         child: Padding(

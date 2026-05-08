@@ -30,32 +30,42 @@ class _AuthGateState extends State<AuthGate> {
 
   @override
   Widget build(BuildContext context) {
+    print("🔍 AuthGate.build() called");
     return StreamBuilder<User?>(
       stream: FirebaseAuth.instance.authStateChanges(),
       builder: (context, snapshot) {
+        print("📊 AuthGate StreamBuilder: connectionState=${snapshot.connectionState}, hasData=${snapshot.hasData}, data=${snapshot.data}");
+        
         final user = snapshot.data ?? FirebaseAuth.instance.currentUser;
+        print("👤 Current user: ${user != null ? 'UID=${user.uid}' : 'null'}");
 
         if (snapshot.connectionState == ConnectionState.waiting) {
+          print("⏳ AuthGate: Showing loading spinner (connectionState=waiting)");
           return const Scaffold(
-            body: Center(child: CircularProgressIndicator()),
+            backgroundColor: Colors.black, // Ensure dark background
+            body: Center(child: CircularProgressIndicator(color: Colors.white)),
           );
         }
 
         if (user == null) {
+          print("🔓 AuthGate: No user, showing LoginScreen");
           return const LoginScreen();
         }
 
         final usesEmailPassword = user.providerData.any(
           (p) => p.providerId == EmailAuthProvider.PROVIDER_ID,
         );
+        print("📧 User providers: ${user.providerData.map((p) => p.providerId).toList()}");
 
         // Enforce email verification in release builds.
         // In debug/profile builds we allow sign-in without verification so
         // test accounts (e.g. *.test) can be used without a real inbox.
         if (kReleaseMode && usesEmailPassword && !user.emailVerified) {
+          print("📧 AuthGate: Email not verified, showing EmailVerificationScreen");
           return const EmailVerificationScreen();
         }
 
+        print("✅ AuthGate: Showing AppShell");
         // All role-based experiences are in-app (no web dashboards).
         return const AppShell();
       },

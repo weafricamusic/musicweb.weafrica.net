@@ -1,5 +1,5 @@
 import '../models/live_session_model.dart';
-import '../../services/live_session_service.dart';
+import 'package:weafrica_music/services/live_session_service.dart';
 
 /// Repository for live session operations
 class LiveSessionRepository {

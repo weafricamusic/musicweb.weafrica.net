@@ -187,7 +187,7 @@ class _HeroSection extends StatelessWidget {
       gradient: LinearGradient(
         colors: <Color>[
           AppColors.surface2,
-          AppColors.stageGold.withValues(alpha: 0.14),
+          AppColors.stageGold.withValues(alpha: 0.3),
         ],
       ),
       child: Row(

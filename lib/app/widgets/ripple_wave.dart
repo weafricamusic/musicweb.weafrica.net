@@ -204,7 +204,7 @@ class _RipplePainter extends CustomPainter {
       if (a <= 0) continue;
 
       final paint = Paint()
-        ..color = color.withValues(alpha: a)
+        ..color = color.withValues(alpha: 0.5)
         ..style = PaintingStyle.stroke
         ..strokeWidth = ripple.strokeWidth
         ..maskFilter = MaskFilter.blur(BlurStyle.normal, ripple.blurSigma);

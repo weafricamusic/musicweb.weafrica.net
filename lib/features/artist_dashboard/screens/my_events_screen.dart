@@ -359,7 +359,7 @@ class _MyEventsScreenState extends State<MyEventsScreen> {
                   label: const Text('All'),
                   selected: _filter == 'all',
                   onSelected: (_) => setState(() => _filter = 'all'),
-                  backgroundColor: Colors.white.withValues(alpha: 0.05),
+                  backgroundColor: Colors.white.withValues(alpha: 0.2),
                   selectedColor: WeAfricaColors.gold.withValues(alpha: 0.3),
                   labelStyle: TextStyle(
                     color: _filter == 'all' ? WeAfricaColors.gold : Colors.white,
@@ -369,7 +369,7 @@ class _MyEventsScreenState extends State<MyEventsScreen> {
                   label: const Text('Live'),
                   selected: _filter == 'live',
                   onSelected: (_) => setState(() => _filter = 'live'),
-                  backgroundColor: Colors.white.withValues(alpha: 0.05),
+                  backgroundColor: Colors.white.withValues(alpha: 0.2),
                   selectedColor: Colors.red.withValues(alpha: 0.3),
                   labelStyle: TextStyle(
                     color: _filter == 'live' ? Colors.red : Colors.white,
@@ -379,7 +379,7 @@ class _MyEventsScreenState extends State<MyEventsScreen> {
                   label: const Text('Battles'),
                   selected: _filter == 'battle',
                   onSelected: (_) => setState(() => _filter = 'battle'),
-                  backgroundColor: Colors.white.withValues(alpha: 0.05),
+                  backgroundColor: Colors.white.withValues(alpha: 0.2),
                   selectedColor: WeAfricaColors.gold.withValues(alpha: 0.3),
                   labelStyle: TextStyle(
                     color: _filter == 'battle' ? WeAfricaColors.gold : Colors.white,
@@ -389,7 +389,7 @@ class _MyEventsScreenState extends State<MyEventsScreen> {
                   label: const Text('Completed'),
                   selected: _filter == 'completed',
                   onSelected: (_) => setState(() => _filter = 'completed'),
-                  backgroundColor: Colors.white.withValues(alpha: 0.05),
+                  backgroundColor: Colors.white.withValues(alpha: 0.2),
                   selectedColor: Colors.green.withValues(alpha: 0.3),
                   labelStyle: TextStyle(
                     color: _filter == 'completed' ? Colors.green : Colors.white,
@@ -424,16 +424,16 @@ class _MyEventsScreenState extends State<MyEventsScreen> {
                             child: Column(
                               mainAxisAlignment: MainAxisAlignment.center,
                               children: [
-                                Icon(Icons.event_busy, size: 64, color: Colors.white.withValues(alpha: 0.3)),
+                                Icon(Icons.event_busy, size: 64, color: Colors.white.withValues(alpha: 0.2)),
                                 const SizedBox(height: 16),
                                 Text(
                                   _filter == 'all' ? 'No events or battles yet' : 'No $_filter events',
-                                  style: TextStyle(color: Colors.white.withValues(alpha: 0.5)),
+                                  style: TextStyle(color: Colors.white.withValues(alpha: 0.2)),
                                 ),
                                 const SizedBox(height: 8),
                                 Text(
                                   'Create a live or battle to see it here',
-                                  style: TextStyle(color: Colors.white.withValues(alpha: 0.3), fontSize: 12),
+                                  style: TextStyle(color: Colors.white.withValues(alpha: 0.2), fontSize: 12),
                                 ),
                               ],
                             ),
@@ -457,12 +457,12 @@ class _MyEventsScreenState extends State<MyEventsScreen> {
                                 margin: const EdgeInsets.only(bottom: 12),
                                 padding: const EdgeInsets.all(16),
                                 decoration: BoxDecoration(
-                                  color: Colors.white.withValues(alpha: 0.05),
+                                  color: Colors.white.withValues(alpha: 0.2),
                                   borderRadius: BorderRadius.circular(12),
                                   border: Border.all(
                                     color: (status == 'live' || isLive)
-                                        ? Colors.green.withValues(alpha: 0.5)
-                                        : Colors.white.withValues(alpha: 0.1),
+                                        ? Colors.green.withValues(alpha: 0.3)
+                                        : Colors.white.withValues(alpha: 0.2),
                                   ),
                                 ),
                                 child: Column(
@@ -474,8 +474,8 @@ class _MyEventsScreenState extends State<MyEventsScreen> {
                                           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                                           decoration: BoxDecoration(
                                             color: isBattleGroup
-                                                ? WeAfricaColors.gold.withValues(alpha: 0.2)
-                                                : Colors.blue.withValues(alpha: 0.2),
+                                                ? WeAfricaColors.gold.withValues(alpha: 0.3)
+                                                : Colors.blue.withValues(alpha: 0.3),
                                             borderRadius: BorderRadius.circular(12),
                                           ),
                                           child: Text(
@@ -494,7 +494,7 @@ class _MyEventsScreenState extends State<MyEventsScreen> {
                                           Container(
                                             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                                             decoration: BoxDecoration(
-                                              color: Colors.red.withValues(alpha: 0.2),
+                                              color: Colors.red.withValues(alpha: 0.3),
                                               borderRadius: BorderRadius.circular(12),
                                             ),
                                             child: const Text(

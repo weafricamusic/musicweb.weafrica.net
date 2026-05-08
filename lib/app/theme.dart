@@ -39,6 +39,9 @@ class AppColors {
   static const brandPink = Color(0xFFD04984); // magenta/pink from gradient
   static const brandPurple = stagePurple;
   static const brandBlue = Color(0xFF2A83FF);
+
+  // Battle-specific colors
+  static const battleAmberLight = Color(0xFFF28C1E);
 }
 
 ThemeData buildDarkTheme() {

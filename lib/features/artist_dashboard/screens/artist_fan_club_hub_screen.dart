@@ -686,8 +686,8 @@ class _TierCard extends StatelessWidget {
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(18),
-        gradient: LinearGradient(colors: [accent.withValues(alpha: 0.18), const Color(0xFF141416)]),
-        border: Border.all(color: accent.withValues(alpha: 0.35)),
+        gradient: LinearGradient(colors: [accent.withValues(alpha: 0.3), const Color(0xFF141416)]),
+        border: Border.all(color: accent.withValues(alpha: 0.3)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -750,7 +750,7 @@ class _FanRow extends StatelessWidget {
             children: [
               CircleAvatar(
                 radius: 20,
-                backgroundColor: accent.withValues(alpha: 0.20),
+                backgroundColor: accent.withValues(alpha: 0.3),
                 backgroundImage: fan.avatarUrl == null ? null : NetworkImage(fan.avatarUrl!),
                 child: fan.avatarUrl == null ? Text(fan.displayName.substring(0, 1).toUpperCase()) : null,
               ),

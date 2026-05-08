@@ -275,9 +275,9 @@ class _BeatStudioScreenState extends State<BeatStudioScreen> {
                 Container(
                   padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
-                    color: accent.withValues(alpha: 0.10),
+                    color: accent.withValues(alpha: 0.3),
                     borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: accent.withValues(alpha: 0.25)),
+                    border: Border.all(color: accent.withValues(alpha: 0.3)),
                   ),
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.spaceAround,
@@ -540,7 +540,7 @@ class _BeatStudioScreenState extends State<BeatStudioScreen> {
                         max: 60,
                         divisions: 55,
                         activeColor: accent,
-                        inactiveColor: accent.withValues(alpha: 0.20),
+                        inactiveColor: accent.withValues(alpha: 0.3),
                         onChanged: (v) => setState(() => _duration = v.round()),
                       ),
                     ),
@@ -688,7 +688,7 @@ class _SuggestionChip extends StatelessWidget {
     return ActionChip(
       label: Text(label),
       onPressed: onTap,
-      side: BorderSide(color: accent.withValues(alpha: 0.28)),
+      side: BorderSide(color: accent.withValues(alpha: 0.3)),
     );
   }
 }
@@ -709,7 +709,7 @@ class _StudioCard extends StatelessWidget {
       decoration: BoxDecoration(
         color: AppColors.surface,
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: accent.withValues(alpha: 0.22)),
+        border: Border.all(color: accent.withValues(alpha: 0.3)),
       ),
       padding: const EdgeInsets.all(16),
       child: Column(
@@ -755,9 +755,9 @@ class _ExpandableHeader extends StatelessWidget {
       child: Container(
         padding: const EdgeInsets.all(14),
         decoration: BoxDecoration(
-          color: AppColors.surface2.withValues(alpha: 0.6),
+          color: AppColors.surface2.withValues(alpha: 0.3),
           borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: accent.withValues(alpha: 0.16)),
+          border: Border.all(color: accent.withValues(alpha: 0.3)),
         ),
         child: Row(
           children: [
@@ -797,7 +797,7 @@ class _DropdownCard extends StatelessWidget {
       decoration: BoxDecoration(
         color: AppColors.surface2,
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: accent.withValues(alpha: 0.18)),
+        border: Border.all(color: accent.withValues(alpha: 0.3)),
       ),
       child: DropdownButtonHideUnderline(
         child: DropdownButton<String>(

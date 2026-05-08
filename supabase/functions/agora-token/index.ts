@@ -26,7 +26,7 @@ serve(async (req) => {
     );
   }
 
-  const role = RtcRole.SUBSCRIBER;
+  const role = RtcRole.PUBLISHER;
   const expireTime = 3600;
   const currentTime = Math.floor(Date.now() / 1000);
   const privilegeExpireTime = currentTime + expireTime;

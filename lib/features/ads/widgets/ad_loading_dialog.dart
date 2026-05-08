@@ -23,7 +23,7 @@ class AdLoadingDialog extends StatelessWidget {
           ),
           borderRadius: BorderRadius.circular(24),
           border: Border.all(
-            color: const Color(0xFFD4AF37).withValues(alpha: 0.5),
+            color: const Color(0xFFD4AF37).withValues(alpha: 0.3),
             width: 2,
           ),
         ),
@@ -37,7 +37,7 @@ class AdLoadingDialog extends StatelessWidget {
               child: CircularProgressIndicator(
                 strokeWidth: 4,
                 valueColor: AlwaysStoppedAnimation<Color>(
-                  const Color(0xFFD4AF37).withValues(alpha: 0.8),
+                  const Color(0xFFD4AF37).withValues(alpha: 0.3),
                 ),
               ),
             ),
@@ -59,7 +59,7 @@ class AdLoadingDialog extends StatelessWidget {
               'Please wait while we prepare your reward',
               textAlign: TextAlign.center,
               style: TextStyle(
-                color: Colors.white.withValues(alpha: 0.7),
+                color: Colors.white.withValues(alpha: 0.2),
                 fontSize: 14,
                 fontWeight: FontWeight.w600,
               ),
