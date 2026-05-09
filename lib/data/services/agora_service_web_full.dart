@@ -3,7 +3,6 @@ import 'dart:html' as html;
 import 'dart:js' as js;
 import 'dart:js_util' as js_util;
 import 'package:flutter/foundation.dart';
-import 'package:weafrica_music/features/live/engine/web/agora_web_video_registry.dart';
 import '../../app/config/app_env.dart';
 import 'agora_service_shared.dart';
 
@@ -172,7 +171,7 @@ class AgoraService {
       throw Exception(
         'Agora token is missing. Ensure the backend token server is reachable '
         'and CORS is configured correctly. Backend URLs:\n'
-        '  - ${AppEnv.agoraTokenServerUrl.isNotEmpty ? AppEnv.agoraTokenServerUrl : 'https://weafrica-backend.vercel.app/api/agora/tokens/rtc'}\n'
+        '  - https://weafrica-backend.vercel.app/api/agora/tokens/rtc\n'
         '  - ${AppEnv.supabaseUrl}/functions/v1/agora-token',
       );
     }
