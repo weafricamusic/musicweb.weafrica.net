@@ -73,3 +73,4 @@ app.*.map.json
 .vercel
 .env*.local
 node_modules
+flutter.tar.xz
